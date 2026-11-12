@@ -358,6 +358,11 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 			i++
 		case strings.HasPrefix(a, "--agent="):
 			only = strings.TrimPrefix(a, "--agent=")
+		case a == "-h" || a == "--help":
+			fmt.Print(usage)
+			return nil
+		case strings.HasPrefix(a, "-"):
+			return fmt.Errorf("prowl findings: unknown argument %q", a)
 		default:
 			target = a
 		}
