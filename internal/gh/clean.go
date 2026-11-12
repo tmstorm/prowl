@@ -12,12 +12,12 @@ import (
 // other people's text, and an escape sequence in them could set your
 // clipboard or redraw your terminal when prowl shows it. go-gh already
 // cleans JSON answers (titles, bodies, comments); job logs are cleaned line
-// by line as they are read.
+// by line as they are read, and release downloads are binary.
 type cleanTransport struct{ next http.RoundTripper }
 
 func (t cleanTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := t.next.RoundTrip(r)
-	if err != nil || resp.Body == nil || strings.Contains(resp.Header.Get("Content-Type"), "json") || strings.HasSuffix(r.URL.Path, "/logs") {
+	if err != nil || resp.Body == nil || strings.Contains(resp.Header.Get("Content-Type"), "json") || strings.HasSuffix(r.URL.Path, "/logs") || r.Header.Get("Accept") == "application/octet-stream" {
 		return resp, err
 	}
 	b, err := io.ReadAll(resp.Body)

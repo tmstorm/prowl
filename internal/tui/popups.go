@@ -555,7 +555,7 @@ func (p *helpPopup) view(m *Model) string {
 		}
 		rows = append(rows, fit(a, colW)+fit(b, colW))
 	}
-	return popBox("Keys", strings.Join(rows, "\n")+"\n\n"+sDim.Render("any key to close"), w, pal.Accent)
+	return popBox("Keys", strings.Join(rows, "\n")+"\n\n"+sDim.Render("prowl "+core.BuildVersion()+" · any key to close"), w, pal.Accent)
 }
 
 // ---- repo picker (telescope-ish)

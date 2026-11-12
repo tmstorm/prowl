@@ -134,6 +134,8 @@ type Model struct {
 	started   time.Time       // the owl wakes up from here
 	synced    bool            // a sync finished this session; the first one's changes are on screen, not notified
 	tip       string          // a one-time tip under the legend, for this session
+	exe       string          // the running prowl's path, for updates
+	restart   bool            // quit to start the prowl <leader>U installed
 	waking    bool            // the first sync runs and you haven't touched anything: the PR pane shows the owl
 	title     string          // the terminal tab title last set
 	orgRepos  []string        // every repo in your orgs (owner/name), for <leader>fr
@@ -187,6 +189,7 @@ func New(co *core.Core) *Model {
 		snoozed:     map[string]time.Time{},
 		details:     map[string]*detail{},
 		searchInput: ti,
+		exe:         core.Executable(),
 	}
 	m.list.scrolloff = 2
 	m.loadReviews()
@@ -196,6 +199,7 @@ func New(co *core.Core) *Model {
 	}
 
 	m.list.skip = func(i int) bool { return m.rows[i].header && !m.collapsed[groupID(m.rows[i])] }
+	m.releaseTip()
 	return m
 }
 
@@ -345,7 +349,7 @@ func (m *Model) needsAnim() bool {
 	if m.loading {
 		return true
 	}
-	if m.runningReviews() > 0 || len(m.core.Summarizing()) > 0 {
+	if m.runningReviews() > 0 || len(m.core.Summarizing()) > 0 || m.core.Updating() != "" {
 		return true
 	}
 	if d := m.current(); d != nil && (d.loadingDet || d.diffLoading) {
@@ -498,6 +502,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if p, ok := m.popup.(*accountsPopup); ok {
 				p.loading = false
 			}
+		case core.ReleaseChanged:
+			m.releaseTip()
 		case core.ConfigChanged:
 			if msg.Err != nil {
 				m.fail(msg.Err.Error())
@@ -510,6 +516,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case orgReposMsg:
 		m.orgRepos = msg.repos
+		return m, nil
+
+	case upgradeMsg:
+		m.upgraded(msg)
 		return m, nil
 
 	case claimedMsg:
@@ -1270,6 +1280,8 @@ var leaderKeys = []leaderKey{
 	{cat: "Share", key: "y", desc: "copy slack line"},
 	{cat: "Share", key: "o", desc: "open in browser"},
 	{cat: "prowl", key: ",", desc: "options"},
+	{cat: "prowl", key: "U", desc: "update prowl"},
+	{cat: "prowl", key: "N", desc: "what's new"},
 	{cat: "prowl", key: "?", desc: "help"},
 	{cat: "prowl", key: "q", desc: "quit"},
 }
@@ -1332,6 +1344,11 @@ func (m *Model) leader(key string) tea.Cmd {
 		m.popup = &helpPopup{}
 	case "q":
 		return tea.Quit
+	case "U":
+		return m.upgrade()
+	case "N":
+		m.whatsNew()
+		return nil
 	case "z":
 		m.showSnoozed = !m.showSnoozed
 		m.rebuildRows()

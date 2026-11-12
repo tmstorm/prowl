@@ -93,6 +93,15 @@ CREATE INDEX IF NOT EXISTS review_runs_key ON review_runs(key, agent, id);
 CREATE TABLE IF NOT EXISTS tips (
   name TEXT PRIMARY KEY    -- a one-time tip prowl has shown
 );
+CREATE TABLE IF NOT EXISTS releases (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  checked_at INTEGER NOT NULL,         -- when prowl last asked GitHub for its newest release
+  tag TEXT NOT NULL,                   -- that release, e.g. v0.2.0
+  notes TEXT NOT NULL,
+  url TEXT NOT NULL,
+  installed TEXT NOT NULL DEFAULT '',  -- the release prowl installed itself; it runs after a restart
+  attempted TEXT NOT NULL DEFAULT ''   -- the last release prowl tried to install in the background
+);
 CREATE TABLE IF NOT EXISTS watcher (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   pid INTEGER NOT NULL     -- the running prowl watch, which sends the notifications
@@ -766,6 +775,51 @@ func (s *Store) FirstTime(name string) bool {
 	}
 	n, _ := res.RowsAffected()
 	return n == 1
+}
+
+// Release is what prowl last heard about its own newest release.
+type Release struct {
+	Checked              time.Time
+	Tag, Notes, URL      string
+	Installed, Attempted string
+}
+
+// Release is the newest release prowl knows of; zero before the first check.
+func (s *Store) Release() (Release, error) {
+	var r Release
+	var at int64
+	err := s.db.QueryRow(`SELECT checked_at, tag, notes, url, installed, attempted FROM releases WHERE id = 1`).
+		Scan(&at, &r.Tag, &r.Notes, &r.URL, &r.Installed, &r.Attempted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Release{}, nil
+	}
+	if err != nil {
+		return Release{}, wrap("release", err)
+	}
+	r.Checked = time.Unix(at, 0)
+	return r, nil
+}
+
+// SetRelease records a check for the newest release, keeping what prowl
+// installed and attempted.
+func (s *Store) SetRelease(r Release) error {
+	_, err := s.db.Exec(`INSERT INTO releases (id, checked_at, tag, notes, url) VALUES (1, ?, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET checked_at = excluded.checked_at, tag = excluded.tag, notes = excluded.notes, url = excluded.url`,
+		r.Checked.Unix(), r.Tag, r.Notes, r.URL)
+	return wrap("set release", err)
+}
+
+// SetInstalled records the release prowl installed itself.
+func (s *Store) SetInstalled(tag string) error {
+	_, err := s.db.Exec(`UPDATE releases SET installed = ? WHERE id = 1`, tag)
+	return wrap("set installed", err)
+}
+
+// SetAttempted records the release prowl tried to install in the
+// background, so a failing one isn't downloaded again on every check.
+func (s *Store) SetAttempted(tag string) error {
+	_, err := s.db.Exec(`UPDATE releases SET attempted = ? WHERE id = 1`, tag)
+	return wrap("set attempted", err)
 }
 
 // SetWatcher records the process ID of the running `prowl watch`.

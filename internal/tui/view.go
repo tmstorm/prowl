@@ -1033,6 +1033,9 @@ func (m *Model) statusline() string {
 	case running > 1:
 		sync = sYellow.Render(fmt.Sprintf("reviewing ×%d", running)) + " " + sDim.Render(thinR) + " " + sync
 	}
+	if step := m.core.Updating(); step != "" {
+		sync = updatingMark(m) + " " + sYellow.Render(step) + " " + sDim.Render(thinR) + " " + sync
+	}
 	syncW := lipgloss.Width(sync)
 	authW := 0
 	if w := m.authWarning(); w != "" {
@@ -1178,6 +1181,18 @@ var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"
 
 func spinner(m *Model) string {
 	return sTitle.Render(spinFrames[m.frame%len(spinFrames)])
+}
+
+// updatingMark leads the statusline while prowl updates itself: the owl
+// watching and blinking now and then, as in `prowl update`, or the spinner.
+func updatingMark(m *Model) string {
+	if !m.cfg.Playful {
+		return spinner(m)
+	}
+	if m.frame%30 < 2 {
+		return sTitle.Render("(-,-)")
+	}
+	return sTitle.Render("(o,o)")
 }
 
 // skeletonList draws placeholder rows with a shimmer while the first sync runs.

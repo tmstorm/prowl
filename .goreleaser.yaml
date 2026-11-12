@@ -6,7 +6,7 @@ builds:
   - env: [CGO_ENABLED=0]
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
-    ldflags: -s -w -X main.version={{ .Version }}
+    ldflags: -s -w -X github.com/tmstorm/prowl/internal/core.Version={{ .Version }}
 archives:
   - name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
@@ -15,6 +15,14 @@ archives:
         formats: [zip]
 checksum:
   name_template: checksums.txt
+signs:
+  # checksums.txt.minisig: prowl update installs nothing whose checksums
+  # don't carry this signature (core.ReleaseKey, minisign.pub). The key
+  # comes from the MINISIGN_KEY secret; snapshots skip signing (--skip=sign).
+  - cmd: minisign
+    args: ["-S", "-s", "{{ .Env.MINISIGN_KEY_FILE }}", "-m", "${artifact}", "-x", "${signature}", "-t", "prowl {{ .Tag }}"]
+    artifacts: checksum
+    signature: "${artifact}.minisig"
 aurs:
   # prowl-bin on the AUR, built from the release archives. Needs the AUR_KEY
   # secret (an SSH key added to the AUR account); without it the upload is

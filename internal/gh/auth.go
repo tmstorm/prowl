@@ -10,7 +10,8 @@ import (
 // tokenTransport picks up a new GitHub login without a restart: when a
 // request comes back 401, it reads the token again (from the environment,
 // gh's config or the keyring, as go-gh does) and retries once with it. Later
-// requests use the new token too.
+// requests to GitHub use the new token too; other hosts, such as the storage
+// a release download redirects to, never get it.
 type tokenTransport struct {
 	next http.RoundTripper
 	host string
@@ -20,6 +21,9 @@ type tokenTransport struct {
 }
 
 func (t *tokenTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if h := r.URL.Hostname(); h != t.host && h != "api."+t.host {
+		return t.next.RoundTrip(r)
+	}
 	t.mu.Lock()
 	token := t.token
 	t.mu.Unlock()

@@ -34,6 +34,7 @@ const (
 	SummaryChanged                  // an auto summary was written, or failed
 	AuthChanged                     // the periodic login check finished
 	ConfigChanged                   // the config file was edited outside prowl
+	ReleaseChanged                  // the hourly update check ran, or an update moved on a step
 )
 
 // Events delivers events to one reader. An event that finds the buffer full
@@ -48,8 +49,9 @@ func (co *Core) emit(e Event) {
 }
 
 // Run syncs the inbox every poll_interval, watches agent reviews, writes
-// summaries when auto_summary is on, checks the logins every half hour and
-// picks up edits to the config file, until ctx ends. Each is reported as
+// summaries when auto_summary is on, checks the logins every half hour,
+// picks up edits to the config file and checks for updates (installing them
+// when no prowl watch runs to do it), until ctx ends. Each is reported as
 // events. The first sync is the caller's.
 func (co *Core) Run(ctx context.Context) {
 	var tasks sync.WaitGroup
@@ -80,6 +82,20 @@ func (co *Core) Run(ctx context.Context) {
 				co.emit(Event{Kind: Syncing})
 				changes, err := co.Refresh()
 				co.emit(Event{Kind: InboxChanged, Changes: changes, Err: err})
+			}
+		}
+	})
+	tasks.Go(func() {
+		exe := Executable()
+		for {
+			if co.notifies() {
+				_, _ = co.AutoUpgrade(exe)
+			}
+			co.emit(Event{Kind: ReleaseChanged})
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Hour):
 			}
 		}
 	})

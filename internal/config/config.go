@@ -28,6 +28,10 @@ type Config struct {
 	StaleAfter Duration `toml:"stale_after"`
 	// How long desktop notifications stay up.
 	NotifyTimeout Duration `toml:"notify_timeout"`
+	// Ask GitHub once a day whether a newer prowl is out.
+	CheckUpdates bool `toml:"check_updates"`
+	// Install a newer prowl in the background when prowl installed itself.
+	AutoUpdate bool `toml:"auto_update"`
 
 	// UI
 	// The key that opens the action menu: space, ",", "\" or ";" (see Leaders).
@@ -237,6 +241,8 @@ func Default() Config {
 		PollInterval:     Duration{3 * time.Minute},
 		StaleAfter:       Duration{24 * time.Hour},
 		NotifyTimeout:    Duration{8 * time.Second},
+		CheckUpdates:     true,
+		AutoUpdate:       true,
 		Leader:           "space",
 		Theme:            "dracula",
 		Mouse:            true,
@@ -454,6 +460,8 @@ func (c Config) Save() error {
 	dur("# How often to check GitHub, in the TUI and in `prowl watch`.\n", "poll_interval", c.PollInterval, d.PollInterval)
 	dur("# A PR waiting on you longer than this is flagged.\n", "stale_after", c.StaleAfter, d.StaleAfter)
 	dur("# How long desktop notifications stay on screen.\n", "notify_timeout", c.NotifyTimeout, d.NotifyTimeout)
+	boolean("# Ask GitHub once a day whether a newer prowl is out, and say so.\n", "check_updates", c.CheckUpdates, d.CheckUpdates)
+	boolean("# When the install script installed prowl, install a newer prowl in the\n# background; a restart (<leader>U) runs it. A package manager's prowl is never\n# replaced: prowl says which command updates it.\n", "auto_update", c.AutoUpdate, d.AutoUpdate)
 
 	w("# UI ------------------------------------------------------------------\n\n")
 	str("# The leader: the key that opens prowl's action menu, written <leader> in the\n# docs. \"space\", \",\", \"\\\\\" or \";\".\n", "leader", c.Leader, d.Leader)

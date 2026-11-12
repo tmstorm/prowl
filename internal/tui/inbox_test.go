@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/tmstorm/prowl/internal/config"
+	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/store"
+	"github.com/tmstorm/prowl/internal/tui"
 )
 
 func needsReview(repo string, n int, title string) gh.PR {
@@ -319,4 +321,32 @@ func TestBackgroundNotifications(t *testing.T) {
 	a.clickFirst("Background notifications")
 	a.clickFirst("Background notifications")
 	a.want("background notifications on: systemd user service")
+}
+
+// Once prowl has installed a newer release of itself, the legend says so,
+// <leader>N shows what's new, each change as a commit title without its
+// commit link, and <leader>U quits to start the new prowl. The keys popup
+// shows the running version.
+func TestUpdateInstalled(t *testing.T) {
+	old := core.Version
+	core.Version = "0.1.0"
+	t.Cleanup(func() { core.Version = old })
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	notes := "## [0.2.0](https://github.com/tmstorm/prowl/compare/v0.1.0...v0.2.0) (2026-11-20)\n\n\n### Features\n\n" +
+		"* **update:** retry failed installs an hour later ([#9](https://github.com/tmstorm/prowl/issues/9)) ([e2449d5](https://github.com/tmstorm/prowl/commit/e2449d5))\n\n" +
+		"### Bug Fixes\n\n* show the reviewer's note ([4f1c2aa](https://github.com/tmstorm/prowl/commit/4f1c2aa))\n"
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.2.0", Notes: notes, URL: "https://github.com/tmstorm/prowl/releases/tag/v0.2.0"})
+	_ = a.st.SetInstalled("v0.2.0")
+	a = reopen(a)
+	a.want("prowl v0.2.0 is installed · <space>U restarts into it")
+	a.keys("?")
+	a.want("prowl 0.1.0 · any key to close")
+	a.keys("esc", "space", "N")
+	a.want("What's new in prowl v0.2.0", "released 2026-11-20", "feat(update): retry failed installs an hour later #9",
+		"fix: show the reviewer's note", "o opens the release on GitHub")
+	a.wantNot("e2449d5", "## [0.2.0]")
+	a.keys("esc", "space", "U")
+	if !a.m.(*tui.Model).Restart() {
+		t.Fatal("<leader>U should quit to restart into the installed release")
+	}
 }
