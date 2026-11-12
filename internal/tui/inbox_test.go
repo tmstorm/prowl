@@ -485,11 +485,13 @@ func TestUpdateStep(t *testing.T) {
 
 // The first start asks whether the terminal shows Nerd Font icons, since
 // only the person looking can tell: yes turns them on and saves it, no leaves
-// them off, and it asks once.
+// them off, other keys leave the question up, and it asks once.
 func TestAskIcons(t *testing.T) {
 	askIcons = true
 	t.Cleanup(func() { askIcons = false })
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.want("Do you see three icons here")
+	a.keys("j", "enter")
 	a.want("Do you see three icons here")
 	a.keys("y")
 	a.want("Nerd Font icons on")

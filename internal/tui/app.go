@@ -91,7 +91,7 @@ type forwarder interface {
 type confirm struct {
 	prompt string
 	yes    func() tea.Cmd
-	no     func() tea.Cmd // nil: "cancelled"
+	no     func() tea.Cmd // n or esc; while set, other keys leave the question up. nil: any key cancels
 }
 
 type Model struct {
@@ -1012,6 +1012,9 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 	}
 	if m.confirm != nil {
 		c := m.confirm
+		if c.no != nil && !slices.Contains([]string{"y", "Y", "n", "N", "esc"}, key) {
+			return nil
+		}
 		m.confirm = nil
 		m.mode = modeNormal
 		if key == "y" || key == "Y" {
