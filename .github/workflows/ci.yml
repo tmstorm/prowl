@@ -16,10 +16,11 @@ on:
   pull_request:
     paths: *code
 
-# A new push to a PR cancels the run for the one before it.
+# A new push to a PR cancels the run for the one before it. Each push to
+# main gets its own group, so none of its runs is cancelled or dropped.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
