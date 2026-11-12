@@ -18,9 +18,13 @@ import (
 // Uninstalling takes off everything prowl put outside a package manager: the
 // service, its worktrees and refs in your checkouts, the skill as it wrote
 // it, the binary it installed and, with purge, the config and data. A skill
-// you edited and a checkout prowl never used stay. A package manager's prowl
-// is left to the package manager.
+// you edited and a checkout prowl never used stay, and when a step fails the
+// binary stays too, so uninstall can run again. A package manager's prowl is
+// left to the package manager.
 func TestUninstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the binary goes after prowl exits, and its folder off the real user PATH")
+	}
 	path := os.Getenv("PATH")
 	running(t, "0.1.0")
 	co, _ := newCore(t, &ghtest.GitHub{})
@@ -65,7 +69,7 @@ func TestUninstall(t *testing.T) {
 
 	f := core.FindFootprint(co.Config(), exe, true)
 	if f.Service != (runtime.GOOS == "linux") || !slices.Equal(f.Checkouts, []string{repo}) ||
-		!slices.Equal(f.Skills, []string{skill.Dir("claude")}) || f.Binary != exe || f.Command != "" ||
+		!slices.Equal(f.Skills, []string{skill.Dir("claude")}) || !slices.Equal(f.Kept, []string{edited}) || f.Binary != exe || f.Command != "" ||
 		!slices.Equal(f.Dirs, []string{config.Dir(), config.DataDir()}) {
 		t.Fatalf("footprint: %+v", f)
 	}
@@ -88,6 +92,15 @@ func TestUninstall(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(calls); runtime.GOOS == "linux" && !strings.Contains(string(b), "--user disable --now prowl-watch.service") {
 		t.Errorf("the service wasn't stopped: %q", b)
+	}
+
+	stuck := core.Footprint{Checkouts: []string{filepath.Join(root, "gone")}, Binary: filepath.Join(t.TempDir(), "prowl")}
+	_ = os.WriteFile(stuck.Binary, []byte("prowl"), 0o755)
+	if err := core.Uninstall(stuck); err == nil {
+		t.Error("cleaning a missing checkout should fail")
+	}
+	if _, err := os.Stat(stuck.Binary); err != nil {
+		t.Error("the binary went although a step failed, so uninstall can't run again")
 	}
 
 	if runtime.GOOS == "linux" {

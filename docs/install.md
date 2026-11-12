@@ -71,7 +71,7 @@ sha256sum --check --ignore-missing checksums.txt
 prowl uninstall
 ```
 
-lists what prowl put on this machine and asks before removing it: the background service, the review worktrees and `refs/prowl/*` refs it added to checkouts under `repo_roots`, the `prowl-findings` skill (only as prowl wrote it; an edited copy stays) and, when the install script put it there, the `prowl` binary. On Windows the binary goes once prowl exits, and its folder comes off your PATH when nothing else is in it. Your config and data stay for a reinstall; `prowl uninstall --purge` removes them too. `--yes` skips the question.
+lists what prowl put on this machine and asks before removing it: the background service, the review worktrees and `refs/prowl/*` refs it added to checkouts under `repo_roots`, the `prowl-findings` skill (only as this prowl writes it; a copy that differs stays, and it says so) and, unless a package manager owns it, the `prowl` binary. If a step fails, the binary stays so you can run it again to finish. On Windows the binary goes once prowl exits, and its folder comes off your PATH when nothing else is in it. Your config and data stay for a reinstall; `prowl uninstall --purge` removes them too. `--yes` skips the question.
 
 When a package manager installed prowl, it says which command removes the binary, such as `sudo pacman -R prowl-bin`. Run `prowl uninstall` first: package managers can't clean up what prowl put in your home folder.
 

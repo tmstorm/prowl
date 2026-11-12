@@ -42,17 +42,22 @@ func Install(dir string) (string, error) {
 	return path, os.WriteFile(path, Content, 0o644)
 }
 
-// Installed is the agents' default skill dirs holding prowl's skill as
-// prowl wrote it: the ones `prowl uninstall` removes. An edited copy stays.
-func Installed() []string {
-	var out []string
+// Found is the agents' default skill dirs holding the skill: same as this
+// prowl writes it, which `prowl uninstall` removes, or changed, by an edit or
+// an older prowl, which it leaves.
+func Found() (same, changed []string) {
 	for _, agent := range []string{"claude", "codex"} {
 		dir := Dir(agent)
-		if b, err := os.ReadFile(filepath.Join(dir, "SKILL.md")); err == nil && bytes.Equal(b, Content) {
-			out = append(out, dir)
+		b, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+		switch {
+		case err != nil:
+		case bytes.Equal(b, Content):
+			same = append(same, dir)
+		default:
+			changed = append(changed, dir)
 		}
 	}
-	return out
+	return same, changed
 }
 
 // Remove deletes the skill from dir, and dir when nothing else is in it.

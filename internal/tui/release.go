@@ -196,6 +196,9 @@ func Uninstalling(cfg config.Config, f core.Footprint, ask bool) string {
 			b.WriteString("  " + sPink.Render("•") + " " + it + "\n")
 		}
 	}
+	for _, dir := range f.Kept {
+		b.WriteString("  " + sDim.Render("It keeps the prowl-findings skill in "+short(dir)+": it differs from this prowl's, from an edit or an older prowl.") + "\n")
+	}
 	if len(f.Dirs) == 0 {
 		b.WriteString("  " + sDim.Render("It keeps your config and data in "+short(config.Dir())+" and "+short(config.DataDir())+"; --purge removes them too.") + "\n")
 	}

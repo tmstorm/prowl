@@ -52,7 +52,9 @@ func Reopen(exe string) error {
 
 // RemoveBinary deletes prowl.exe at exe once this prowl exits, since Windows
 // won't delete a running program. When its folder holds nothing else, it goes
-// too and comes off your PATH, where install.ps1 put it.
+// too and comes off your PATH, where install.ps1 put it. cmd.exe gets its
+// command line whole because it doesn't undo the \" quoting exec gives each
+// argument; CREATE_NO_WINDOW keeps it from opening a console window.
 func RemoveBinary(exe string) error {
 	dir := filepath.Dir(exe)
 	entries, err := os.ReadDir(dir)
@@ -70,14 +72,20 @@ func RemoveBinary(exe string) error {
 	script := fmt.Sprintf(`ping -n 3 127.0.0.1 >nul & del /f /q "%s"`, exe)
 	if alone {
 		script += fmt.Sprintf(` & rmdir /s /q "%s"`, dir)
-		path := fmt.Sprintf(`$d='%s'; $p=[Environment]::GetEnvironmentVariable('Path','User'); `+
-			`[Environment]::SetEnvironmentVariable('Path', (($p -split ';') | Where-Object { $_ -and $_ -ne $d }) -join ';', 'User')`,
-			strings.ReplaceAll(dir, "'", "''"))
-		if err := exec.Command("powershell", "-NoProfile", "-Command", path).Run(); err != nil {
-			return fmt.Errorf("take %s off PATH: %w", dir, err)
-		}
 	}
-	cmd := exec.Command("cmd", "/c", script)
-	Detach(cmd)
-	return cmd.Start()
+	cmd := exec.Command("cmd.exe")
+	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: "cmd.exe /c " + script, CreationFlags: 0x08000000}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("remove %s: %w", exe, err)
+	}
+	if !alone {
+		return nil
+	}
+	path := fmt.Sprintf(`$d='%s'; $p=[Environment]::GetEnvironmentVariable('Path','User'); `+
+		`[Environment]::SetEnvironmentVariable('Path', (($p -split ';') | Where-Object { $_ -and $_ -ne $d }) -join ';', 'User')`,
+		strings.ReplaceAll(dir, "'", "''"))
+	if err := exec.Command("powershell", "-NoProfile", "-Command", path).Run(); err != nil {
+		return fmt.Errorf("take %s off PATH: %w", dir, err)
+	}
+	return nil
 }

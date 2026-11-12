@@ -15,7 +15,8 @@ import (
 type Footprint struct {
 	Service   bool     // prowl watch runs at login
 	Checkouts []string // your checkouts holding prowl's review worktrees or refs
-	Skills    []string // prowl-findings skills as prowl installed them
+	Skills    []string // prowl-findings skills as this prowl writes them
+	Kept      []string // prowl-findings skills that differ, which stay
 	Binary    string   // the prowl binary, when prowl may remove it
 	Command   string   // what removes prowl when something else owns it
 	Dirs      []string // the config and data dirs, with purge
@@ -24,11 +25,8 @@ type Footprint struct {
 // FindFootprint lists what uninstalling the prowl at exe removes. purge adds
 // the config and data dirs; without it they stay for a reinstall.
 func FindFootprint(cfg config.Config, exe string, purge bool) Footprint {
-	f := Footprint{
-		Service:   platform.ServiceInstalled(),
-		Checkouts: agent.Checkouts(cfg.ExpandedRepoRoots()),
-		Skills:    skill.Installed(),
-	}
+	f := Footprint{Service: platform.ServiceInstalled(), Checkouts: agent.Checkouts(cfg.ExpandedRepoRoots())}
+	f.Skills, f.Kept = skill.Found()
 	switch o := owner(exe); o {
 	case "":
 		f.Binary = exe
@@ -44,7 +42,8 @@ func FindFootprint(cfg config.Config, exe string, purge bool) Footprint {
 }
 
 // Uninstall removes everything in f, the binary last, and returns what it
-// couldn't remove.
+// couldn't remove. When anything else fails the binary stays, so `prowl
+// uninstall` can run again to finish.
 func Uninstall(f Footprint) error {
 	var errs []error
 	if f.Service {
@@ -61,8 +60,11 @@ func Uninstall(f Footprint) error {
 			errs = append(errs, fmt.Errorf("remove %s: %w", dir, err))
 		}
 	}
-	if f.Binary != "" {
-		errs = append(errs, platform.RemoveBinary(f.Binary))
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("%w\nprowl stays so prowl uninstall can finish", err)
 	}
-	return errors.Join(errs...)
+	if f.Binary != "" {
+		return platform.RemoveBinary(f.Binary)
+	}
+	return nil
 }
