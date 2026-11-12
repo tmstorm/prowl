@@ -156,6 +156,10 @@ func TestUpgrade(t *testing.T) {
 	for name, bad := range map[string]func(){
 		"tampered archive": func() { publish(t, fake, "v0.2.0", "v0.2.0", key, true) },
 		"unknown key":      func() { publish(t, fake, "v0.2.0", "v0.2.0", signer(t, 2, false), false) },
+		"older release": func() {
+			publish(t, fake, "v0.2.0", "v0.2.0", key, false)
+			fake.Release.Tag = "v0.3.0"
+		},
 	} {
 		bad()
 		if v, err := co.Upgrade(exe); err == nil || v != "" {
@@ -189,8 +193,8 @@ func TestUpgrade(t *testing.T) {
 	}
 }
 
-// In the background prowl tries each release once, so a release it can't
-// verify isn't downloaded again on every check.
+// In the background a release prowl can't verify isn't downloaded again on
+// every check, but one that failed to download is tried again.
 func TestAutoUpgrade(t *testing.T) {
 	running(t, "0.1.0")
 	fake := &ghtest.GitHub{}
@@ -212,6 +216,12 @@ func TestAutoUpgrade(t *testing.T) {
 		t.Fatal("auto_update off installed a release")
 	}
 	_, _ = co.Update(func(c *config.Config) error { c.AutoUpdate = true; return nil })
+	assets := fake.Release.Assets
+	fake.Release.Assets = assets[:1]
+	if _, err := co.AutoUpgrade(exe); err == nil {
+		t.Fatal("a release without checksums installed")
+	}
+	fake.Release.Assets = assets
 	if v, err := co.AutoUpgrade(exe); err != nil || v != "v0.3.0" {
 		t.Fatalf("auto upgrade: %q, %v", v, err)
 	}

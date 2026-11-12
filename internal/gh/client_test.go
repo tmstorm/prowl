@@ -224,3 +224,38 @@ func TestNewLoginWithoutRestart(t *testing.T) {
 		t.Fatalf("sent %v", seen)
 	}
 }
+
+// A refreshed token goes to GitHub only: a release download that redirects
+// to storage on another host doesn't carry it there.
+func TestTokenStaysOnGitHub(t *testing.T) {
+	t.Setenv("GH_TOKEN", "old")
+	storage := "not asked"
+	c, err := gh.NewWith(api.ClientOptions{Host: "github.com", Transport: roundTrip(func(r *http.Request) *http.Response {
+		switch {
+		case r.URL.Hostname() == "objects.example.com":
+			storage = r.Header.Get("Authorization")
+			return &http.Response{StatusCode: 200, Request: r, Body: io.NopCloser(strings.NewReader("prowl")),
+				Header: http.Header{"Content-Type": []string{"application/octet-stream"}}}
+		case r.Header.Get("Authorization") != "token new":
+			return reply(401, `{"message":"Bad credentials"}`)
+		case strings.HasSuffix(r.URL.Path, "/releases/assets/1"):
+			return &http.Response{StatusCode: 302, Request: r, Body: http.NoBody,
+				Header: http.Header{"Location": []string{"https://objects.example.com/prowl.tar.gz"}}}
+		}
+		return reply(200, `{"data":{"viewer":{"login":"me"}}}`)
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GH_TOKEN", "new")
+	if _, err := c.Viewer(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := c.Download("o/prowl", gh.Release{Tag: "v1", Assets: []gh.Asset{{ID: 1, Name: "prowl.tar.gz"}}}, "prowl.tar.gz")
+	if err != nil || string(b) != "prowl" {
+		t.Fatalf("download: %q, %v", b, err)
+	}
+	if storage != "" {
+		t.Fatalf("the storage host got %q", storage)
+	}
+}

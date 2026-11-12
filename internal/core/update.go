@@ -35,6 +35,10 @@ const (
 	checkEvery  = 24 * time.Hour
 )
 
+// errUnverified is a release download that doesn't match its signed
+// checksums. Downloading it again won't help, unlike a network error.
+var errUnverified = errors.New("unverified release")
+
 // Executable is the running prowl's path, with symlinks resolved.
 func Executable() string {
 	exe, _ := os.Executable()
@@ -183,15 +187,15 @@ func (co *Core) Upgrade(exe string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := verifySums(sums, sig); err != nil {
-		return "", fmt.Errorf("update to %s: %w", r.Tag, err)
+	if err := verifySums(sums, sig, r.Tag); err != nil {
+		return "", fmt.Errorf("update to %s: %w: %w", r.Tag, errUnverified, err)
 	}
 	archive, err := co.gh.Download(releaseRepo, r, name)
 	if err != nil {
 		return "", err
 	}
 	if err := checkSum(sums, name, archive); err != nil {
-		return "", fmt.Errorf("update to %s: %w", r.Tag, err)
+		return "", fmt.Errorf("update to %s: %w: %w", r.Tag, errUnverified, err)
 	}
 	b, err := unpack(archive, bin)
 	if err != nil {
@@ -205,8 +209,9 @@ func (co *Core) Upgrade(exe string) (string, error) {
 }
 
 // AutoUpgrade checks for a release once a day and, with auto_update on and
-// prowl owning exe, installs it. It tries each release once; `prowl update`
-// tries again. It returns the version it installed, or "".
+// prowl owning exe, installs it. A release that fails verification isn't
+// downloaded again (`prowl update` tries again); a network error is retried
+// on the next call. It returns the version it installed, or "".
 func (co *Core) AutoUpgrade(exe string) (string, error) {
 	if err := co.CheckRelease(false); err != nil {
 		return "", err
@@ -218,8 +223,11 @@ func (co *Core) AutoUpgrade(exe string) (string, error) {
 	if last, _ := co.st.Release(); last.Attempted == r.Latest {
 		return "", nil
 	}
-	_ = co.st.SetAttempted(r.Latest)
-	return co.Upgrade(exe)
+	v, err := co.Upgrade(exe)
+	if errors.Is(err, errUnverified) {
+		_ = co.st.SetAttempted(r.Latest)
+	}
+	return v, err
 }
 
 // WhatsNew is the running release and its notes, the first time this
@@ -249,7 +257,10 @@ func archiveName() string {
 	return fmt.Sprintf("prowl_%s_%s.%s", runtime.GOOS, runtime.GOARCH, ext)
 }
 
-func verifySums(sums, sig []byte) error {
+// verifySums checks that checksums.txt was signed with ReleaseKey for this
+// release: the signature's trusted comment names the tag, so an older
+// release's signed files can't pass as a newer one.
+func verifySums(sums, sig []byte, tag string) error {
 	key, err := minisign.NewPublicKey(ReleaseKey)
 	if err != nil {
 		return fmt.Errorf("release key: %w", err)
@@ -260,6 +271,9 @@ func verifySums(sums, sig []byte) error {
 	}
 	if ok, err := key.Verify(sums, s); !ok {
 		return fmt.Errorf("checksums.txt isn't signed by prowl's release key: %w", err)
+	}
+	if s.TrustedComment != "trusted comment: prowl "+tag {
+		return fmt.Errorf("checksums.txt was signed for another release (%s)", strings.TrimPrefix(s.TrustedComment, "trusted comment: "))
 	}
 	return nil
 }
