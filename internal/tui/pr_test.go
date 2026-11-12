@@ -183,13 +183,14 @@ func TestFoldFromInside(t *testing.T) {
 }
 
 // While an agent drafts its first review, the owl keeps watch in its tab.
+// Its eyes blink with the clock, so the test looks for its feet.
 func TestReviewRunningOwl(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	id, _ := a.st.StartRun("o/api#7", "abc1234", "claude", "", 0)
 	_ = a.st.SetReviewActivity(id, "reading a.go")
 	a = reopen(a)
 	a.keys("enter", "4")
-	a.want("reading the PR", "O,O")
+	a.want("reading the PR", "===^===^===")
 }
 
 // + gives the PR pane the full width; 0 brings the inbox back.
