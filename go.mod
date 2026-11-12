@@ -14,6 +14,7 @@ require (
 	github.com/cli/go-gh/v2 v2.17.0
 	github.com/creack/pty v1.1.24
 	github.com/jedisct1/go-minisign v0.0.0-20260527172527-a09352b57a22
+	github.com/muesli/termenv v0.16.0
 	golang.org/x/mod v0.43.0
 	golang.org/x/term v0.47.0
 	modernc.org/sqlite v1.62.0
@@ -50,7 +51,6 @@ require (
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

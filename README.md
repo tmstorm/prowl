@@ -1,15 +1,6 @@
 # prowl
 
-```
-   /\       /\
-  /  `-----'  \
- |  (O)   (O)  |
-  \     v     /
-   )  ' ' '  (
-  (  ' ' ' '  )
-   `-._____.-'
-  ======^=^======
-```
+<img src="docs/images/owl.svg" width="160" alt="The prowl owl">
 
 **The PR owl.** prowl keeps watch over your GitHub pull requests from the terminal. It shows which ones are waiting on you and why, lets you read, review and approve without leaving the keyboard, and brings a coding agent along to review with you. When nothing needs you, the owl goes to sleep.
 
