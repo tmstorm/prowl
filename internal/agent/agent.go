@@ -880,6 +880,59 @@ func RemoveWorktrees(repo string, number int) {
 	_ = os.RemoveAll(dir)
 }
 
+// Checkouts are the git checkouts directly under roots that hold prowl's
+// review worktrees or the refs/prowl/* refs reviews fetch into them.
+func Checkouts(roots []string) []string {
+	var out []string
+	for _, root := range roots {
+		entries, _ := os.ReadDir(root)
+		for _, e := range entries {
+			dir := filepath.Join(root, e.Name())
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+				continue
+			}
+			if wts, refs := prowlState(dir); len(wts)+len(refs) > 0 {
+				out = append(out, dir)
+			}
+		}
+	}
+	return out
+}
+
+// CleanCheckout removes prowl's review worktrees and refs from a checkout.
+func CleanCheckout(dir string) error {
+	wts, refs := prowlState(dir)
+	for _, wt := range wts {
+		_ = run(dir, "git", "worktree", "remove", "--force", wt)
+	}
+	if err := run(dir, "git", "worktree", "prune"); err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if err := run(dir, "git", "update-ref", "-d", ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// prowlState is the worktrees prowl added to a checkout, which live under its
+// data dir, and the refs/prowl/* refs it fetched.
+func prowlState(dir string) (worktrees, refs []string) {
+	root := filepath.Join(config.DataDir(), "worktrees")
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
+	out, _ := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").Output()
+	for l := range strings.Lines(string(out)) {
+		if p, ok := strings.CutPrefix(strings.TrimSpace(l), "worktree "); ok && strings.HasPrefix(p, root+string(filepath.Separator)) {
+			worktrees = append(worktrees, p)
+		}
+	}
+	out, _ = exec.Command("git", "-C", dir, "for-each-ref", "--format=%(refname)", "refs/prowl/").Output()
+	return worktrees, strings.Fields(string(out))
+}
+
 func run(dir string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir

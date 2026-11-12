@@ -65,6 +65,16 @@ minisign -Vm checksums.txt -p minisign.pub
 sha256sum --check --ignore-missing checksums.txt
 ```
 
+## Uninstalling
+
+```sh
+prowl uninstall
+```
+
+lists what prowl put on this machine and asks before removing it: the background service, the review worktrees and `refs/prowl/*` refs it added to checkouts under `repo_roots`, the `prowl-findings` skill (only as prowl wrote it; an edited copy stays) and, when the install script put it there, the `prowl` binary. On Windows the binary goes once prowl exits, and its folder comes off your PATH when nothing else is in it. Your config and data stay for a reinstall; `prowl uninstall --purge` removes them too. `--yes` skips the question.
+
+When a package manager installed prowl, it says which command removes the binary, such as `sudo pacman -R prowl-bin`. Run `prowl uninstall` first: package managers can't clean up what prowl put in your home folder.
+
 ## Commands
 
 - `prowl` opens the TUI.
@@ -77,6 +87,7 @@ sha256sum --check --ignore-missing checksums.txt
 - `prowl schema` prints the JSON Schema a review must match, for a `command` reviewer.
 - `prowl update` installs the newest release over this prowl and prints what's new, or says which command updates it when a package manager installed it (see [Updating](#updating)).
 - `prowl version` prints the version, and the newer release when one is out.
+- `prowl uninstall [--purge] [--yes]` removes what prowl put on this machine (see [Uninstalling](#uninstalling)).
 
 ## Accounts
 

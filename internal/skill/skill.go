@@ -3,6 +3,7 @@
 package skill
 
 import (
+	"bytes"
 	_ "embed"
 	"fmt"
 	"os"
@@ -39,4 +40,26 @@ func Install(dir string) (string, error) {
 	}
 	path := filepath.Join(dir, "SKILL.md")
 	return path, os.WriteFile(path, Content, 0o644)
+}
+
+// Installed is the agents' default skill dirs holding prowl's skill as
+// prowl wrote it: the ones `prowl uninstall` removes. An edited copy stays.
+func Installed() []string {
+	var out []string
+	for _, agent := range []string{"claude", "codex"} {
+		dir := Dir(agent)
+		if b, err := os.ReadFile(filepath.Join(dir, "SKILL.md")); err == nil && bytes.Equal(b, Content) {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
+// Remove deletes the skill from dir, and dir when nothing else is in it.
+func Remove(dir string) error {
+	if err := os.Remove(filepath.Join(dir, "SKILL.md")); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove skill: %w", err)
+	}
+	_ = os.Remove(dir)
+	return nil
 }

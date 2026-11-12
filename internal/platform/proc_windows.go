@@ -3,8 +3,11 @@
 package platform
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -45,4 +48,36 @@ func Reopen(exe string) error {
 	}
 	os.Exit(0)
 	return nil
+}
+
+// RemoveBinary deletes prowl.exe at exe once this prowl exits, since Windows
+// won't delete a running program. When its folder holds nothing else, it goes
+// too and comes off your PATH, where install.ps1 put it.
+func RemoveBinary(exe string) error {
+	dir := filepath.Dir(exe)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("remove %s: %w", exe, err)
+	}
+	name := filepath.Base(exe)
+	old := strings.TrimSuffix(name, ".exe") + ".old.exe"
+	alone := true
+	for _, e := range entries {
+		if !strings.EqualFold(e.Name(), name) && !strings.EqualFold(e.Name(), old) {
+			alone = false
+		}
+	}
+	script := fmt.Sprintf(`ping -n 3 127.0.0.1 >nul & del /f /q "%s"`, exe)
+	if alone {
+		script += fmt.Sprintf(` & rmdir /s /q "%s"`, dir)
+		path := fmt.Sprintf(`$d='%s'; $p=[Environment]::GetEnvironmentVariable('Path','User'); `+
+			`[Environment]::SetEnvironmentVariable('Path', (($p -split ';') | Where-Object { $_ -and $_ -ne $d }) -join ';', 'User')`,
+			strings.ReplaceAll(dir, "'", "''"))
+		if err := exec.Command("powershell", "-NoProfile", "-Command", path).Run(); err != nil {
+			return fmt.Errorf("take %s off PATH: %w", dir, err)
+		}
+	}
+	cmd := exec.Command("cmd", "/c", script)
+	Detach(cmd)
+	return cmd.Start()
 }

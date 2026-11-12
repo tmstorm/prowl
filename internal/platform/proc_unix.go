@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
@@ -29,3 +30,12 @@ func Restart(exe string) error {
 // Reopen replaces this terminal program with a fresh run of exe in the same
 // terminal. It returns only on failure.
 func Reopen(exe string) error { return Restart(exe) }
+
+// RemoveBinary deletes the prowl binary at exe; a running program keeps
+// working until it exits.
+func RemoveBinary(exe string) error {
+	if err := os.Remove(exe); err != nil {
+		return fmt.Errorf("remove %s: %w", exe, err)
+	}
+	return nil
+}

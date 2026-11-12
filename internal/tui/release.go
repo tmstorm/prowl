@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -156,6 +157,55 @@ func Installed(cfg config.Config, r core.Release, exe string, restarting bool, w
 		out += "\n\n" + sTitle.Render("What's new in prowl "+r.Latest) + "\n\n" + strings.Join(ls, "\n")
 	}
 	return out
+}
+
+// Uninstalling is what `prowl uninstall` shows first: what it removes, what
+// it keeps, and what removes prowl when a package manager owns it, then the
+// question when ask is set, in cfg's theme.
+func Uninstalling(cfg config.Config, f core.Footprint, ask bool) string {
+	applyConfig(cfg)
+	home, _ := os.UserHomeDir()
+	short := func(p string) string {
+		if rest, ok := strings.CutPrefix(p, home); ok && home != "" {
+			return "~" + rest
+		}
+		return p
+	}
+	var items []string
+	if f.Service {
+		items = append(items, "background notifications: prowl watch at login")
+	}
+	for _, dir := range f.Checkouts {
+		items = append(items, "prowl's review worktrees and refs in "+short(dir))
+	}
+	for _, dir := range f.Skills {
+		items = append(items, "the prowl-findings skill in "+short(dir))
+	}
+	for _, dir := range f.Dirs {
+		items = append(items, short(dir))
+	}
+	if f.Binary != "" {
+		items = append(items, short(f.Binary))
+	}
+	var b strings.Builder
+	if len(items) == 0 {
+		b.WriteString(sTitle.Render("prowl left nothing to remove") + "\n")
+	} else {
+		b.WriteString(sTitle.Render("prowl uninstall removes") + "\n")
+		for _, it := range items {
+			b.WriteString("  " + sPink.Render("•") + " " + it + "\n")
+		}
+	}
+	if len(f.Dirs) == 0 {
+		b.WriteString("  " + sDim.Render("It keeps your config and data in "+short(config.Dir())+" and "+short(config.DataDir())+"; --purge removes them too.") + "\n")
+	}
+	if f.Command != "" {
+		b.WriteString("  " + sDim.Render("A package manager owns prowl itself: "+f.Command) + "\n")
+	}
+	if ask && len(items) > 0 {
+		b.WriteString("\n" + sYellow.Bold(true).Render("?") + " Remove these? " + sDim.Render("[y/N]") + " ")
+	}
+	return b.String()
 }
 
 var (
