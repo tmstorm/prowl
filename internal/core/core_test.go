@@ -763,7 +763,8 @@ echo '{"type":"result","session_id":"s1","structured_output":{"summary":"A panic
 	if strings.Contains(prompt, "Points raised") {
 		t.Error("a local review has no points raised by others")
 	}
-	if d := strings.TrimSpace(read(t, filepath.Join(bin, "dirs"))); !strings.HasPrefix(d, dir) {
+	real, _ := filepath.EvalSymlinks(dir)
+	if d := strings.TrimSpace(read(t, filepath.Join(bin, "dirs"))); !strings.HasPrefix(d, real) {
 		t.Errorf("the agent ran in %q, not the checkout", d)
 	}
 
