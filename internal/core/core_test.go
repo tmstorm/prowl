@@ -298,8 +298,8 @@ func TestRunReportsReviews(t *testing.T) {
 	}
 }
 
-// A review can't start without its agent, nor revise a review that doesn't
-// exist.
+// A review can't start without its agent or git, nor revise a review that
+// doesn't exist.
 func TestReviewNeedsAgentAndRun(t *testing.T) {
 	co, _ := newCore(t, &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me")}})
 	refresh(t, co)
@@ -307,6 +307,9 @@ func TestReviewNeedsAgentAndRun(t *testing.T) {
 		t.Fatalf("want a missing agent, got %v", err)
 	}
 	fakeClaude(t)
+	if _, err := co.Review("o/api#1", ""); err == nil || !strings.Contains(err.Error(), "AI reviews need git") {
+		t.Fatalf("want a missing git, got %v", err)
+	}
 	if _, err := co.Revise("o/api#1", "claude", "drop the nit"); err == nil || !strings.Contains(err.Error(), "no Claude review to revise") {
 		t.Fatalf("want nothing to revise, got %v", err)
 	}
