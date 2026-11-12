@@ -24,6 +24,11 @@ aurs:
     description: The PR owl, a terminal review queue for GitHub pull requests
     license: MIT
     depends: [github-cli, git]
+    optdepends:
+      - "libnotify: desktop notifications"
+      - "xdg-utils: opening links in the browser"
+      - "wl-clipboard: copying on Wayland"
+      - "xclip: copying on X11"
     private_key: "{{ index .Env \"AUR_KEY\" }}"
     git_url: ssh://aur@aur.archlinux.org/prowl-bin.git
     skip_upload: "{{ if not (index .Env \"AUR_KEY\") }}true{{ end }}"
