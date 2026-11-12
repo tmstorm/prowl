@@ -41,7 +41,8 @@ func TestEditsMarkdown(t *testing.T) {
 }
 
 // The findings carry each reviewer's note, which holds what it left out of
-// the findings, but not your side of the chat.
+// the findings, but not your side of the chat. The prompt for a coding agent
+// says a note is not a finding.
 func TestFindingsMarkdownNotes(t *testing.T) {
 	runs := []*store.AgentReview{{Agent: "claude", Status: "done", HeadOid: "bd7038b2aa", FinishedAt: time.Now()}}
 	notes := map[string][]store.LogEntry{"claude": {
@@ -56,5 +57,8 @@ func TestFindingsMarkdownNotes(t *testing.T) {
 	}
 	if strings.Contains(md, "why?") {
 		t.Errorf("your chat leaked into the findings:\n%s", md)
+	}
+	if p := agent.HandoffPrompt(md); !strings.Contains(p, "\"Note from\" section is the reviewer writing to me, not a finding") {
+		t.Errorf("the prompt doesn't say a note isn't a finding:\n%s", p)
 	}
 }
