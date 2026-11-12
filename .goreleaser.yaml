@@ -1,0 +1,39 @@
+# Release builds, run by .github/workflows/release-please.yml when
+# release-please cuts a release. release-please writes the changelog.
+version: 2
+project_name: prowl
+builds:
+  - env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags: -s -w -X main.version={{ .Version }}
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+checksum:
+  name_template: checksums.txt
+aurs:
+  # prowl-bin on the AUR, built from the release archives. Needs the AUR_KEY
+  # secret (an SSH key added to the AUR account); without it the upload is
+  # skipped and the rest of the release goes ahead.
+  - name: prowl-bin
+    homepage: https://github.com/tmstorm/prowl
+    description: The PR owl, a terminal review queue for GitHub pull requests
+    license: MIT
+    depends: [github-cli, git]
+    private_key: "{{ index .Env \"AUR_KEY\" }}"
+    git_url: ssh://aur@aur.archlinux.org/prowl-bin.git
+    skip_upload: "{{ if not (index .Env \"AUR_KEY\") }}true{{ end }}"
+    package: |-
+      install -Dm755 ./prowl "${pkgdir}/usr/bin/prowl"
+      install -Dm644 ./LICENSE "${pkgdir}/usr/share/licenses/prowl-bin/LICENSE"
+changelog:
+  disable: true
+release:
+  github:
+    owner: tmstorm
+    name: prowl
+  mode: keep-existing

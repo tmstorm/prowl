@@ -1,0 +1,28 @@
+version: "3"
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  build:
+    desc: Build ./prowl
+    cmds:
+      - go build -o prowl .
+
+  run:
+    desc: Build and open the TUI
+    deps: [build]
+    cmds:
+      - ./prowl
+
+  install:
+    desc: Install to ~/.local/bin
+    cmds:
+      - go build -o {{.HOME}}/.local/bin/prowl .
+
+  test:
+    desc: Run tests and vet
+    cmds:
+      - go vet ./...
+      - go test ./...

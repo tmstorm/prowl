@@ -1,0 +1,322 @@
+package tui_test
+
+import (
+	"fmt"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/tmstorm/prowl/internal/config"
+	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/store"
+)
+
+func needsReview(repo string, n int, title string) gh.PR {
+	return requested(pr(repo, n, title, "alice"), "me")
+}
+
+// Inside a section fixes come first and chores last, ties in wait order;
+// <space>ft narrows the inbox to one type.
+func TestSortAndFocusByCommitType(t *testing.T) {
+	var prs []gh.PR
+	for i, title := range []string{"chore: bump deps", "docs: readme", "feat: new thing", "fix: crash", "Update stuff", "fix: other crash"} {
+		prs = append(prs, needsReview("api", i+1, title))
+	}
+	a := newApp(t, &fakeGitHub{PRs: prs})
+	a.before("fix: crash", "fix: other crash", "feat: new thing", "docs: readme", "Update stuff", "chore: bump deps")
+	a.keys("space", "f", "t")
+	a.paste("fix")
+	a.keys("enter")
+	a.want("fix: crash", "fix: other crash")
+	a.wantNot("feat: new thing", "chore: bump deps")
+	a.keys("esc")
+	a.want("chore: bump deps")
+}
+
+// za folds the section under the cursor down to its header, the cursor
+// stays on it through a sync, and enter opens it again.
+func TestFoldInboxSection(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one"), needsReview("api", 2, "fix: two")}})
+	a.keys("z", "a")
+	a.want("▸ NEEDS REVIEW 2")
+	a.wantNot("fix: one")
+	a.refresh()
+	if !strings.Contains(a.selected(), "NEEDS REVIEW") {
+		t.Fatalf("a sync moved the cursor off the folded header: %q", a.selected())
+	}
+	a.keys("enter")
+	a.want("▾ NEEDS REVIEW 2", "fix: one", "fix: two")
+}
+
+// A sync with fewer PRs (one merged) keeps the PR you're on selected.
+func TestSyncWithFewerPRs(t *testing.T) {
+	fake := &fakeGitHub{}
+	for i := 1; i <= 6; i++ {
+		fake.PRs = append(fake.PRs, needsReview("api", i, fmt.Sprintf("fix: number %d", i)))
+	}
+	a := newApp(t, fake)
+	a.keys("G", "k")
+	want := a.selected()
+	fake.PRs = append(fake.PRs[:1], fake.PRs[3:]...)
+	a.refresh()
+	if got := a.selected(); got != want {
+		t.Fatalf("selection moved from %q to %q", want, got)
+	}
+	fake.PRs = fake.PRs[:1]
+	a.refresh()
+	if a.selected() == "" {
+		t.Fatal("no selection after the inbox shrank")
+	}
+}
+
+// When a sync moves the PR you're on out of the tab (you approved it), it
+// stays under the cursor until you move off it.
+func TestSelectedPRStaysThroughSync(t *testing.T) {
+	fake := &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one"), needsReview("api", 2, "fix: two")}}
+	a := newApp(t, fake)
+	if !strings.Contains(a.selected(), "fix: one") {
+		t.Fatalf("setup: %q", a.selected())
+	}
+	fake.PRs[0].ReviewRequests.Nodes = nil
+	fake.PRs[0].Reviews.Nodes = []gh.Review{{Author: &gh.Actor{Login: "me"}, State: "APPROVED", SubmittedAt: time.Now()}}
+	a.refresh()
+	if !strings.Contains(a.selected(), "fix: one") {
+		t.Fatalf("the approved PR left the cursor: %q", a.selected())
+	}
+	a.keys("k")
+	if strings.Contains(a.list(), "fix: one") {
+		t.Fatal("once you move off it, the approved PR leaves Needs me")
+	}
+}
+
+// 0 and 1 pick the pane; 2-9 pick a tab inside the focused pane. Counts read
+// focused/total while a repo is in focus.
+func TestPanesTabsAndCounts(t *testing.T) {
+	mine := pr("web", 9, "feat: mine", "me")
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one"), mine}})
+	a.resize(230, 44)
+	a.want("[2] Needs me (1)", "[4] Mine (1)")
+	a.keys("4")
+	a.want("feat: mine")
+	a.wantNot("fix: one")
+	a.keys("1", "4")
+	a.want("No AI review yet")
+	a.keys("0", "3")
+	a.keys("space", "f", "r")
+	a.paste("api")
+	a.keys("enter")
+	a.want("[3] All (1/2)")
+}
+
+// The screen fills the terminal: panes, then the statusline on the last row,
+// which a message replaces only while it shows.
+func TestFullHeight(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}})
+	ls := a.lines()
+	if len(ls) != a.h || !strings.Contains(ls[len(ls)-1], "NORMAL") {
+		t.Fatalf("%d lines, last %q", len(ls), ls[len(ls)-1])
+	}
+}
+
+// The statusline owl says how things stand, and a click on it shows what
+// needs you. The tab title carries the count.
+func TestStatusOwlAndTitle(t *testing.T) {
+	old := needsReview("api", 1, "fix: old")
+	old.CreatedAt = time.Now().Add(-72 * time.Hour)
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{old, needsReview("api", 2, "fix: new")}})
+	last := func() string { ls := a.lines(); return ls[len(ls)-1] }
+	if !strings.HasPrefix(last(), " (O,O) ") || a.title != "prowl · 2 need you" {
+		t.Fatalf("owl %q, title %q", last(), a.title)
+	}
+	a.resize(230, 44)
+	a.keys("3")
+	a.click("(O,O)")
+	a.want("[2] Needs me (2)")
+	empty := newApp(t, &fakeGitHub{PRs: []gh.PR{pr("web", 9, "feat: mine", "me")}})
+	if ls := empty.lines(); !strings.HasPrefix(ls[len(ls)-1], " (-,-) ") || empty.title != "prowl" {
+		t.Fatalf("nothing needs you: %q, %q", ls[len(ls)-1], empty.title)
+	}
+}
+
+// <space>fr lists every repo in your orgs. Focusing one you don't watch
+// fetches all its open PRs, with a summary of where they stand; esc stops.
+func TestFocusAnyRepo(t *testing.T) {
+	other := pr("infra", 5, "chore: release", "bob")
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}, Others: []gh.PR{other},
+		Repos: []string{"o/api", "o/infra"}}, func(c *config.Config) { c.Orgs = []string{"o"} })
+	a.wantNot("chore: release")
+	a.keys("space", "f", "r")
+	a.want("infra")
+	a.paste("infra")
+	a.keys("enter")
+	a.want("chore: release", "UNCLAIMED", "infra · 1 open · 1 unclaimed", "<space>w keeps watching it")
+	a.keys("esc")
+	a.want("fix: one")
+}
+
+// A fork and its upstream share a name: the repo picker tells them apart,
+// focusing one shows only its PRs, and api#N is ambiguous between them.
+func TestForkAndUpstream(t *testing.T) {
+	fork := needsReview("api", 2, "fix: in the fork")
+	fork.Repository.NameWithOwner = "bob/api"
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: upstream"), fork}})
+	a.keys("space", "f", "r")
+	a.want("o/api", "bob/api")
+	a.paste("bob/api")
+	a.keys("enter")
+	a.want("fix: in the fork", "api · 1 open")
+	a.wantNot("fix: upstream")
+	a.keys("space", "w")
+	a.want("watching bob/api")
+	a.keys("esc", "ctrl+p")
+	a.paste("api#7")
+	a.wantNot("from GitHub")
+}
+
+// ctrl+p searches the inbox; a pasted PR link it can't find is fetched and
+// opened. An empty box shows its whole hint.
+func TestFinder(t *testing.T) {
+	other := pr("infra", 5, "chore: release", "bob")
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}, Others: []gh.PR{other}})
+	a.keys("ctrl+p")
+	a.want("repo, title, author, number, or paste a PR link")
+	a.paste("https://github.com/o/infra/pull/5")
+	a.want("open o/infra#5 from GitHub")
+	a.keys("enter")
+	a.want("infra#5", "chore: release")
+}
+
+// An empty inbox has the owl asleep, the little one in a short window, and
+// plain text with playful off. The first sync wakes it up.
+func TestOwls(t *testing.T) {
+	a := newApp(t, &fakeGitHub{})
+	a.want("(-)   (-)", "no open pull requests")
+	a.resize(160, 18)
+	a.want("( -,- )")
+	plain := newApp(t, &fakeGitHub{}, func(c *config.Config) { c.Playful = false })
+	plain.want("no open pull requests")
+	plain.wantNot("(-)   (-)")
+	waking := newApp(t, &fakeGitHub{Slow: true})
+	waking.want("/\\       /\\", "fetching your pull requests")
+}
+
+// The legend is labelled, and the key help never wraps at any width.
+func TestLegendAndHelp(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}})
+	a.want("┄┄ legend ┄")
+	for _, w := range []int{80, 120, 160} {
+		a.resize(w, 50)
+		a.keys("space", "?")
+		a.want("Keys", "any key to close", "hide it")
+		if n := len(a.lines()); n != a.h {
+			t.Fatalf("width %d: screen has %d lines, help wrapped", w, n)
+		}
+		a.keys("esc")
+	}
+}
+
+// A profile run is its own section beside the plain review, and <space>cp
+// lists the profiles, adversarial built in.
+func TestReviewProfiles(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	for _, profile := range []string{"", "adversarial"} {
+		id, _ := a.st.StartRun("o/api#7", "abc1234", "claude", profile, 0)
+		_ = a.st.SetReviewModel(id, "claude-opus-5-5")
+		_ = a.st.FinishReview(id, "s", "summary "+profile, "", []store.Finding{{Severity: "must-fix", Path: "a.go", Line: 3, Title: "bad " + profile}})
+	}
+	a = reopen(a)
+	a.keys("enter", "4")
+	a.want("▾ Claude · ready · Opus 5.5", "▾ Claude · adversarial · ready", "bad adversarial", "also found by Claude · adversarial")
+	a.keys("space", "c", "p")
+	a.want("Run a review profile on o/api#7", "as an adversary")
+	a.keys("enter")
+	a.want("`claude` is not on your PATH")
+}
+
+// prowl draws the inbox it saw last time at once, while the first sync runs,
+// with the waking owl in the PR pane until you touch something.
+func TestStartsFromLastInbox(t *testing.T) {
+	fake := &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}}
+	a := newApp(t, fake)
+	fake.Slow = true
+	a = reopen(a)
+	a.want("fix: one", "syncing", "/\\       /\\", "fetching your pull requests")
+	a.wantNot("Reviewers")
+	if title := a.lines()[0]; !strings.ContainsAny(title, "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏") {
+		t.Fatalf("the inbox title should show the sync spinner: %q", title)
+	}
+	a.keys("j")
+	a.waitFor("Reviewers")
+	a.wantNot("fetching your pull requests")
+}
+
+// A snoozed PR that needs you is still mentioned in the summary line, so it
+// isn't forgotten.
+func TestSnoozedInSummary(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 855, "chore: promote")}})
+	a.keys("space", "s", "1")
+	a.wantNot("chore: promote")
+	a.want("nothing needs you", "1 snoozed until")
+}
+
+// The leader is configurable: with "," it opens the action menu, space
+// doesn't, hints show ",", and ",," still opens the options.
+func TestLeaderKey(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, func(c *config.Config) { c.Leader = "," })
+	a.keys("enter", "4")
+	a.want(",cc starts one")
+	a.wantNot("<space>")
+	a.keys("space", "a")
+	a.wantNot("approve api#7?")
+	a.keys(",", "a")
+	a.want("approve api#7?")
+	a.keys("esc", ",", ",")
+	a.want("Options")
+}
+
+// Repo names show in full unless repo_prefix strips one; a name too long
+// for the column is cut in the middle so repos sharing a prefix still
+// differ.
+func TestRepoNames(t *testing.T) {
+	prs := []gh.PR{needsReview("acme-api", 1, "fix: one"), needsReview("acme-sdk-unreal-chat-demo", 2, "fix: two")}
+	a := newApp(t, &fakeGitHub{PRs: prs})
+	a.want("acme-api", "acme-sdk-…-chat-demo")
+	trimmed := newApp(t, &fakeGitHub{PRs: prs}, func(c *config.Config) { c.RepoPrefix = "acme-" })
+	trimmed.want("api ", "sdk-unreal-chat-demo")
+	trimmed.wantNot("acme-")
+}
+
+// Someone new to vim keys gets in: the legend lists the basic keys, ? opens
+// the help, the arrows move between panes, and the statusline's menu button
+// opens the leader menu with a click.
+func TestNewcomerKeys(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.want("↑↓ move · ←→ panes · enter open · ? keys", "<space> menu")
+	a.keys("?")
+	a.want("Keys", "any key to close", "suggest a change")
+	a.keys("esc")
+	a.keys("right", "4")
+	a.want("No AI review yet")
+	a.keys("left")
+	a.clickFirst("<space> menu")
+	a.want("approve")
+}
+
+// The first launch suggests background notifications, once. The switch in
+// the options sets up prowl watch as a login service.
+func TestBackgroundNotifications(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the service is a systemd unit on Linux")
+	}
+	f := &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Bins: map[string]string{"systemctl": "exit 0"}}
+	a := newApp(t, f)
+	a.want("tip: <space>, → Background notifications")
+	a = reopen(a)
+	a.wantNot("tip: <space>,")
+	a.keys("space", ",")
+	a.want("Background notifications", "○ off")
+	a.clickFirst("Background notifications")
+	a.clickFirst("Background notifications")
+	a.want("background notifications on: systemd user service")
+}
