@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
@@ -349,4 +352,52 @@ func TestUpdateInstalled(t *testing.T) {
 	if !a.m.(*tui.Model).Restart() {
 		t.Fatal("<leader>U should quit to restart into the installed release")
 	}
+}
+
+// `prowl update` says where it installed the release and what's new in it,
+// including text added to the notes by hand.
+func TestInstalled(t *testing.T) {
+	notes := "## [0.2.0](https://github.com/tmstorm/prowl/compare/v0.1.0...v0.2.0) (2026-11-20)\n\n" +
+		"Run `prowl service install` again after this one.\n\n### Features\n\n* **update:** show the step ([e2449d5](https://github.com/tmstorm/prowl/commit/e2449d5))\n\n" +
+		"### Upgrading\n\nNothing else to do.\n"
+	out := ansi.Strip(tui.Installed(config.Default(), core.Release{Latest: "v0.2.0", Notes: notes}, "/opt/bin/prowl", true, 80))
+	for _, want := range []string{"✓ prowl v0.2.0 is installed at /opt/bin/prowl", "the background service restarts into it",
+		"What's new in prowl v0.2.0", "released 2026-11-20", "Run prowl service install again after this one.",
+		"feat(update): show the step", "Upgrading", "Nothing else to do."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "e2449d5") {
+		t.Errorf("commit link left in:\n%s", out)
+	}
+	out = ansi.Strip(tui.Installed(config.Default(), core.Release{Latest: "v0.2.0"}, "/opt/bin/prowl", false, 80))
+	if strings.Contains(out, "What's new") || strings.Contains(out, "restarts into it") {
+		t.Errorf("no notes and no service, but:\n%s", out)
+	}
+}
+
+// While prowl updates itself the statusline shows the step it is on.
+func TestUpdateStep(t *testing.T) {
+	old := core.Version
+	core.Version = "0.1.0"
+	t.Cleanup(func() { core.Version = old })
+	fake := &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")},
+		Release: &gh.Release{Tag: "v0.2.0", Assets: []gh.Asset{{ID: 1, Name: "checksums.txt"}, {ID: 2, Name: "checksums.txt.minisig"}}},
+		Assets:  map[int64][]byte{1: []byte("not signed"), 2: []byte("no")}}
+	reached, done := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	fake.OnAsset = func(int64) {
+		once.Do(func() {
+			close(reached)
+			<-done
+		})
+	}
+	a := newApp(t, fake)
+	a.keys("space", "U")
+	<-reached
+	a.want("verifying prowl v0.2.0")
+	close(done)
+	a.waitFor("unverified release")
+	a.wantNot("verifying prowl v0.2.0")
 }

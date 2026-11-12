@@ -168,13 +168,20 @@ var noteTypes = map[string]string{
 
 // noteLines renders release-please's notes like the inbox: each change as a
 // conventional commit title in its type's color, with the PR it came from,
-// and without the version heading or commit links. Notes in any other shape
-// render as markdown.
+// and without the version heading or commit links. Anything added to the
+// notes by hand shows as text. Notes with no changes listed render as
+// markdown.
 func noteLines(notes string, w int) []string {
 	var out []string
 	typ, items := "", 0
 	for l := range strings.Lines(notes) {
 		l = strings.TrimSpace(l)
+		if l == "" || l == "---" {
+			if len(out) > 0 && out[len(out)-1] != "" {
+				out = append(out, "")
+			}
+			continue
+		}
 		if m := notesVersion.FindStringSubmatch(l); m != nil {
 			if m[2] != "" {
 				out = append(out, sDim.Render("released "+m[2]), "")
@@ -182,17 +189,27 @@ func noteLines(notes string, w int) []string {
 			continue
 		}
 		if m := notesSection.FindStringSubmatch(l); m != nil {
-			typ = noteTypes[m[1]]
-			if strings.Contains(m[1], "BREAKING") {
-				typ = "!"
-			}
 			if len(out) > 0 && out[len(out)-1] != "" {
 				out = append(out, "")
+			}
+			typ = noteTypes[m[1]]
+			switch {
+			case strings.Contains(m[1], "BREAKING"):
+				typ = "!"
+			case typ == "":
+				out = append(out, " "+sTitle.Render(m[1]))
 			}
 			continue
 		}
 		m := notesItem.FindStringSubmatch(l)
 		if m == nil {
+			text := codeSpans(notesCommit.ReplaceAllString(l, ""))
+			if strings.HasPrefix(l, "#") {
+				text = sTitle.Render(strings.TrimLeft(l, "# "))
+			}
+			for _, wl := range wrap(text, w-1) {
+				out = append(out, " "+strings.TrimRight(wl, " "))
+			}
 			continue
 		}
 		items++
@@ -223,6 +240,9 @@ func noteLines(notes string, w int) []string {
 	}
 	if items == 0 {
 		return renderMarkdown(notesCommit.ReplaceAllString(notes, ""), w, themeName)
+	}
+	for len(out) > 0 && out[len(out)-1] == "" {
+		out = out[:len(out)-1]
 	}
 	return out
 }
