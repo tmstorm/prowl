@@ -129,6 +129,7 @@ func FindingsMarkdown(runs []*store.AgentReview, notes map[string][]store.LogEnt
 func HandoffPrompt(findings string) string {
 	return "Check these review findings against the code on this branch and fix the ones that hold up. " +
 		"Verify each one first; if you disagree with a finding, say why instead of changing code. " +
+		"A \"Note from\" section is the reviewer writing to me, not a finding: don't change code for it, but tell me anything in it I should act on. " +
 		"Don't commit or push; I'll review your changes.\n\n" + findings
 }
 
