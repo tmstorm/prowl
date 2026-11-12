@@ -23,6 +23,10 @@ import (
 
 type fakeGitHub = ghtest.GitHub
 
+// askIcons lets the first sync ask about Nerd Font icons; the other tests
+// have it answered already.
+var askIcons = false
+
 func pr(repo string, n int, title, author string) gh.PR { return ghtest.PR(repo, n, title, author) }
 func requested(p gh.PR, who string) gh.PR               { return ghtest.Requested(p, who) }
 
@@ -60,6 +64,9 @@ func newApp(t *testing.T, fake *fakeGitHub, configure ...func(*config.Config)) *
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
+	if !askIcons {
+		st.FirstTime("nerd font")
+	}
 	cfg := config.Default()
 	for _, f := range configure {
 		f(&cfg)

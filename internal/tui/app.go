@@ -91,6 +91,7 @@ type forwarder interface {
 type confirm struct {
 	prompt string
 	yes    func() tea.Cmd
+	no     func() tea.Cmd // nil: "cancelled"
 }
 
 type Model struct {
@@ -272,6 +273,26 @@ func (m *Model) configChanged() tea.Cmd {
 	return tea.DisableMouse
 }
 
+// askIcons asks whether the terminal shows Nerd Font icons, which only the
+// person looking can tell, and turns nerd_font on when it does.
+func (m *Model) askIcons() {
+	m.confirm = &confirm{
+		prompt: "Do you see three icons here: \uf09b  \ue725  \uf00c ? Yes turns on Nerd Font icons. [y/N]",
+		yes: func() tea.Cmd {
+			if _, err := m.core.Update(func(c *config.Config) error { c.NerdFont = true; return nil }); err != nil {
+				m.fail(err.Error())
+				return nil
+			}
+			m.info("Nerd Font icons on")
+			return m.configChanged()
+		},
+		no: func() tea.Cmd {
+			m.info("icons stay off; " + leader + ", → Nerd Font icons turns them on")
+			return nil
+		},
+	}
+}
+
 // applySync takes the inbox after a sync and notifies what changed, except
 // on the first sync, whose changes are on screen already, and while
 // prowl watch runs: it sends the notifications then.
@@ -288,6 +309,9 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 	}
 	if !m.synced && m.core.OfferService() {
 		m.tip = "tip: <leader>, → Background notifications tells you about PRs while prowl is closed"
+	}
+	if !m.synced && m.core.AskNerdFont() {
+		m.askIcons()
 	}
 	m.synced = true
 	selKey := m.selectionKey()
@@ -992,6 +1016,9 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 		m.mode = modeNormal
 		if key == "y" || key == "Y" {
 			return c.yes()
+		}
+		if c.no != nil {
+			return c.no()
 		}
 		m.info("cancelled")
 		return nil
