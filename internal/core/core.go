@@ -306,9 +306,9 @@ func Notify(changes []inbox.Item, timeout time.Duration) {
 	}
 }
 
-// pruneClosed deletes the review history and worktrees of PRs that GitHub
-// says are merged or closed. A PR missing from the inbox isn't enough: it may
-// have been opened by link, or be in a repo only peeked at.
+// pruneClosed deletes the review history, worktrees and refs of PRs that
+// GitHub says are merged or closed. A PR missing from the inbox isn't enough:
+// it may have been opened by link, or be in a repo only peeked at.
 func (co *Core) pruneClosed(open map[string]string) {
 	keys, err := co.st.ReviewedPRs()
 	if err != nil {
@@ -324,9 +324,18 @@ func (co *Core) pruneClosed(open map[string]string) {
 		}
 		if pr, err := co.gh.PR(repo, n); err == nil && pr.State != "OPEN" {
 			_ = co.st.DeleteReviews(key)
-			agent.RemoveWorktrees(repo, n)
+			agent.RemoveReview(co.Config(), repo, n)
 		}
 	}
+}
+
+// PruneOrphans removes review worktrees and refs/prowl/* refs left for PRs
+// prowl has no review of, in your checkouts and its own clones.
+func (co *Core) PruneOrphans() {
+	agent.PruneOrphans(co.Config(), func(repo string, n int) bool {
+		runs, err := co.st.Runs(fmt.Sprintf("%s#%d", repo, n))
+		return err != nil || len(runs) > 0
+	})
 }
 
 func bots(cfg config.Config) map[string]bool {

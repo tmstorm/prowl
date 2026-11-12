@@ -102,15 +102,33 @@ func TestPeek(t *testing.T) {
 }
 
 // A reviewed PR that isn't in the inbox keeps its history while it is open
-// (opened by link, say) and loses it once merged.
+// (opened by link, say) and loses it once merged, with the refs its reviews
+// fetched into your checkout. Refs and worktrees of a PR prowl has no review
+// of go too.
 func TestRefreshPrunesOnlyClosedPRs(t *testing.T) {
+	path := os.Getenv("PATH")
 	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("r", 1, "a", "bob"), ghtest.PR("r", 2, "b", "bob")},
 		Closed: map[string]bool{"o/r#2": true}}
 	co, st := newCore(t, fake)
+	t.Setenv("PATH", path)
 	for _, key := range []string{"o/r#1", "o/r#2"} {
 		if _, err := st.StartRun(key, "h", "claude", "", 0); err != nil {
 			t.Fatal(err)
 		}
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "r")
+	_ = os.MkdirAll(repo, 0o755)
+	gitIn(t, repo, "init", "-q")
+	gitIn(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "first")
+	for _, n := range []string{"1", "2", "3"} {
+		gitIn(t, repo, "update-ref", "refs/prowl/pr-"+n+"-claude", "HEAD")
+	}
+	orphan := agent.WorktreePath("o/r", 3, "claude")
+	gitIn(t, repo, "worktree", "add", "-q", "--detach", orphan, "HEAD")
+	if _, err := co.Update(func(c *config.Config) error { c.RepoRoots = []string{root}; return nil }); err != nil {
+		t.Fatal(err)
 	}
 	refresh(t, co)
 	if runs, _ := st.Runs("o/r#1"); len(runs) != 1 {
@@ -118,6 +136,18 @@ func TestRefreshPrunesOnlyClosedPRs(t *testing.T) {
 	}
 	if runs, _ := st.Runs("o/r#2"); len(runs) != 0 {
 		t.Error("a merged PR kept its review history")
+	}
+	out, _ := exec.Command("git", "-C", repo, "for-each-ref", "--format=%(refname)", "refs/prowl/").Output()
+	if refs := strings.TrimSpace(string(out)); refs != "refs/prowl/pr-1-claude\nrefs/prowl/pr-3-claude" {
+		t.Errorf("after the sync, refs left: %q", refs)
+	}
+	co.PruneOrphans()
+	out, _ = exec.Command("git", "-C", repo, "for-each-ref", "--format=%(refname)", "refs/prowl/").Output()
+	if refs := strings.TrimSpace(string(out)); refs != "refs/prowl/pr-1-claude" {
+		t.Errorf("refs left: %q", refs)
+	}
+	if _, err := os.Stat(orphan); err == nil {
+		t.Error("the orphaned worktree is still there")
 	}
 }
 

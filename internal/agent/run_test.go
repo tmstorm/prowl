@@ -432,9 +432,10 @@ func TestDismissedApproval(t *testing.T) {
 	}
 }
 
-// Removing a PR's worktrees leaves every other PR's alone, including repo
-// api-1's PR 2 and PR 12, which a name pattern for api PR 1 could match.
-func TestRemoveWorktrees(t *testing.T) {
+// Removing a closed PR's review takes its worktrees and the refs its reviews
+// fetched, and leaves every other PR's alone, including repo api-1's PR 2
+// and PR 12, which a name pattern for api PR 1 could match.
+func TestRemoveReview(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	gone := []string{agent.WorktreePath("o/api", 1, "claude"), agent.WorktreePath("o/api", 1, "claude:adversarial")}
 	kept := []string{agent.WorktreePath("o/api-1", 2, "claude"), agent.WorktreePath("o/api", 12, "claude")}
@@ -443,7 +444,14 @@ func TestRemoveWorktrees(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	agent.RemoveWorktrees("o/api", 1)
+	clone := filepath.Join(config.DataDir(), "clones", "o", "api")
+	_ = os.MkdirAll(clone, 0o700)
+	git(t, clone, "init", "-q")
+	git(t, clone, "commit", "-q", "--allow-empty", "-m", "first")
+	for _, ref := range []string{"pr-1-claude", "pr-1", "pr-12-claude"} {
+		git(t, clone, "update-ref", "refs/prowl/"+ref, "HEAD")
+	}
+	agent.RemoveReview(config.Default(), "o/api", 1)
 	for _, d := range gone {
 		if _, err := os.Stat(d); err == nil {
 			t.Errorf("%s should be removed", d)
@@ -453,5 +461,8 @@ func TestRemoveWorktrees(t *testing.T) {
 		if _, err := os.Stat(d); err != nil {
 			t.Errorf("%s should stay: %v", d, err)
 		}
+	}
+	if refs := strings.TrimSpace(git(t, clone, "for-each-ref", "--format=%(refname)", "refs/prowl/")); refs != "refs/prowl/pr-12-claude" {
+		t.Errorf("refs left: %q", refs)
 	}
 }
