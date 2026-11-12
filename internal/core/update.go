@@ -33,6 +33,10 @@ var ReleaseKey = "RWRnTAuJsbzZwZRdbgiOGGmM7bLvnCgaIWYeDceGszaD6LAxs4DJdLCW"
 const (
 	releaseRepo = "tmstorm/prowl"
 	checkEvery  = 24 * time.Hour
+	// retryEvery spaces out background installs that failed: a broken
+	// archive or a binary prowl can't replace would otherwise download the
+	// release again on every poll.
+	retryEvery = time.Hour
 )
 
 // errUnverified is a release download that doesn't match its signed
@@ -210,8 +214,8 @@ func (co *Core) Upgrade(exe string) (string, error) {
 
 // AutoUpgrade checks for a release once a day and, with auto_update on and
 // prowl owning exe, installs it. A release that fails verification isn't
-// downloaded again (`prowl update` tries again); a network error is retried
-// on the next call. It returns the version it installed, or "".
+// downloaded again (`prowl update` tries again); any other failure is tried
+// again an hour later. It returns the version it installed, or "".
 func (co *Core) AutoUpgrade(exe string) (string, error) {
 	if err := co.CheckRelease(false); err != nil {
 		return "", err
@@ -223,9 +227,20 @@ func (co *Core) AutoUpgrade(exe string) (string, error) {
 	if last, _ := co.st.Release(); last.Attempted == r.Latest {
 		return "", nil
 	}
+	co.mu.Lock()
+	wait := time.Now().Before(co.updateRetry)
+	co.mu.Unlock()
+	if wait {
+		return "", nil
+	}
 	v, err := co.Upgrade(exe)
-	if errors.Is(err, errUnverified) {
+	switch {
+	case errors.Is(err, errUnverified):
 		_ = co.st.SetAttempted(r.Latest)
+	case err != nil:
+		co.mu.Lock()
+		co.updateRetry = time.Now().Add(retryEvery)
+		co.mu.Unlock()
 	}
 	return v, err
 }

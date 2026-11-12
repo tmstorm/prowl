@@ -43,6 +43,8 @@ type Core struct {
 	drafted  map[string]store.Review      // agent drafts on their way out, as prowl wrote them
 	unsent   map[string]Draft             // reviews that failed to post, by PR, until reopened
 
+	updateRetry time.Time // a failed background install waits until then to try again
+
 	serviceOnce sync.Once
 	service     bool // prowl watch runs at login
 

@@ -194,7 +194,7 @@ func TestUpgrade(t *testing.T) {
 }
 
 // In the background a release prowl can't verify isn't downloaded again on
-// every check, but one that failed to download is tried again.
+// every check, and one that failed to download is tried again an hour later.
 func TestAutoUpgrade(t *testing.T) {
 	running(t, "0.1.0")
 	fake := &ghtest.GitHub{}
@@ -222,6 +222,11 @@ func TestAutoUpgrade(t *testing.T) {
 		t.Fatal("a release without checksums installed")
 	}
 	fake.Release.Assets = assets
+	calls := fake.ReleaseCalls()
+	if v, err := co.AutoUpgrade(exe); err != nil || v != "" || fake.ReleaseCalls() != calls {
+		t.Fatalf("the failed install was tried again within the hour: %q, %v", v, err)
+	}
+	co.RetryNow()
 	if v, err := co.AutoUpgrade(exe); err != nil || v != "v0.3.0" {
 		t.Fatalf("auto upgrade: %q, %v", v, err)
 	}
