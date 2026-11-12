@@ -166,6 +166,8 @@ func (co *Core) Upgrade(exe string) (string, error) {
 	if co.gh == nil {
 		return "", errors.New("update: not logged in to GitHub")
 	}
+	co.setUpdating("checking for a newer prowl")
+	defer co.setUpdating("")
 	r, err := co.gh.LatestRelease(releaseRepo)
 	if err != nil {
 		return "", err
@@ -183,6 +185,7 @@ func (co *Core) Upgrade(exe string) (string, error) {
 	if runtime.GOOS == "windows" {
 		bin = "prowl.exe"
 	}
+	co.setUpdating("verifying prowl " + r.Tag)
 	sums, err := co.gh.Download(releaseRepo, r, "checksums.txt")
 	if err != nil {
 		return "", err
@@ -194,6 +197,7 @@ func (co *Core) Upgrade(exe string) (string, error) {
 	if err := verifySums(sums, sig, r.Tag); err != nil {
 		return "", fmt.Errorf("update to %s: %w: %w", r.Tag, errUnverified, err)
 	}
+	co.setUpdating("downloading prowl " + r.Tag)
 	archive, err := co.gh.Download(releaseRepo, r, name)
 	if err != nil {
 		return "", err
@@ -201,6 +205,7 @@ func (co *Core) Upgrade(exe string) (string, error) {
 	if err := checkSum(sums, name, archive); err != nil {
 		return "", fmt.Errorf("update to %s: %w: %w", r.Tag, errUnverified, err)
 	}
+	co.setUpdating("installing prowl " + r.Tag)
 	b, err := unpack(archive, bin)
 	if err != nil {
 		return "", fmt.Errorf("update to %s: %w", r.Tag, err)
@@ -243,6 +248,21 @@ func (co *Core) AutoUpgrade(exe string) (string, error) {
 		co.mu.Unlock()
 	}
 	return v, err
+}
+
+// Updating is what a running update is doing, like "downloading prowl v0.2.0",
+// or "" when none runs.
+func (co *Core) Updating() string {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	return co.updateStep
+}
+
+func (co *Core) setUpdating(step string) {
+	co.mu.Lock()
+	co.updateStep = step
+	co.mu.Unlock()
+	co.emit(Event{Kind: ReleaseChanged})
 }
 
 // WhatsNew is the running release and its notes, the first time this

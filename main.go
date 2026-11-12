@@ -463,18 +463,18 @@ func update(co *core.Core) error {
 		fmt.Printf("prowl %s is out; this prowl is updated with: %s\n", r.Latest, r.Command)
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "installing prowl %s…\n", r.Latest)
-	v, err := co.Upgrade(exe)
+	stop := showProgress(co, time.Now(), func(time.Time) string { return co.Updating() })
+	_, err := co.Upgrade(exe)
+	stop()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("installed prowl %s at %s\n", v, exe)
-	if co.WatchRunning() {
-		fmt.Println("the background service restarts into it in a few seconds")
+	r = co.Release(exe)
+	w := 100
+	if tw, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+		w = min(tw, w)
 	}
-	if strings.TrimSpace(r.Notes) != "" {
-		printMarkdown("# What's new in " + v + "\n\n" + r.Notes + "\n")
-	}
+	fmt.Println(tui.Installed(co.Config(), r, exe, co.WatchRunning(), w))
 	return nil
 }
 
@@ -581,7 +581,13 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 		return err
 	}
 	start := time.Now()
-	stop := showProgress(co, st, key, start)
+	stop := showProgress(co, start, func(now time.Time) string {
+		runs, _ := st.Runs(key)
+		if i := slices.IndexFunc(runs, func(r *store.AgentReview) bool { return r.Status == "running" }); i >= 0 {
+			return co.Progress(runs[i], now)
+		}
+		return ""
+	})
 	_, err = co.ReviewLocal(dir, reviewer, true)
 	stop()
 	if errors.Is(err, core.ErrNothingToReview) {
@@ -610,11 +616,12 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 	return nil
 }
 
-// showProgress keeps one line on stderr saying what the review of key is
-// doing, redrawn until stop is called: led by the blinking owl, or a plain
-// spinner with the owl turned off. When stderr isn't a terminal (a hook,
-// a log) it prints a line per step instead, with no control characters.
-func showProgress(co *core.Core, st *store.Store, key string, start time.Time) (stop func()) {
+// showProgress keeps one line on stderr saying what prowl is doing, from
+// step ("" shows nothing), redrawn until stop is called: led by the blinking
+// owl, or a plain spinner with the owl turned off. When stderr isn't a
+// terminal (a hook, a log) it prints a line per step instead, with no
+// control characters.
+func showProgress(co *core.Core, start time.Time, step func(now time.Time) string) (stop func()) {
 	fd := int(os.Stderr.Fd())
 	live := term.IsTerminal(fd)
 	done, finished := make(chan struct{}), make(chan struct{})
@@ -632,13 +639,11 @@ func showProgress(co *core.Core, st *store.Store, key string, start time.Time) (
 				return
 			case <-tick.C:
 			}
-			runs, _ := st.Runs(key)
-			i := slices.IndexFunc(runs, func(r *store.AgentReview) bool { return r.Status == "running" })
-			if i < 0 {
+			now := time.Now()
+			progress := step(now)
+			if progress == "" {
 				continue
 			}
-			now := time.Now()
-			progress := co.Progress(runs[i], now)
 			if !live {
 				if step, _, _ := strings.Cut(progress, ": "); step != lastStep {
 					lastStep = step

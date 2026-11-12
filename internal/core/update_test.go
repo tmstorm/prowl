@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,9 +171,17 @@ func TestUpgrade(t *testing.T) {
 		}
 	}
 	publish(t, fake, "v0.2.0", "v0.2.0", key, false)
+	var steps []string
+	fake.OnAsset = func(int64) { steps = append(steps, co.Updating()) }
 	v, err := co.Upgrade(exe)
 	if err != nil || v != "v0.2.0" {
 		t.Fatalf("upgrade: %q, %v", v, err)
+	}
+	if want := []string{"verifying prowl v0.2.0", "verifying prowl v0.2.0", "downloading prowl v0.2.0"}; !slices.Equal(steps, want) {
+		t.Errorf("steps: %q, want %q", steps, want)
+	}
+	if s := co.Updating(); s != "" {
+		t.Errorf("still updating after the install: %q", s)
 	}
 	if b, _ := os.ReadFile(exe); string(b) != "v0.2.0" {
 		t.Fatalf("binary is %q", b)

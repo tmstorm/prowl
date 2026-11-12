@@ -44,6 +44,7 @@ type GitHub struct {
 	Closed       map[string]bool
 	Release      *gh.Release      // the latest release of any repo; nil: none
 	Assets       map[int64][]byte // release asset -> its bytes
+	OnAsset      func(id int64)   // called as each release asset downloads
 	releaseCalls int
 	writes       []string
 	reviewCalls  int
@@ -113,6 +114,9 @@ func (f *GitHub) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	if m := regexp.MustCompile(`/releases/assets/(\d+)$`).FindStringSubmatch(path); m != nil {
 		id, _ := strconv.ParseInt(m[1], 10, 64)
+		if f.OnAsset != nil {
+			f.OnAsset(id)
+		}
 		return &http.Response{StatusCode: 200, Request: r, Body: io.NopCloser(bytes.NewReader(f.Assets[id])),
 			Header: http.Header{"Content-Type": []string{"application/octet-stream"}}}, nil
 	}

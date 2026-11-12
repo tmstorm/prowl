@@ -34,7 +34,7 @@ const (
 	SummaryChanged                  // an auto summary was written, or failed
 	AuthChanged                     // the periodic login check finished
 	ConfigChanged                   // the config file was edited outside prowl
-	ReleaseChanged                  // the hourly update check ran
+	ReleaseChanged                  // the hourly update check ran, or an update moved on a step
 )
 
 // Events delivers events to one reader. An event that finds the buffer full

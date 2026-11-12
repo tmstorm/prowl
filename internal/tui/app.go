@@ -349,7 +349,7 @@ func (m *Model) needsAnim() bool {
 	if m.loading {
 		return true
 	}
-	if m.runningReviews() > 0 || len(m.core.Summarizing()) > 0 {
+	if m.runningReviews() > 0 || len(m.core.Summarizing()) > 0 || m.core.Updating() != "" {
 		return true
 	}
 	if d := m.current(); d != nil && (d.loadingDet || d.diffLoading) {
