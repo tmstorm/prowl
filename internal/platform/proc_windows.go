@@ -3,12 +3,14 @@
 package platform
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf16"
 )
 
 // Alive reports whether a process exists.
@@ -51,10 +53,10 @@ func Reopen(exe string) error {
 }
 
 // RemoveBinary deletes prowl.exe at exe once this prowl exits, since Windows
-// won't delete a running program. When its folder holds nothing else, it goes
-// too and comes off your PATH, where install.ps1 put it. cmd.exe gets its
-// command line whole because it doesn't undo the \" quoting exec gives each
-// argument; CREATE_NO_WINDOW keeps it from opening a console window.
+// won't delete a running program: a hidden PowerShell retries the delete for a
+// minute. When the folder holds nothing else, it goes too and comes off your
+// PATH, where install.ps1 put it. The script goes in -EncodedCommand, so no
+// quoting rules apply to the paths.
 func RemoveBinary(exe string) error {
 	dir := filepath.Dir(exe)
 	entries, err := os.ReadDir(dir)
@@ -69,23 +71,25 @@ func RemoveBinary(exe string) error {
 			alone = false
 		}
 	}
-	script := fmt.Sprintf(`ping -n 3 127.0.0.1 >nul & del /f /q "%s"`, exe)
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+	script := fmt.Sprintf(`$exe = %s; for ($i = 0; $i -lt 60 -and (Test-Path -LiteralPath $exe); $i++) { Start-Sleep 1; Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue }`, quote(exe))
 	if alone {
-		script += fmt.Sprintf(` & rmdir /s /q "%s"`, dir)
+		path := fmt.Sprintf(`$d = %s; $p = [Environment]::GetEnvironmentVariable('Path', 'User'); `+
+			`[Environment]::SetEnvironmentVariable('Path', (($p -split ';') | Where-Object { $_ -and $_ -ne $d }) -join ';', 'User')`, quote(dir))
+		if err := exec.Command("powershell", "-NoProfile", "-Command", path).Run(); err != nil {
+			return fmt.Errorf("take %s off PATH: %w", dir, err)
+		}
+		script += fmt.Sprintf(`; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue`, quote(dir))
 	}
-	cmd := exec.Command("cmd.exe")
-	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: "cmd.exe /c " + script, CreationFlags: 0x08000000}
+	units := utf16.Encode([]rune(script))
+	b := make([]byte, 2*len(units))
+	for i, u := range units {
+		b[2*i], b[2*i+1] = byte(u), byte(u>>8)
+	}
+	cmd := exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", base64.StdEncoding.EncodeToString(b))
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("remove %s: %w", exe, err)
-	}
-	if !alone {
-		return nil
-	}
-	path := fmt.Sprintf(`$d='%s'; $p=[Environment]::GetEnvironmentVariable('Path','User'); `+
-		`[Environment]::SetEnvironmentVariable('Path', (($p -split ';') | Where-Object { $_ -and $_ -ne $d }) -join ';', 'User')`,
-		strings.ReplaceAll(dir, "'", "''"))
-	if err := exec.Command("powershell", "-NoProfile", "-Command", path).Run(); err != nil {
-		return fmt.Errorf("take %s off PATH: %w", dir, err)
 	}
 	return nil
 }
