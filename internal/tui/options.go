@@ -111,7 +111,7 @@ var options = []option{
 		func(c *config.Config) *map[string]string { return &c.TypeColors }),
 	durationOpt("Inbox", "Overdue after", "stale_after", "A PR waiting on you longer than this turns yellow, and red at twice that.", func(c *config.Config) *config.Duration { return &c.StaleAfter }),
 	{section: "Inbox", title: "Background notifications", label: "prowl service", kind: optBool,
-		help:  "Runs prowl watch at login, so you hear about PRs while prowl is closed: a systemd user service, launchd agent or scheduled task.",
+		help:  "Runs prowl watch at login, so you hear about PRs while prowl is closed: a systemd user service, launchd agent or Windows startup entry.",
 		state: func(m *Model) bool { return m.core.Service() },
 		turn: func(m *Model, on bool) tea.Cmd {
 			co := m.core

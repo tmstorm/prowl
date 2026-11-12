@@ -43,11 +43,11 @@ With no configuration, prowl shows every open PR that involves you across GitHub
 prowl service install
 ```
 
-runs `prowl watch` at login and starts it now: a systemd user service on Linux, a launchd agent on macOS, a Task Scheduler task on Windows. `prowl service uninstall` removes it. The same switch is in the options (`<leader>,` → Background notifications), and prowl suggests it once, the first time you open it. While it runs, the TUI leaves notifications to it.
+runs `prowl watch` at login and starts it now: a systemd user service on Linux, a launchd agent on macOS, and on Windows an entry in your startup programs (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, listed under Task Manager's Startup apps), which needs no admin. `prowl service uninstall` removes it. The same switch is in the options (`<leader>,` → Background notifications), and prowl suggests it once, the first time you open it. While it runs, the TUI leaves notifications to it.
 
 On Linux, check it with `systemctl --user status prowl-watch` and follow its log with `journalctl --user -u prowl-watch -f`. It's your user's service, so no `sudo`.
 
-When prowl is updated, the running `prowl watch` notices its executable changed and restarts on the new version within a poll interval. On Windows a running `.exe` can't be overwritten: prowl's own update moves it aside first, and `install.ps1` stops the task, updates prowl and starts the task again.
+When prowl is updated, the running `prowl watch` notices its executable changed and restarts on the new version within a poll interval. On Windows a running `.exe` can't be overwritten: prowl's own update moves it aside first, and `install.ps1` stops `prowl watch`, updates prowl and starts it again.
 
 ## Updating
 

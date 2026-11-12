@@ -37,8 +37,8 @@ usage:
   prowl list       print what needs you (for scripts / status bars)
   prowl service install | uninstall
                    run prowl watch at login, in the background: a systemd
-                   user service on Linux, a launchd agent on macOS, a Task
-                   Scheduler task on Windows
+                   user service on Linux, a launchd agent on macOS, a
+                   startup entry on Windows
   prowl review [--detach] [--agent NAME[:PROFILE]]
                    review the branch checked out here, committed or not, before
                    it has a pull request, and print the findings. Exits 2 when
