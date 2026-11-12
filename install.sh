@@ -108,9 +108,9 @@ else
 	need="$need git" lack="${lack:+$lack and }git"
 fi
 if [ -n "$need" ]; then
-	[ -n "$pm" ] || die "prowl needs $lack: install it (gh: https://cli.github.com), then run this again"
+	[ -n "$pm" ] || die "needs $lack: install it (gh: https://cli.github.com), then run this again"
 	note "$pm$need"
-	ask "Install $lack with this?" || die "prowl needs $lack: install it, then run this again"
+	ask "Install $lack with this?" || die "needs $lack: install it, then run this again"
 	# shellcheck disable=SC2086
 	$pm $need || die "couldn't install $lack: install it by hand (gh: https://cli.github.com), then run this again"
 fi

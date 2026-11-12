@@ -58,9 +58,9 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
 }
 if ($need) {
     $what = $lack -join " and "
-    if (-not $winget) { Die "prowl needs ${what}: install it (gh: https://cli.github.com), then run this again" }
+    if (-not $winget) { Die "needs ${what}: install it (gh: https://cli.github.com), then run this again" }
     foreach ($id in $need) { Note "winget install $id" }
-    if (-not (Ask "Install $what with this?")) { Die "prowl needs ${what}: install it, then run this again" }
+    if (-not (Ask "Install $what with this?")) { Die "needs ${what}: install it, then run this again" }
     foreach ($id in $need) {
         winget install $id @wingetArgs
         if ($LASTEXITCODE -ne 0) { Die "couldn't install ${what}: install it by hand (gh: https://cli.github.com), then run this again" }
@@ -140,7 +140,7 @@ if ($service) {
 }
 Ok "$((& $exe version | Select-Object -First 1)) is in $dir"
 if (Get-Command gh -ErrorAction SilentlyContinue) {
-    gh auth status *> $null
+    cmd /c "gh auth status >nul 2>&1"
     if ($LASTEXITCODE -ne 0) { Note "gh isn't logged in; prowl offers to run gh auth login when it starts" }
 }
 Write-Host ""
