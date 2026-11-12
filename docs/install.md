@@ -45,7 +45,25 @@ runs `prowl watch` at login and starts it now: a systemd user service on Linux, 
 
 On Linux, check it with `systemctl --user status prowl-watch` and follow its log with `journalctl --user -u prowl-watch -f`. It's your user's service, so no `sudo`.
 
-When you update prowl, the running `prowl watch` notices its executable changed and restarts on the new version within a poll interval. On Windows a running `.exe` can't be replaced, so `install.ps1` stops the task, updates prowl and starts the task again.
+When prowl is updated, the running `prowl watch` notices its executable changed and restarts on the new version within a poll interval. On Windows a running `.exe` can't be overwritten: prowl's own update moves it aside first, and `install.ps1` stops the task, updates prowl and starts the task again.
+
+## Updating
+
+prowl asks GitHub once a day whether a newer release is out. What happens next depends on how you installed it.
+
+- **With the install script**, prowl updates itself. The background service installs the new release, or the TUI does when the service isn't running. The TUI you have open keeps the version it started with and says `prowl v0.2.0 is installed`; `<leader>U` restarts it on the new one. `prowl update` does the same by hand and prints what's new.
+- **From the AUR**, and later Homebrew or Scoop, the package manager owns `prowl` and prowl never replaces it. It tells you once per release, under the legend and in `prowl version`, which command updates it, such as `yay -S prowl-bin`.
+- **With `go install`**, it tells you to run `go install github.com/tmstorm/prowl@latest`.
+- **A build from source** never checks.
+
+The first time a new version starts, the legend offers its release notes, and `<leader>N` shows them at any time. `check_updates = false` turns the daily check off. `auto_update = false` keeps the check but leaves installing to you, with `prowl update` or `<leader>U`.
+
+Each release's `checksums.txt` is signed with prowl's release key, and prowl installs nothing that doesn't match a signed checksum. To check a download yourself, use [minisign](https://jedisct1.github.io/minisign/) with the key in [`minisign.pub`](../minisign.pub):
+
+```sh
+minisign -Vm checksums.txt -p minisign.pub
+sha256sum --check --ignore-missing checksums.txt
+```
 
 ## Commands
 
@@ -57,7 +75,8 @@ When you update prowl, the running `prowl watch` notices its executable changed 
 - `prowl skill install [--agent claude|codex] [DIR]` installs the `prowl-findings` skill (see [Fixing findings with your own coding agent](ai-reviews.md#fixing-findings-with-your-own-coding-agent)); `prowl skill print` shows it.
 - `prowl edits [--since 30d] [--repo NAME]` shows how you edited AI reviews before posting them (see [Learning from your edits](ai-reviews.md#learning-from-your-edits)).
 - `prowl schema` prints the JSON Schema a review must match, for a `command` reviewer.
-- `prowl version` prints the version.
+- `prowl update` installs the newest release over this prowl and prints what's new, or says which command updates it when a package manager installed it (see [Updating](#updating)).
+- `prowl version` prints the version, and the newer release when one is out.
 
 ## Accounts
 

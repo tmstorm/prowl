@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/tmstorm/prowl/internal/config"
+	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/store"
+	"github.com/tmstorm/prowl/internal/tui"
 )
 
 func needsReview(repo string, n int, title string) gh.PR {
@@ -319,4 +321,26 @@ func TestBackgroundNotifications(t *testing.T) {
 	a.clickFirst("Background notifications")
 	a.clickFirst("Background notifications")
 	a.want("background notifications on: systemd user service")
+}
+
+// Once prowl has installed a newer release of itself, the legend says so,
+// <leader>N shows what's new and <leader>U quits to start the new prowl.
+// The keys popup shows the running version.
+func TestUpdateInstalled(t *testing.T) {
+	old := core.Version
+	core.Version = "0.1.0"
+	t.Cleanup(func() { core.Version = old })
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.2.0", Notes: "- Reviews run **faster**.", URL: "https://github.com/tmstorm/prowl/releases/tag/v0.2.0"})
+	_ = a.st.SetInstalled("v0.2.0")
+	a = reopen(a)
+	a.want("prowl v0.2.0 is installed · <space>U restarts into it")
+	a.keys("?")
+	a.want("prowl 0.1.0 · any key to close")
+	a.keys("esc", "space", "N")
+	a.want("What's new in prowl v0.2.0", "Reviews run faster", "o opens the release on GitHub")
+	a.keys("esc", "space", "U")
+	if !a.m.(*tui.Model).Restart() {
+		t.Fatal("<leader>U should quit to restart into the installed release")
+	}
 }

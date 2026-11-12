@@ -75,7 +75,7 @@ A few things worth doing next:
 
 ## Docs
 
-- [Installing](docs/install.md): every install path, what prowl needs, commands, background notifications, logins
+- [Installing](docs/install.md): every install path, what prowl needs, commands, background notifications, updates, logins
 - [The inbox](docs/inbox.md): how PRs are sorted, watching a repo, focusing
 - [Reading and reviewing](docs/reviewing.md): keys, the diff, comments and suggestions, approving, asking for reviews
 - [AI reviews](docs/ai-reviews.md): agents, models, profiles, severities, replies, closing or drafting, local reviews, hooks

@@ -30,3 +30,19 @@ func Restart(exe string) error {
 	Detach(cmd)
 	return cmd.Start()
 }
+
+// Reopen runs exe again in this console with the same arguments and exits
+// with its status once it is done: Windows can't replace a running process.
+func Reopen(exe string) error {
+	cmd := exec.Command(exe, os.Args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	err := cmd.Run()
+	if exit, ok := err.(*exec.ExitError); ok {
+		os.Exit(exit.ExitCode())
+	}
+	if err != nil {
+		return err
+	}
+	os.Exit(0)
+	return nil
+}

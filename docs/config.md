@@ -10,6 +10,8 @@
 | `poll_interval` | `3m` | how often prowl and `prowl watch` check GitHub (30s at least) |
 | `stale_after` | `24h` | a PR waiting on you longer than this is flagged |
 | `notify_timeout` | `8s` | how long desktop notifications stay up |
+| `check_updates` | `true` | ask GitHub once a day whether a newer prowl is out |
+| `auto_update` | `true` | install it in the background when the install script installed prowl (see [Updating](install.md#updating)) |
 | `leader` | `space` | the key that opens the action menu, written `<leader>` in these docs: space, `,`, `\` or `;` |
 | `theme` | `dracula` | dracula, catppuccin, tokyonight, gruvbox, nord, rose-pine, kanagawa |
 | `nerd_font` | `false` | powerline separators and icons |

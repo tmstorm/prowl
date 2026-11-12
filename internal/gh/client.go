@@ -16,9 +16,10 @@ import (
 )
 
 type Client struct {
-	gql  *api.GraphQLClient
-	rest *api.RESTClient
-	diff *api.RESTClient
+	gql   *api.GraphQLClient
+	rest  *api.RESTClient
+	diff  *api.RESTClient
+	asset *api.RESTClient
 
 	viewerMu sync.Mutex
 	viewer   string // your login, once a lookup succeeded
@@ -65,7 +66,13 @@ func NewWith(opts api.ClientOptions) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("diff client: %w", err)
 	}
-	return &Client{gql: gql, rest: rest, diff: diff}, nil
+	opts.Headers = map[string]string{"Accept": "application/octet-stream"}
+	opts.Timeout = 10 * time.Minute
+	asset, err := api.NewRESTClient(opts)
+	if err != nil {
+		return nil, fmt.Errorf("asset client: %w", err)
+	}
+	return &Client{gql: gql, rest: rest, diff: diff, asset: asset}, nil
 }
 
 const prFields = `

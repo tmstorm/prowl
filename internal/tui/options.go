@@ -246,6 +246,12 @@ var options = []option{
 		set: func(c *config.Config, v string) error { c.Editor = strings.TrimSpace(v); return nil }},
 	mapOpt("Editor & Slack", "Slack names", "slack_names", "# GitHub login = \"name used in Slack lines\"\n# some-login = \"@alice\"\n",
 		func(c *config.Config) *map[string]string { return &c.SlackNames }),
+	{section: "Updates", title: "Check for updates", label: "check_updates", help: "Asks GitHub once a day whether a newer prowl is out, and says so under the legend.", kind: optBool,
+		get: func(c *config.Config) string { return fmt.Sprint(c.CheckUpdates) },
+		set: func(c *config.Config, v string) error { c.CheckUpdates = v == "true"; return nil }},
+	{section: "Updates", title: "Update in the background", label: "auto_update", help: "Installs a newer prowl when the install script installed it; <leader>U restarts into it. A package manager's prowl is never replaced.", kind: optBool,
+		get: func(c *config.Config) string { return fmt.Sprint(c.AutoUpdate) },
+		set: func(c *config.Config, v string) error { c.AutoUpdate = v == "true"; return nil }},
 }
 
 // modelOption is the model setting for one reviewer, listed per agent.
@@ -610,7 +616,7 @@ func (p *optionsPopup) view(m *Model) string {
 	if len(lines) > h {
 		scroll = sDim.Render(fmt.Sprintf("  %d/%d", p.cur+1, len(vis)))
 	}
-	return popBox("Options"+scroll, strings.Join(shown, "\n")+"\n"+strings.Join(foot, "\n"), w, pal.Accent)
+	return popBox("Options"+sDim.Render("  prowl "+core.BuildVersion())+scroll, strings.Join(shown, "\n")+"\n"+strings.Join(foot, "\n"), w, pal.Accent)
 }
 
 // click selects a setting, or changes it when it is already selected (as

@@ -3,6 +3,7 @@
 package ghtest
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,6 +42,9 @@ type GitHub struct {
 	RejectReview map[int]bool      // review submissions (1 is the first) that fail with a server error
 	Repos        []string
 	Closed       map[string]bool
+	Release      *gh.Release      // the latest release of any repo; nil: none
+	Assets       map[int64][]byte // release asset -> its bytes
+	releaseCalls int
 	writes       []string
 	reviewCalls  int
 	reviews      []map[string]any
@@ -100,6 +104,18 @@ func (f *GitHub) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 		return reply(200, map[string]any{"steps": []map[string]string{{"name": "Set up job", "conclusion": "success"}, {"name": f.JobSteps[id], "conclusion": "failure"}}})
 	}
+	if strings.HasSuffix(path, "/releases/latest") {
+		f.releaseCalls++
+		if f.Release == nil {
+			return reply(404, map[string]any{"message": "not found"})
+		}
+		return reply(200, f.Release)
+	}
+	if m := regexp.MustCompile(`/releases/assets/(\d+)$`).FindStringSubmatch(path); m != nil {
+		id, _ := strconv.ParseInt(m[1], 10, 64)
+		return &http.Response{StatusCode: 200, Request: r, Body: io.NopCloser(bytes.NewReader(f.Assets[id])),
+			Header: http.Header{"Content-Type": []string{"application/octet-stream"}}}, nil
+	}
 	if m := regexp.MustCompile(`/compare/(.+)$`).FindStringSubmatch(path); m != nil {
 		return reply(200, f.Compares[m[1]])
 	}
@@ -108,6 +124,13 @@ func (f *GitHub) RoundTrip(r *http.Request) (*http.Response, error) {
 		return reply(200, f.Diffs[n])
 	}
 	return reply(404, map[string]any{"message": "not found"})
+}
+
+// ReleaseCalls is how often prowl asked for the latest release.
+func (f *GitHub) ReleaseCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.releaseCalls
 }
 
 func (f *GitHub) graphql(q string, v map[string]any) any {

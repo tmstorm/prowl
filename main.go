@@ -1,14 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime/debug"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -61,7 +61,10 @@ usage:
                    show how you edited agent reviews before posting them:
                    each rewrite as draft and posted, what you dropped and
                    added. Feed it to a style guide or a writing skill.
-  prowl version    print the version
+  prowl version    print the version, and the newer release when one is out
+  prowl update     install the newest release over this prowl and print
+                   what's new. A prowl from a package manager says which
+                   command updates it instead.
   prowl schema     print the JSON Schema a review must match (for
                    [agent] reviewers = ["command"])
 `
@@ -85,6 +88,9 @@ type exitCode int
 func (c exitCode) Error() string { return fmt.Sprintf("exit status %d", int(c)) }
 
 func run(args []string) error {
+	if runtime.GOOS == "windows" {
+		_ = os.Remove(core.OldBinary(core.Executable()))
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -111,7 +117,14 @@ func run(args []string) error {
 		c, _ := gh.New()
 		return agent.Run(cfg, st, c, job)
 	case "version", "--version":
-		fmt.Println("prowl", buildVersion())
+		fmt.Println("prowl", core.BuildVersion())
+		if c, err := gh.New(); err == nil {
+			co := core.New(cfg, c, st)
+			_ = co.CheckRelease(false)
+			if r := co.Release(core.Executable()); r.Newer() && !r.Installed {
+				fmt.Printf("prowl %s is out: %s\n", r.Latest, cmp.Or(r.Command, "prowl update"))
+			}
+		}
 		return nil
 	case "-h", "--help", "help":
 		fmt.Print(usage)
@@ -174,12 +187,18 @@ func run(args []string) error {
 	switch cmd {
 	case "review":
 		return review(cfg, c, st, args[1:])
+	case "update":
+		return update(core.New(cfg, c, st))
 	case "":
 		ctx, stop := context.WithCancel(context.Background())
 		defer stop()
 		co := core.New(cfg, c, st)
 		go co.Run(ctx)
-		_, err := tea.NewProgram(tui.New(co), progOpts(cfg)...).Run()
+		final, err := tea.NewProgram(tui.New(co), progOpts(cfg)...).Run()
+		if m, ok := final.(*tui.Model); ok && err == nil && m.Restart() {
+			stop()
+			return platform.Reopen(core.Executable())
+		}
 		return err
 	case "watch":
 		return watch(cfg, c, st)
@@ -215,8 +234,7 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 	if err := co.Watching(); err != nil {
 		return err
 	}
-	exe, _ := os.Executable()
-	exe, _ = filepath.EvalSymlinks(exe)
+	exe := core.Executable()
 	built, _ := os.Stat(exe)
 	var authAt time.Time
 	reminded := ""
@@ -233,6 +251,11 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 			authAt = time.Now()
 			co.CheckAuth()
 			reminded = remindLogin(co, reminded)
+		}
+		if v, err := co.AutoUpgrade(exe); err != nil {
+			fmt.Fprintln(os.Stderr, time.Now().Format(time.TimeOnly), "update failed:", err)
+		} else if v != "" {
+			fmt.Println(time.Now().Format(time.TimeOnly), "installed prowl", v)
 		}
 		changes, err := co.Refresh()
 		if err != nil {
@@ -398,7 +421,17 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 	if asPrompt {
 		md = agent.HandoffPrompt(md)
 	}
-	if fd := int(os.Stdout.Fd()); !asPrompt && term.IsTerminal(fd) {
+	if asPrompt {
+		fmt.Print(md)
+		return nil
+	}
+	printMarkdown(md)
+	return nil
+}
+
+// printMarkdown prints md, rendered when stdout is a terminal.
+func printMarkdown(md string) {
+	if fd := int(os.Stdout.Fd()); term.IsTerminal(fd) {
 		w, _, _ := term.GetSize(fd)
 		if r, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(min(max(w-4, 40), 100))); err == nil {
 			if out, err := r.Render(md); err == nil {
@@ -407,6 +440,41 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 		}
 	}
 	fmt.Print(md)
+}
+
+// update installs the newest release over this prowl, or says which command
+// does when a package manager owns it.
+func update(co *core.Core) error {
+	exe := core.Executable()
+	if err := co.CheckRelease(true); err != nil {
+		return err
+	}
+	r := co.Release(exe)
+	switch {
+	case r.Running == "":
+		return fmt.Errorf("this prowl (%s) was built from source; update it with git pull and go build", core.BuildVersion())
+	case r.Installed:
+		fmt.Printf("prowl %s is installed; restart prowl to run it\n", r.Latest)
+		return nil
+	case !r.Newer():
+		fmt.Printf("prowl %s is the newest release\n", r.Running)
+		return nil
+	case r.Command != "":
+		fmt.Printf("prowl %s is out; this prowl is updated with: %s\n", r.Latest, r.Command)
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "installing prowl %s…\n", r.Latest)
+	v, err := co.Upgrade(exe)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("installed prowl %s at %s\n", v, exe)
+	if co.WatchRunning() {
+		fmt.Println("the background service restarts into it in a few seconds")
+	}
+	if strings.TrimSpace(r.Notes) != "" {
+		printMarkdown("# What's new in " + v + "\n\n" + r.Notes + "\n")
+	}
 	return nil
 }
 
@@ -615,18 +683,4 @@ func service(args []string) error {
 	}
 	fmt.Println("prowl watch runs at login and is running now:", what)
 	return nil
-}
-
-// version is set at release build time; buildVersion falls back to what
-// `go install` recorded.
-var version = ""
-
-func buildVersion() string {
-	if version != "" {
-		return version
-	}
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
-	}
-	return "dev"
 }

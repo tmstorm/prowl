@@ -32,10 +32,17 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+      - name: Install minisign and the release key
+        run: |
+          sudo apt-get install -y minisign
+          printf '%s\n' "$MINISIGN_KEY" > "$RUNNER_TEMP/minisign.key"
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           version: "~> v2"
           args: release --clean
         env:
+          MINISIGN_KEY_FILE: ${{ runner.temp }}/minisign.key
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AUR_KEY: ${{ secrets.AUR_KEY }}

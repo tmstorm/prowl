@@ -25,3 +25,7 @@ func Detach(cmd *exec.Cmd) {
 func Restart(exe string) error {
 	return syscall.Exec(exe, os.Args, os.Environ())
 }
+
+// Reopen replaces this terminal program with a fresh run of exe in the same
+// terminal. It returns only on failure.
+func Reopen(exe string) error { return Restart(exe) }
