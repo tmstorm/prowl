@@ -31,6 +31,8 @@ If the command says there is no review yet, run `prowl review` when the branch h
 
 If the output says the branch has moved since the review, expect some findings to be fixed already.
 
+A "Note from" section after the findings is the reviewer talking to the user: what it held back as not blocking, what it couldn't check, or a question. It is not a finding, so don't change code for it.
+
 ## Work through them
 
 For each finding, in order:
@@ -49,4 +51,4 @@ Run the repo's tests or checks for what you changed if they are quick.
 
 ## Report
 
-Finish with one line per finding: its number and title, then fixed, already fixed, or not changed with the reason. Then list any drafted PR description text.
+Finish with one line per finding: its number and title, then fixed, already fixed, or not changed with the reason. Then list any drafted PR description text, and pass on anything in a reviewer's note the user should act on.

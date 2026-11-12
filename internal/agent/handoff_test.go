@@ -39,3 +39,22 @@ func TestEditsMarkdown(t *testing.T) {
 		t.Error("an unchanged comment should only be counted")
 	}
 }
+
+// The findings carry each reviewer's note, which holds what it left out of
+// the findings, but not your side of the chat.
+func TestFindingsMarkdownNotes(t *testing.T) {
+	runs := []*store.AgentReview{{Agent: "claude", Status: "done", HeadOid: "bd7038b2aa", FinishedAt: time.Now()}}
+	notes := map[string][]store.LogEntry{"claude": {
+		{Who: "agent", Text: "Not blocking: watch retries a failed install on every poll."},
+		{Who: "you", Text: "why?"},
+	}}
+	md := agent.FindingsMarkdown(runs, notes, "o/api#7", "", false)
+	for _, want := range []string{"No findings.", "## Note from Claude", "watch retries a failed install on every poll"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("missing %q in:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "why?") {
+		t.Errorf("your chat leaked into the findings:\n%s", md)
+	}
+}
