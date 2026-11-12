@@ -45,8 +45,8 @@ usage:
                    a finding is must-fix (for agent hooks). --detach runs it in
                    the background; it shows under Mine in prowl either way.
   prowl findings [PR] [--all] [--prompt] [--agent NAME[:PROFILE]]
-                   print the AI reviews' findings, combined, as markdown, for you or the
-                   coding agent in your checkout. PR is a number, owner/repo#N,
+                   print the AI reviews' findings, combined, and each reviewer's
+                   note, as markdown, for you or the coding agent in your checkout. PR is a number, owner/repo#N,
                    or omitted for the current branch's PR (its local review
                    when it has none). --prompt wraps them in
                    instructions to verify and fix. --agent limits it to one agent
@@ -394,7 +394,11 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 		}
 		return fmt.Errorf("no finished review for %s yet; open it in prowl and press %scc", key, cfg.LeaderLabel())
 	}
-	md := agent.FindingsMarkdown(cur, key, head, all)
+	notes := map[string][]store.LogEntry{}
+	for _, r := range cur {
+		notes[r.Reviewer()], _ = st.ReviewLog(key, r.Reviewer())
+	}
+	md := agent.FindingsMarkdown(cur, notes, key, head, all)
 	if asPrompt {
 		md = agent.HandoffPrompt(md)
 	}

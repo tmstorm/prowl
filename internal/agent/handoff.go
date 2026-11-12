@@ -56,9 +56,10 @@ func Combine(runs []*store.AgentReview, all bool) []store.Finding {
 }
 
 // FindingsMarkdown renders the current reviews' findings, combined, for
-// another agent (or a person) to act on. Excluded findings are left out
-// unless all is set.
-func FindingsMarkdown(runs []*store.AgentReview, key, currentHead string, all bool) string {
+// another agent (or a person) to act on, then each reviewer's notes from
+// notes (by reviewer, as core.Notes returns them): what it held back or
+// couldn't check. Excluded findings are left out unless all is set.
+func FindingsMarkdown(runs []*store.AgentReview, notes map[string][]store.LogEntry, key, currentHead string, all bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Review findings for %s\n\n", key)
 	var at *store.AgentReview
@@ -103,6 +104,22 @@ func FindingsMarkdown(runs []*store.AgentReview, key, currentHead string, all bo
 	}
 	if n == 0 {
 		b.WriteString("No findings.\n")
+	}
+	for _, r := range runs {
+		var said []string
+		for _, e := range notes[r.Reviewer()] {
+			if e.Who == "agent" {
+				said = append(said, strings.TrimSpace(e.Text))
+			}
+		}
+		if len(said) == 0 {
+			continue
+		}
+		title := Title(r.Agent)
+		if r.Profile != "" {
+			title += " · " + r.Profile
+		}
+		fmt.Fprintf(&b, "\n## Note from %s\n\n%s\n", title, strings.Join(said, "\n\n"))
 	}
 	return b.String()
 }

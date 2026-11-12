@@ -53,7 +53,7 @@ When you update prowl, the running `prowl watch` notices its executable changed 
 - `prowl watch` polls GitHub and sends a desktop notification when a PR moves into a state that needs you. When it starts, it catches up on what changed while it wasn't running; more than a few changes come as one summary. While it runs, the TUI leaves notifications to it, so none arrive twice. `prowl service install` runs it at login.
 - `prowl list` prints what needs you, one PR per line, for scripts and status bars.
 - `prowl review [--detach] [--agent NAME[:PROFILE]]` reviews the branch checked out here before it has a pull request (see [Reviewing before a pull request](ai-reviews.md#reviewing-before-a-pull-request)).
-- `prowl findings [PR] [--all] [--prompt] [--agent NAME[:PROFILE]]` prints the AI review's findings as markdown. Run it in a checkout and it finds the current branch's PR, or its local review when it has none; or pass a number or `owner/repo#N`.
+- `prowl findings [PR] [--all] [--prompt] [--agent NAME[:PROFILE]]` prints the AI review's findings as markdown, then each reviewer's note. Run it in a checkout and it finds the current branch's PR, or its local review when it has none; or pass a number or `owner/repo#N`.
 - `prowl skill install [--agent claude|codex] [DIR]` installs the `prowl-findings` skill (see [Fixing findings with your own coding agent](ai-reviews.md#fixing-findings-with-your-own-coding-agent)); `prowl skill print` shows it.
 - `prowl edits [--since 30d] [--repo NAME]` shows how you edited AI reviews before posting them (see [Learning from your edits](ai-reviews.md#learning-from-your-edits)).
 - `prowl schema` prints the JSON Schema a review must match, for a `command` reviewer.

@@ -1481,7 +1481,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 			m.fail("no finished review to hand off")
 			return nil
 		}
-		prompt := agent.HandoffPrompt(agent.FindingsMarkdown(done, k, it.PR.HeadRefOid, false))
+		prompt := agent.HandoffPrompt(agent.FindingsMarkdown(done, m.core.Notes(k), k, it.PR.HeadRefOid, false))
 		if err := slack.Copy(prompt); err != nil {
 			m.fail(err.Error())
 			return nil
