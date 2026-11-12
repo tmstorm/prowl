@@ -16,6 +16,10 @@ import (
 // installed (<leader>U).
 func (m *Model) Restart() bool { return m.restart }
 
+// onTip starts the tip offering the running release's notes, which opening
+// them clears.
+const onTip = "you're on prowl "
+
 // releaseTip puts news about prowl's own updates under the legend: a
 // release installed and waiting for a restart, one to install, or what's new
 // in the release now running.
@@ -31,7 +35,7 @@ func (m *Model) releaseTip() {
 		tip = fmt.Sprintf("prowl %s is out · <leader>U installs it · <leader>N what's new", r.Latest)
 	default:
 		if v, _ := m.core.WhatsNew(); v != "" {
-			tip = fmt.Sprintf("you're on prowl %s · <leader>N what's new", v)
+			tip = fmt.Sprintf(onTip+"%s · <leader>N what's new", v)
 		}
 	}
 	if tip != "" {
@@ -100,6 +104,10 @@ func (m *Model) whatsNew() {
 		return
 	}
 	m.popup = &notesPopup{title: "What's new in prowl " + r.Latest, url: r.URL, notes: r.Notes}
+	if strings.HasPrefix(m.tip, onTip) {
+		m.tip = ""
+		m.layoutNavs()
+	}
 }
 
 func (p *notesPopup) mode() mode { return modeNormal }

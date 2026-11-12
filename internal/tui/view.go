@@ -62,7 +62,7 @@ func (m *Model) summaryHeight() int {
 
 func (m *Model) layoutNavs() {
 	l := m.layout()
-	m.list.setLen(len(m.rows), max(l.contentH-2-m.legendHeight(l)-m.summaryHeight(), 1))
+	m.list.setLen(len(m.rows), max(l.contentH-2-m.legendHeight(l)-len(m.tipLines(l.listW-2))-m.summaryHeight(), 1))
 	for _, d := range m.details {
 		d.resize(l.detTextW, l.detBodyH)
 	}
@@ -218,7 +218,8 @@ func (m *Model) listPane(l layout, x int) string {
 		}
 	} else {
 		cols := m.listColumns()
-		legendH, sumH := m.legendHeight(l), m.summaryHeight()
+		tip := m.tipLines(inner)
+		legendH, sumH := m.legendHeight(l)+len(tip), m.summaryHeight()
 		if sumH > 0 {
 			lines = append(lines, m.summaryLine(inner), sBorder.Render(strings.Repeat("┄", inner)))
 		}
@@ -239,10 +240,10 @@ func (m *Model) listPane(l layout, x int) string {
 		if len(m.rows) == 0 && !m.loading {
 			lines = append(lines, m.emptyInbox(inner, h-2-legendH-sumH)...)
 		}
-		if legendH > 0 {
-			for len(lines) < h-2-legendH {
-				lines = append(lines, "")
-			}
+		for legendH > 0 && len(lines) < h-2-legendH {
+			lines = append(lines, "")
+		}
+		if legendH > len(tip) {
 			lines = append(lines, sBorder.Render("┄┄ ")+sDim.Render("legend")+sBorder.Render(" "+strings.Repeat("┄", max(inner-10, 0))))
 			lines = append(lines, m.legend(inner)...)
 			m.hits.add(x+1, len(lines), inner, 1, func(m *Model) tea.Cmd {
@@ -250,6 +251,7 @@ func (m *Model) listPane(l layout, x int) string {
 				return nil
 			})
 		}
+		lines = append(lines, tip...)
 	}
 	m.hits.addScroll(x, 0, w, h, &m.list)
 	footer := ""
@@ -420,11 +422,18 @@ func (m *Model) legend(w int) []string {
 	if len(lines) > 2 {
 		lines = lines[:2]
 	}
-	lines = append(lines, " "+keysLine(w-2))
-	if m.tip != "" {
-		for _, l := range wrap(strings.ReplaceAll(m.tip, "<leader>", leader), w-2) {
-			lines = append(lines, " "+sYellow.Render(l))
-		}
+	return append(lines, " "+keysLine(w-2))
+}
+
+// tipLines is the one-time tip, or news about prowl's own updates, at the
+// bottom of the inbox under its own divider, so it shows with the legend off.
+func (m *Model) tipLines(w int) []string {
+	if m.tip == "" {
+		return nil
+	}
+	lines := []string{sBorder.Render("┄┄ ") + sDim.Render("prowl") + sBorder.Render(" "+strings.Repeat("┄", max(w-9, 0)))}
+	for _, l := range wrap(strings.ReplaceAll(m.tip, "<leader>", leader), w-2) {
+		lines = append(lines, " "+sPink.Render(strings.TrimRight(l, " ")))
 	}
 	return lines
 }

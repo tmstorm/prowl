@@ -82,7 +82,7 @@ func durationOpt(section, title, label, help string, field func(c *config.Config
 }
 
 // optSections are the headings of the options menu, in order.
-var optSections = []string{"Inbox", "Appearance", "Review agent", "GitHub", "Editor & Slack"}
+var optSections = []string{"Inbox", "Appearance", "Review agent", "GitHub", "Editor & Slack", "Updates"}
 
 func isCommandAgent(c *config.Config) bool { return c.Agent.Main() == "command" }
 

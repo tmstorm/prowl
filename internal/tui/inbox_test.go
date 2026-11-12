@@ -407,6 +407,30 @@ func TestBackgroundNotifications(t *testing.T) {
 	a.want("background notifications on: systemd user service")
 }
 
+// The first start of a new version offers its notes under prowl's own
+// divider, with the legend off too, until <leader>N opens them.
+func TestWhatsNewTip(t *testing.T) {
+	old := core.Version
+	core.Version = "0.2.0"
+	t.Cleanup(func() { core.Version = old })
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, func(c *config.Config) { c.ShowLegend = false })
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.2.0", Notes: "- reviews run faster", URL: "https://github.com/tmstorm/prowl/releases/tag/v0.2.0"})
+	a = reopen(a)
+	a.want("┄┄ prowl", "you're on prowl v0.2.0 · <space>N what's new")
+	a.wantNot("┄┄ legend")
+	a.keys("space", "N")
+	a.want("What's new in prowl v0.2.0", "reviews run faster")
+	a.keys("esc")
+	a.wantNot("you're on prowl v0.2.0", "┄┄ prowl")
+}
+
+// The options list the update settings under their own heading.
+func TestUpdateOptions(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.keys("space", ",", "G")
+	a.want("Updates", "Check for updates", "Update in the background")
+}
+
 // Once prowl has installed a newer release of itself, the legend says so,
 // <leader>N shows what's new, each change as a commit title without its
 // commit link, and <leader>U quits to start the new prowl. The keys popup
@@ -429,7 +453,9 @@ func TestUpdateInstalled(t *testing.T) {
 	a.want("What's new in prowl v0.2.0", "released 2026-11-20", "feat(update): retry failed installs an hour later #9",
 		"fix: show the reviewer's note", "o opens the release on GitHub")
 	a.wantNot("e2449d5", "## [0.2.0]")
-	a.keys("esc", "space", "U")
+	a.keys("esc")
+	a.want("prowl v0.2.0 is installed · <space>U restarts into it")
+	a.keys("space", "U")
 	if !a.m.(*tui.Model).Restart() {
 		t.Fatal("<leader>U should quit to restart into the installed release")
 	}
