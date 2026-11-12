@@ -13,8 +13,8 @@ dir=${PROWL_INSTALL_DIR:-$HOME/.local/bin}
 # prowl's default theme, Dracula, when this prints to a terminal.
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
 	e=$(printf '\033')
-	accent="$e[1;38;2;189;147;249m" muted="$e[38;2;98;114;164m" eye="$e[1;38;2;241;250;140m"
-	talon="$e[38;2;255;184;108m" green="$e[38;2;80;250;123m" red="$e[38;2;255;85;85m" off="$e[0m"
+	accent="${e}[1;38;2;189;147;249m" muted="${e}[38;2;98;114;164m" eye="${e}[1;38;2;241;250;140m"
+	talon="${e}[38;2;255;184;108m" green="${e}[38;2;80;250;123m" red="${e}[38;2;255;85;85m" off="${e}[0m"
 else
 	accent='' muted='' eye='' talon='' green='' red='' off=''
 fi
@@ -188,9 +188,10 @@ fi
 step "Installing prowl"
 archive=prowl_${os}_${arch}.tar.gz
 base=https://github.com/$repo/releases/latest/download
-curl -fsSL "$base/$archive" -o "$tmp/$archive" 2>/dev/null &&
-	curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt" 2>/dev/null ||
+if ! curl -fsSL "$base/$archive" -o "$tmp/$archive" 2>/dev/null ||
+	! curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt" 2>/dev/null; then
 	die "couldn't download the latest release from https://github.com/$repo/releases"
+fi
 verify "$tmp/$archive" "$archive" "$tmp/checksums.txt" || die "the download doesn't match its checksum; not installing"
 tar -xzf "$tmp/$archive" -C "$tmp" prowl
 mkdir -p "$dir"

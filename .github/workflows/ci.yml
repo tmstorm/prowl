@@ -46,7 +46,8 @@ jobs:
       - run: go test -race ./...
 
   # The install scripts: shellcheck, PowerShell's parser, and a real install
-  # of the latest release with install.sh.
+  # of the latest release with install.sh once the repo is public (a private
+  # repo's releases need a login curl doesn't have).
   scripts:
     runs-on: ubuntu-latest
     steps:
@@ -57,7 +58,8 @@ jobs:
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile("$PWD/install.ps1", [ref]$null, [ref]$errors) | Out-Null
           if ($errors) { $errors; exit 1 }
-      - run: PROWL_INSTALL_DIR="$RUNNER_TEMP/bin" sh install.sh </dev/null && "$RUNNER_TEMP/bin/prowl" version
+      - if: ${{ !github.event.repository.private }}
+        run: PROWL_INSTALL_DIR="$RUNNER_TEMP/bin" sh install.sh </dev/null && "$RUNNER_TEMP/bin/prowl" version
 
   # The TUI, agent and core tests drive fake agents and git through shell
   # scripts, which Windows can't run; the rest of the tests run here.
