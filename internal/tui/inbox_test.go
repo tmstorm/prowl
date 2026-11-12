@@ -1,11 +1,19 @@
 package tui_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
@@ -201,6 +209,81 @@ func TestOwls(t *testing.T) {
 	plain.wantNot("(-)   (-)")
 	waking := newApp(t, &fakeGitHub{Slow: true})
 	waking.want("/\\       /\\", "fetching your pull requests")
+}
+
+// The owl is prowl's mascot and its drawings don't change: every eye (asleep,
+// stirring, awake, wide awake), every way it looks, both sizes, and its
+// colors: a muted body, bold yellow eyes, an orange beak and talons.
+func TestOwlDrawing(t *testing.T) {
+	big := func(face string) []string {
+		return []string{
+			"   /\\       /\\",
+			"  /  `-----'  \\",
+			face,
+			"  \\     v     /",
+			"   )  ' ' '  (",
+			"  (  ' ' ' '  )",
+			"   `-._____.-'",
+			"  ======^=^======",
+		}
+	}
+	small := func(face string) []string {
+		return []string{
+			"    ,_____,",
+			face,
+			"    /)   (\\",
+			"   ((  \"  ))",
+			"  ===^===^===",
+		}
+	}
+	type pose struct {
+		eye  string
+		look int
+	}
+	want := map[pose][2][]string{}
+	for _, e := range []string{"-", ".", "o", "O"} {
+		want[pose{e, 0}] = [2][]string{big(" |  (" + e + ")   (" + e + ")  |"), small("    ( " + e + "," + e + " )")}
+	}
+	want[pose{"O", -1}] = [2][]string{big(" | (O)   (O)   |"), small("    (O,O  )")}
+	want[pose{"O", 1}] = [2][]string{big(" |   (O)   (O) |"), small("    (  O,O)")}
+	for p, w := range want {
+		for i, isSmall := range []bool{false, true} {
+			got := tui.Owl(p.eye, p.look, isSmall)
+			for j := range got {
+				got[j] = ansi.Strip(got[j])
+			}
+			if !slices.Equal(got, w[i]) {
+				t.Errorf("owl %q looking %d (small %v):\n%s\nwant:\n%s", p.eye, p.look, isSmall, strings.Join(got, "\n"), strings.Join(w[i], "\n"))
+			}
+		}
+	}
+
+	old := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
+	art := strings.Join(tui.Owl("O", 0, false), "\n")
+	for what, seq := range map[string]string{
+		"muted body":       "\x1b[38;2;97;113;163m   /\\",
+		"bold yellow eyes": "\x1b[1;38;2;241;250;140mO",
+		"orange beak":      "\x1b[38;2;255;184;108mv",
+		"orange talons":    "\x1b[38;2;255;184;108m^",
+	} {
+		if !strings.Contains(art, seq) {
+			t.Errorf("the owl lost its %s:\n%q", what, art)
+		}
+	}
+}
+
+// The logo is the same owl in Dracula colors, perched on the accent
+// branch. It is pinned: change it only on purpose, and update the sum.
+func TestOwlLogo(t *testing.T) {
+	b, err := os.ReadFile("../../docs/images/owl.svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != "f2ddeb0d758e81d8f231ba8adacdcd5b2684d577e9e1d4b40a86024e32bb4d95" {
+		t.Fatalf("docs/images/owl.svg changed: sha256 %x", sum)
+	}
 }
 
 // The legend is labelled, and the key help never wraps at any width.

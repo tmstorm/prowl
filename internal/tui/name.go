@@ -64,6 +64,7 @@ func beside(art []string, artW int, text []string) []string {
 // owl draws the owl with the given eye ("-" asleep, "." stirring, "o"/"O"
 // awake), looking left (-1), ahead (0) or right (1). small is the five-row
 // owl for short panes; the full one is a tufted great horned owl.
+// TestOwlDrawing pins every pose and color: the mascot doesn't change.
 func owl(eye string, look int, small bool) []string {
 	o := lipgloss.NewStyle().Foreground(lipgloss.Color(pal.Muted)).Render
 	e := lipgloss.NewStyle().Foreground(lipgloss.Color(pal.Yellow)).Bold(true).Render(eye)
