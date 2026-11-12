@@ -12,6 +12,8 @@ on:
       - go.sum
       - minisign.pub
       - docs/images/owl.svg
+      - install.sh
+      - install.ps1
       - .github/workflows/ci.yml
   pull_request:
     paths: *code
@@ -42,6 +44,22 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         run: GOOS=windows go vet ./... && GOOS=darwin go vet ./...
       - run: go test -race ./...
+
+  # The install scripts: shellcheck, PowerShell's parser, and a real install
+  # of the latest release with install.sh once the repo is public (a private
+  # repo's releases need a login curl doesn't have).
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: shellcheck install.sh
+      - shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors; exit 1 }
+      - if: ${{ !github.event.repository.private }}
+        run: PROWL_INSTALL_DIR="$RUNNER_TEMP/bin" sh install.sh </dev/null && "$RUNNER_TEMP/bin/prowl" version
 
   # The TUI, agent and core tests drive fake agents and git through shell
   # scripts, which Windows can't run; the rest of the tests run here.

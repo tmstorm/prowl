@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -246,6 +247,9 @@ func (co *Core) job(key, reviewer, refine string, sync bool) (agent.Job, error) 
 			return agent.Job{}, fmt.Errorf("%s reviewed this branch in your checkout before the PR; start a new review to revise", title)
 		}
 		job.RunID = cur.ID
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		return agent.Job{}, errors.New("AI reviews need git, which isn't on your PATH; install it from https://git-scm.com")
 	}
 	return job, nil
 }

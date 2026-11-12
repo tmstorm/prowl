@@ -508,3 +508,27 @@ func TestUpdateStep(t *testing.T) {
 	a.waitFor("unverified release")
 	a.wantNot("verifying prowl v0.2.0")
 }
+
+// The first start asks whether the terminal shows Nerd Font icons, since
+// only the person looking can tell: yes turns them on and saves it, no leaves
+// them off, other keys leave the question up, and it asks once.
+func TestAskIcons(t *testing.T) {
+	askIcons = true
+	t.Cleanup(func() { askIcons = false })
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.want("Do you see three icons here")
+	a.keys("j", "enter")
+	a.want("Do you see three icons here")
+	a.keys("y")
+	a.want("Nerd Font icons on")
+	if b, _ := os.ReadFile(config.Path()); !strings.Contains(string(b), "\nnerd_font = true") {
+		t.Fatalf("nerd_font wasn't saved:\n%s", b)
+	}
+	a = reopen(a)
+	a.wantNot("Do you see three icons here")
+
+	off := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	off.keys("n")
+	off.want("icons stay off; <space>, → Nerd Font icons turns them on")
+	off.wantNot("Do you see three icons here")
+}

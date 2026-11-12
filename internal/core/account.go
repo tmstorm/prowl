@@ -186,6 +186,12 @@ func (co *Core) OfferService() bool {
 	return co.st.FirstTime("service") && !co.Service()
 }
 
+// AskNerdFont reports whether to ask if the terminal shows Nerd Font icons:
+// the first time prowl asks, and only while they're off.
+func (co *Core) AskNerdFont() bool {
+	return !co.Config().NerdFont && co.st.FirstTime("nerd font")
+}
+
 // SetService sets up `prowl watch` to run at login and starts it, or stops
 // and removes it. It returns what it set up, for people.
 func (co *Core) SetService(on bool) (string, error) {

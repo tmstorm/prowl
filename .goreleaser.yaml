@@ -37,6 +37,7 @@ aurs:
       - "xdg-utils: opening links in the browser"
       - "wl-clipboard: copying on Wayland"
       - "xclip: copying on X11"
+      - "ttf-nerd-fonts-symbols: icons, with nerd_font = true"
     private_key: "{{ index .Env \"AUR_KEY\" }}"
     git_url: ssh://aur@aur.archlinux.org/prowl-bin.git
     skip_upload: "{{ if not (index .Env \"AUR_KEY\") }}true{{ end }}"
