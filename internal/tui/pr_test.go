@@ -323,7 +323,7 @@ func TestDraftReply(t *testing.T) {
 	if !a.wrote("mutation addPullRequestReviewThreadReply") {
 		t.Fatalf("the reply wasn't sent: %v", a.gh.Reviews())
 	}
-	a.want("✓ sent a.go:3")
+	a.waitFor("✓ sent a.go:3")
 	a.wantNot("1 reply goes out", "(↩1)")
 }
 
