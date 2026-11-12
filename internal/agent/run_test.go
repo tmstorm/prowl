@@ -120,6 +120,11 @@ func setupRun(t *testing.T) (st *store.Store, roots, bin, head string) {
 	bin = filepath.Join(tmp, "bin")
 	_ = os.MkdirAll(bin, 0o755)
 	_ = os.WriteFile(filepath.Join(bin, "notify-send"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$(dirname \"$0\")/notified\"\n"), 0o755)
+	_ = os.WriteFile(filepath.Join(bin, "osascript"), []byte(`#!/bin/sh
+n="$(dirname "$0")/notified"
+printf '%s\n' "$2" | sed -E 's/.* subtitle "(.*)"$/\1/' >> "$n"
+printf '%s\n' "$2" | sed -E 's/^display notification "(.*)" with title .*/\1/' >> "$n"
+`), 0o755)
 	_ = os.WriteFile(filepath.Join(bin, "claude"), []byte(`#!/bin/sh
 d="$(dirname "$0")"
 printf '%s\n' "$@" >> "$d/args"
