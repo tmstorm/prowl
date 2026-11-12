@@ -36,10 +36,10 @@ function Ask($question) {
 
 Write-Host ""
 Write-Host (Paint $muted "    ,_____,")
-Write-Host "$(Paint $muted "    (")$(Paint $eye " O")$(Paint $muted ",")$(Paint $eye "O ")$(Paint $muted ")")    $(Paint $accent "prowl")"
-Write-Host "$(Paint $muted '    /)   (\')    $(Paint $muted 'the PR owl')"
+Write-Host ((Paint $muted '    (') + (Paint $eye ' O') + (Paint $muted ',') + (Paint $eye 'O ') + (Paint $muted ')') + '    ' + (Paint $accent 'prowl'))
+Write-Host ((Paint $muted '    /)   (\') + '    ' + (Paint $muted 'the PR owl'))
 Write-Host (Paint $muted '   ((  "  ))')
-Write-Host "$(Paint $muted "  ===")$(Paint $talon "^")$(Paint $muted "===")$(Paint $talon "^")$(Paint $muted "===")"
+Write-Host ((Paint $muted '  ===') + (Paint $talon '^') + (Paint $muted '===') + (Paint $talon '^') + (Paint $muted '==='))
 
 $winget = Get-Command winget -ErrorAction SilentlyContinue
 $wingetArgs = @("-e", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements")
