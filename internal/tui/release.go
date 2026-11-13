@@ -21,6 +21,10 @@ func (m *Model) Restart() bool { return m.restart }
 // them clears.
 const onTip = "you're on prowl "
 
+// breakingTip leads news of a release whose notes list breaking changes, in
+// red where the rest is pink.
+const breakingTip = "⚠ breaking changes"
+
 // releaseTip puts news about prowl's own updates under the legend: a
 // release installed and waiting for a restart, one to install, or what's new
 // in the release now running.
@@ -40,6 +44,9 @@ func (m *Model) releaseTip() {
 		}
 	}
 	if tip != "" {
+		if r.Breaking {
+			tip = breakingTip + " · " + tip
+		}
 		m.tip = tip
 		m.layoutNavs()
 	}
@@ -85,9 +92,13 @@ func (m *Model) upgraded(msg upgradeMsg) {
 		m.fail("update: " + msg.err.Error())
 	case msg.installed != "":
 		m.releaseTip()
-		m.info(sGreen.Render("✓") + " prowl " + msg.installed + " is installed · " + leader + "U restarts into it · " + leader + "N what's new")
+		line := sGreen.Render("✓") + " "
+		if m.core.Release(m.exe).Breaking {
+			line += sRed.Bold(true).Render(breakingTip) + sPink.Render(" · ")
+		}
+		m.info(line + sPink.Render("prowl "+msg.installed+" is installed · "+leader+"U restarts into it · "+leader+"N what's new"))
 	default:
-		m.info(msg.note)
+		m.info(sPink.Render(msg.note))
 	}
 }
 
@@ -105,7 +116,7 @@ func (m *Model) whatsNew() {
 		return
 	}
 	m.popup = &notesPopup{title: "What's new in prowl " + r.Latest, url: r.URL, notes: r.Notes}
-	if strings.HasPrefix(m.tip, onTip) {
+	if strings.Contains(m.tip, onTip) {
 		m.tip = ""
 		m.layoutNavs()
 	}
@@ -144,12 +155,26 @@ func (p *notesPopup) view(m *Model) string {
 	return popBox(p.title, strings.Join(shown, "\n")+"\n\n"+sDim.Render(foot), min(popWidth(m), 84), pal.Accent)
 }
 
+// UpdateNote is a line the CLI prints about r, in pink and in cfg's theme.
+// When r's notes list breaking changes it starts with a red warning and ends
+// with where to read them.
+func UpdateNote(cfg config.Config, r core.Release, text string) string {
+	applyConfig(cfg)
+	if !r.Breaking {
+		return sPink.Render(text)
+	}
+	return sRed.Bold(true).Render(breakingTip) + sPink.Render(" · "+text+" · what to do: "+r.URL)
+}
+
 // Installed is what `prowl update` prints once it installed r.Latest at exe:
 // a line saying so, then the release's notes, in cfg's theme and at most w
 // cells wide.
 func Installed(cfg config.Config, r core.Release, exe string, restarting bool, w int) string {
 	applyConfig(cfg)
 	out := sGreen.Render("✓") + " " + sBold.Render("prowl "+r.Latest) + " is installed at " + sDim.Render(exe)
+	if r.Breaking {
+		out += "\n  " + sRed.Bold(true).Render(breakingTip) + sPink.Render(": read what's new below before you go on")
+	}
 	if restarting {
 		out += "\n  " + sDim.Render("the background service restarts into it in a few seconds")
 	}

@@ -461,6 +461,44 @@ func TestUpdateInstalled(t *testing.T) {
 	}
 }
 
+// A release whose notes list breaking changes says so first: in the tip
+// before and after it runs, which is all a package manager's update shows, and
+// in what `prowl update` prints. Its notes mark each one with what to do.
+func TestBreakingUpdate(t *testing.T) {
+	old := core.Version
+	core.Version = "0.2.0"
+	t.Cleanup(func() { core.Version = old })
+	notes := "## [0.3.0](https://github.com/tmstorm/prowl/compare/v0.2.0...v0.3.0) (2026-11-20)\n\n\n### ⚠ BREAKING CHANGES\n\n" +
+		"* **agent:** local_commands is gone; set an image under run_images to run tests ([#27](https://github.com/tmstorm/prowl/issues/27))\n"
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.3.0", Notes: notes, URL: "https://github.com/tmstorm/prowl/releases/tag/v0.3.0"})
+	_ = a.st.SetInstalled("v0.3.0")
+	a = reopen(a)
+	a.want("⚠ breaking changes · prowl v0.3.0 is installed")
+	a.keys("space", "N")
+	a.want("breaking(agent): local_commands is gone; set an image under run_images to run")
+
+	r := core.Release{Latest: "v0.3.0", Notes: notes, URL: "https://github.com/tmstorm/prowl/releases/tag/v0.3.0", Breaking: true}
+	out := ansi.Strip(tui.Installed(config.Default(), r, "/opt/bin/prowl", false, 80))
+	if !strings.Contains(out, "⚠ breaking changes: read what's new below before you go on") {
+		t.Errorf("prowl update doesn't flag the breaking release:\n%s", out)
+	}
+	out = ansi.Strip(tui.UpdateNote(config.Default(), r, "prowl v0.3.0 is installed; restart prowl to run it"))
+	if out != "⚠ breaking changes · prowl v0.3.0 is installed; restart prowl to run it · what to do: https://github.com/tmstorm/prowl/releases/tag/v0.3.0" {
+		t.Errorf("prowl update after a background install: %q", out)
+	}
+	if out := ansi.Strip(tui.UpdateNote(config.Default(), core.Release{}, "prowl v0.3.0 is the newest release")); out != "prowl v0.3.0 is the newest release" {
+		t.Errorf("a plain update line: %q", out)
+	}
+
+	core.Version = "0.3.0"
+	_ = a.st.SetInstalled("")
+	a = reopen(a)
+	a.want("⚠ breaking changes · you're on prowl v0.3.0")
+	a.keys("space", "N", "esc")
+	a.wantNot("you're on prowl v0.3.0")
+}
+
 // `prowl update` says where it installed the release and what's new in it,
 // including text added to the notes by hand.
 func TestInstalled(t *testing.T) {

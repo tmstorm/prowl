@@ -24,9 +24,11 @@ func Alive(pid int) bool {
 	return true
 }
 
-// Detach makes cmd outlive the parent.
+// Detach makes cmd outlive the parent. CREATE_NO_WINDOW gives it a console
+// of its own with no window, which the git, gh and claude it starts share;
+// DETACHED_PROCESS left it with none, so each of those flashed a new window.
 func Detach(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 }
 
 // Restart starts a fresh run of exe with the same arguments; the caller

@@ -156,7 +156,9 @@ func (co *Core) AgentDraft(key string) (Draft, error) {
 // comment review when it has inline comments), then closes the PR or
 // converts it to a draft. A review has one commit, so inline comments written on an earlier
 // commit (before the author pushed) go out first as a comment-only review on
-// that commit, and each lands on the line it was written on. A comment with
+// that commit, and each lands on the line it was written on. An approval goes
+// on the head, the code you are approving, so an agent draft from before a
+// push that you approve sends its inline comments first, on their commit. A comment with
 // no body and no inline comments (replies only) sends no review. When
 // something fails, Submitted says whether your review went out.
 // Your pending comments are cleared, and the PR is fetched again so it moves
@@ -199,6 +201,12 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 		event, then = "COMMENT", d.Event
 	}
 	main, earlier := byCommit(d, pr.HeadRefOid)
+	if event == "APPROVE" && main.commit != pr.HeadRefOid {
+		if len(main.comments) > 0 {
+			earlier = append(earlier, main)
+		}
+		main = commitComments{commit: pr.HeadRefOid}
+	}
 	for _, g := range earlier {
 		u, err := co.gh.SubmitReview(pr.Repository.NameWithOwner, pr.Number, g.commit, "COMMENT", "", g.comments)
 		if err != nil {
@@ -206,6 +214,9 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 		}
 		out.URL = u
 		co.dropPending(key, g.comments)
+		if len(d.Runs) > 0 {
+			co.markSent(d.Runs, g.comments)
+		}
 	}
 	switch {
 	case then != "" && len(main.comments) == 0 && len(earlier) == 0:
@@ -374,11 +385,32 @@ type commitComments struct {
 	comments []gh.DraftComment
 }
 
+// markSent marks the findings that went out as inline comments posted, so a
+// retry after a later call fails doesn't post them twice.
+func (co *Core) markSent(runs []int64, sent []gh.DraftComment) {
+	for _, id := range runs {
+		r, _ := co.st.Run(id)
+		if r == nil {
+			continue
+		}
+		for i, f := range r.Findings {
+			if !f.Excluded && slices.ContainsFunc(sent, func(c gh.DraftComment) bool { return c.Path == f.Path && c.Line == f.Line }) {
+				r.Findings[i].Posted = true
+			}
+		}
+		_ = co.st.SaveFindings(id, r.Findings)
+	}
+	co.loadRuns()
+}
+
 // dropPending forgets pending comments that went out, so a retry after a
 // later call fails doesn't post them twice.
 func (co *Core) dropPending(key string, sent []gh.DraftComment) {
 	co.mu.Lock()
 	defer co.mu.Unlock()
+	if len(co.pending[key]) == 0 {
+		return
+	}
 	co.pending[key] = slices.DeleteFunc(co.pending[key], func(c gh.DraftComment) bool {
 		return slices.ContainsFunc(sent, func(s gh.DraftComment) bool {
 			return s.Path == c.Path && s.Line == c.Line && s.StartLine == c.StartLine && s.Side == c.Side && s.Commit == c.Commit
