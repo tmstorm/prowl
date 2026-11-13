@@ -383,13 +383,18 @@ var ErrWatching = errors.New("prowl watch is already running")
 // Watching makes this process `prowl watch`, which sends the desktop
 // notifications for everyone. Only one runs: it holds a lock on watch.lock in
 // the data dir for as long as it runs, which the OS drops when it ends, so a
-// crash or a reboot never leaves a stale claim. With the lock taken it
-// returns ErrWatching.
+// crash or a reboot never leaves a stale claim. A UI checking for a watcher
+// holds the lock for a moment, so a taken lock is tried again for a second
+// before it returns ErrWatching.
 func (co *Core) Watching() error {
 	if err := os.MkdirAll(config.DataDir(), 0o700); err != nil {
 		return fmt.Errorf("watch: %w", err)
 	}
 	l, err := platform.TryLock(watchLock())
+	for try := 0; errors.Is(err, platform.ErrLocked) && try < 10; try++ {
+		time.Sleep(100 * time.Millisecond)
+		l, err = platform.TryLock(watchLock())
+	}
 	if errors.Is(err, platform.ErrLocked) {
 		return fmt.Errorf("%w (process %d)", ErrWatching, co.st.Watcher())
 	}
