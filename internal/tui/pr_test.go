@@ -270,6 +270,25 @@ func TestDismissedReviewActivity(t *testing.T) {
 	a.want("approved, since dismissed")
 }
 
+// Commits pushed close together show as one push, newest first, so a folded
+// push shows the commit its time is from.
+func TestPushActivityNewestFirst(t *testing.T) {
+	commit := func(oid, head string, at time.Time) map[string]any {
+		return map[string]any{"__typename": "PullRequestCommit", "commit": map[string]any{"oid": oid, "messageHeadline": head,
+			"committedDate": at, "author": map[string]any{"user": map[string]any{"login": "alice"}}}}
+	}
+	f := &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")},
+		Timeline: map[int][]any{1: {commit("aaaaaaa1111", "first try", time.Now().Add(-20*time.Minute)),
+			commit("bbbbbbb2222", "address review", time.Now().Add(-10*time.Minute))}}}
+	a := newApp(t, f)
+	a.keys("enter")
+	a.want("pushed 2 commits")
+	screen := strings.Join(a.lines(), "\n")
+	if newer, older := strings.Index(screen, "bbbbbbb  address review"), strings.Index(screen, "aaaaaaa  first try"); newer < 0 || older < newer {
+		t.Fatalf("the push should list the newest commit first:\n%s", screen)
+	}
+}
+
 // The Overview lists CI: a failed check open with its reason, required ones
 // marked, running ones a line each, the rest folded. gl on a failed Actions
 // check shows the end of its log.
