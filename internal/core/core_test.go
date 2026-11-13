@@ -469,6 +469,34 @@ func TestAgentDraftAndSubmit(t *testing.T) {
 	}
 }
 
+// Approving an agent draft written before the author pushed approves the
+// head; the draft's inline comments go first, on the commit they were
+// written on.
+func TestApproveAgentDraftAfterPush(t *testing.T) {
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
+	_, st := newCore(t, fake)
+	run, _ := st.StartRun("o/api#7", "abc1234", "claude", "", 0)
+	_ = st.FinishReview(run, "s1", "Looks fine.", "", []store.Finding{{Severity: "should-fix", Path: "a.go", Line: 10, Title: "naming", Body: "Rename."}})
+	c, _ := fake.Client()
+	co := core.New(config.Default(), c, st)
+	refresh(t, co)
+	d, err := co.AgentDraft("o/api#7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.PRs[0].HeadRefOid = "def5678"
+	refresh(t, co)
+	d.Event = "APPROVE"
+	if _, err := co.Submit("o/api#7", d); err != nil {
+		t.Fatal(err)
+	}
+	rv := fake.Reviews()
+	if len(rv) != 2 || rv[0]["event"] != "COMMENT" || rv[0]["commit_id"] != "abc1234" || rv[0]["comments"] == nil ||
+		rv[1]["event"] != "APPROVE" || rv[1]["commit_id"] != "def5678" || rv[1]["comments"] != nil {
+		t.Fatalf("sent: %v", rv)
+	}
+}
+
 // Your own review carries your pending comments.
 func TestApproveWithPending(t *testing.T) {
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
