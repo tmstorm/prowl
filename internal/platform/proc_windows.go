@@ -3,11 +3,15 @@
 package platform
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
+	"unicode/utf16"
 )
 
 // Alive reports whether a process exists.
@@ -74,3 +78,45 @@ func TryLock(path string) (*Lock, error) {
 
 // Unlock gives the lock up.
 func (l *Lock) Unlock() { _ = syscall.CloseHandle(l.h) }
+
+// RemoveBinary deletes prowl.exe at exe once this prowl exits, since Windows
+// won't delete a running program: a hidden PowerShell retries the delete for a
+// minute. When the folder holds nothing else, it goes too and comes off your
+// PATH, where install.ps1 put it. The script goes in -EncodedCommand, so no
+// quoting rules apply to the paths.
+func RemoveBinary(exe string) error {
+	dir := filepath.Dir(exe)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("remove %s: %w", exe, err)
+	}
+	name := filepath.Base(exe)
+	old := strings.TrimSuffix(name, ".exe") + ".old.exe"
+	alone := true
+	for _, e := range entries {
+		if !strings.EqualFold(e.Name(), name) && !strings.EqualFold(e.Name(), old) {
+			alone = false
+		}
+	}
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+	script := fmt.Sprintf(`$exe = %s; for ($i = 0; $i -lt 60 -and (Test-Path -LiteralPath $exe); $i++) { Start-Sleep 1; Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue }`, quote(exe))
+	if alone {
+		path := fmt.Sprintf(`$d = %s; $p = [Environment]::GetEnvironmentVariable('Path', 'User'); `+
+			`[Environment]::SetEnvironmentVariable('Path', (($p -split ';') | Where-Object { $_ -and $_ -ne $d }) -join ';', 'User')`, quote(dir))
+		if err := exec.Command("powershell", "-NoProfile", "-Command", path).Run(); err != nil {
+			return fmt.Errorf("take %s off PATH: %w", dir, err)
+		}
+		script += fmt.Sprintf(`; Remove-Item -LiteralPath %s -Recurse -Force -ErrorAction SilentlyContinue`, quote(dir))
+	}
+	units := utf16.Encode([]rune(script))
+	b := make([]byte, 2*len(units))
+	for i, u := range units {
+		b[2*i], b[2*i+1] = byte(u), byte(u>>8)
+	}
+	cmd := exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", base64.StdEncoding.EncodeToString(b))
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("remove %s: %w", exe, err)
+	}
+	return nil
+}

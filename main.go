@@ -65,6 +65,12 @@ usage:
   prowl update     install the newest release over this prowl and print
                    what's new. A prowl from a package manager says which
                    command updates it instead.
+  prowl uninstall [--purge] [--yes]
+                   remove what prowl put on this machine: the background
+                   service, its worktrees and refs in your checkouts, the
+                   prowl-findings skill and, when prowl installed itself, the
+                   binary. --purge also removes the config and data. A
+                   package manager's prowl says which command removes it.
   prowl schema     print the JSON Schema a review must match (for
                    [agent] reviewers = ["command"])
 `
@@ -133,6 +139,8 @@ func run(args []string) error {
 		return findings(cfg, st, args[1:])
 	case "service":
 		return service(args[1:])
+	case "uninstall":
+		return uninstall(cfg, st, args[1:])
 	case "edits":
 		return edits(cfg, st, args[1:])
 	case "schema":
@@ -685,6 +693,47 @@ func showProgress(co *core.Core, start time.Time, step func(now time.Time) strin
 		close(done)
 		<-finished
 	}
+}
+
+// uninstall removes what prowl put on this machine, after asking.
+func uninstall(cfg config.Config, st *store.Store, args []string) error {
+	purge, yes := false, false
+	for _, a := range args {
+		switch a {
+		case "--purge":
+			purge = true
+		case "--yes", "-y":
+			yes = true
+		case "-h", "--help":
+			fmt.Print(usage)
+			return nil
+		default:
+			return fmt.Errorf("prowl uninstall: unknown argument %q", a)
+		}
+	}
+	f := core.FindFootprint(cfg, core.Executable(), purge)
+	if !yes && !term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Print(tui.Uninstalling(cfg, f, false))
+		return errors.New("prowl uninstall: run it in a terminal to confirm, or pass --yes")
+	}
+	fmt.Print(tui.Uninstalling(cfg, f, !yes))
+	if !f.Service && len(f.Checkouts)+len(f.Skills)+len(f.Dirs) == 0 && f.Binary == "" {
+		return nil
+	}
+	if !yes {
+		var answer string
+		_, _ = fmt.Scanln(&answer)
+		if answer != "y" && answer != "Y" && answer != "yes" {
+			fmt.Println("nothing removed")
+			return nil
+		}
+	}
+	_ = st.Close()
+	if err := core.Uninstall(f); err != nil {
+		return err
+	}
+	fmt.Println("prowl is uninstalled")
+	return nil
 }
 
 // service installs or removes `prowl watch` as a login service.

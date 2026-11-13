@@ -56,3 +56,12 @@ func TryLock(path string) (*Lock, error) {
 
 // Unlock gives the lock up.
 func (l *Lock) Unlock() { _ = l.f.Close() }
+
+// RemoveBinary deletes the prowl binary at exe; a running program keeps
+// working until it exits.
+func RemoveBinary(exe string) error {
+	if err := os.Remove(exe); err != nil {
+		return fmt.Errorf("remove %s: %w", exe, err)
+	}
+	return nil
+}

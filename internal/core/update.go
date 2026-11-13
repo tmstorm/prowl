@@ -105,18 +105,31 @@ func (co *Core) Release(exe string) Release {
 // updateCommand is what updates the prowl at exe, or "" when prowl owns its
 // binary and can replace it: a package manager's binary is never touched.
 func updateCommand(exe string) string {
+	if Version == "" {
+		return "go install github.com/" + releaseRepo + "@latest"
+	}
+	return map[string]string{
+		"brew":     "brew upgrade prowl",
+		"scoop":    "scoop update prowl",
+		"aur":      "yay -S prowl-bin",
+		"readonly": "download it from https://github.com/" + releaseRepo + "/releases",
+	}[owner(exe)]
+}
+
+// owner is what owns the prowl binary at exe: a package manager ("brew",
+// "scoop", "aur"), "readonly" for a folder prowl can't write, or "" when
+// prowl may replace or remove it.
+func owner(exe string) string {
 	p := filepath.ToSlash(exe)
 	switch {
-	case Version == "":
-		return "go install github.com/" + releaseRepo + "@latest"
 	case strings.Contains(p, "/Cellar/") || strings.HasPrefix(p, "/opt/homebrew/"):
-		return "brew upgrade prowl"
+		return "brew"
 	case strings.Contains(strings.ToLower(p), "/scoop/"):
-		return "scoop update prowl"
+		return "scoop"
 	case runtime.GOOS == "linux" && strings.HasPrefix(p, "/usr/") && !strings.HasPrefix(p, "/usr/local/"):
-		return "yay -S prowl-bin"
+		return "aur"
 	case !writable(filepath.Dir(exe)):
-		return "download it from https://github.com/" + releaseRepo + "/releases"
+		return "readonly"
 	}
 	return ""
 }
