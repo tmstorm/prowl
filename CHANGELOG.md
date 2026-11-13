@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0](https://github.com/tmstorm/prowl/compare/v0.2.0...v0.3.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** `local_commands` is removed. To let reviews run tests, set an image under `[agent.run_images]`, e.g. `"*" = "golang:1.27"`. This needs Docker.
+
+### Features
+
+* **agent:** let review agents run tests in a container ([cc1a6de](https://github.com/tmstorm/prowl/commit/cc1a6dee93f040e7d8f2c2c99e2671f5d209b43e))
+* **tui:** flag breaking releases and show update news in pink ([c870017](https://github.com/tmstorm/prowl/commit/c870017eb2ee10de3455faa79642b98f04743b83))
+
+
+### Bug Fixes
+
+* **core:** approve the head when an agent draft predates a push ([#25](https://github.com/tmstorm/prowl/issues/25)) ([e43ad14](https://github.com/tmstorm/prowl/commit/e43ad140b8ccc5a0211eb8d84dec8cad5c0e1a90))
+* **platform:** stop console windows flashing on Windows while reviews run ([#24](https://github.com/tmstorm/prowl/issues/24)) ([06b75ae](https://github.com/tmstorm/prowl/commit/06b75ae2c0cf66224a65e3a2dec7bf111f70ae3c))
+* **tui:** list a push's commits newest first ([#29](https://github.com/tmstorm/prowl/issues/29)) ([6d7e585](https://github.com/tmstorm/prowl/commit/6d7e585eb429e8781741c094691b8790c5c0e9c5))
+
 ## [0.2.0](https://github.com/tmstorm/prowl/compare/v0.1.0...v0.2.0) (2026-11-13)
 
 
