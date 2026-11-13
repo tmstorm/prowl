@@ -231,7 +231,10 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 		interval = 30 * time.Second
 	}
 	co := core.New(cfg, c, st)
-	if err := co.Watching(); err != nil {
+	if err := co.Watching(); errors.Is(err, core.ErrWatching) {
+		fmt.Println(err)
+		return nil
+	} else if err != nil {
 		return err
 	}
 	exe := core.Executable()
@@ -241,8 +244,10 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 	for {
 		if updated(exe, built) {
 			fmt.Println(time.Now().Format(time.TimeOnly), "prowl was updated; restarting")
+			co.StopWatching()
 			if err := platform.Restart(exe); err != nil {
 				fmt.Fprintln(os.Stderr, "restart failed:", err)
+				_ = co.Watching()
 			} else {
 				return nil
 			}

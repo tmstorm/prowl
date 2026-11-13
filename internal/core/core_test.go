@@ -830,8 +830,10 @@ func read(t *testing.T, path string) string {
 	return string(b)
 }
 
-// While another process is prowl watch, it sends the notifications; once it
-// has exited, or when this process is the watcher, it doesn't count.
+// While another process is prowl watch, it sends the notifications and a
+// second prowl watch is turned away; once it has exited, or when this process
+// is the watcher, it doesn't count. A watcher restarting on an update clears
+// its record first.
 func TestWatchRunning(t *testing.T) {
 	path := os.Getenv("PATH")
 	co, st := newCore(t, &ghtest.GitHub{})
@@ -847,6 +849,9 @@ func TestWatchRunning(t *testing.T) {
 	if !co.WatchRunning() {
 		t.Fatal("a running watcher should count")
 	}
+	if err := co.Watching(); !errors.Is(err, core.ErrWatching) {
+		t.Fatalf("a second prowl watch should be turned away: %v", err)
+	}
 	_ = watcher.Process.Kill()
 	_ = watcher.Wait()
 	if co.WatchRunning() {
@@ -854,6 +859,10 @@ func TestWatchRunning(t *testing.T) {
 	}
 	if err := co.Watching(); err != nil || co.WatchRunning() {
 		t.Fatalf("this process as the watcher: %v", err)
+	}
+	co.StopWatching()
+	if st.Watcher() != 0 {
+		t.Fatal("a watcher restarting on an update should clear its record")
 	}
 }
 
@@ -913,11 +922,12 @@ func TestOnlyTheNotifierTakesChanges(t *testing.T) {
 	if err := other.Start(); err != nil {
 		t.Skip("no sleep:", err)
 	}
-	defer func() { _ = other.Process.Kill(); _ = other.Wait() }()
 	_ = st.SetWatcher(other.Process.Pid)
 	if changes, _ := ui.Refresh(); len(changes) != 0 {
 		t.Fatalf("the UI took changes while a watcher runs: %v", changes)
 	}
+	_ = other.Process.Kill()
+	_ = other.Wait()
 
 	watch := core.New(config.Default(), c, st)
 	if err := watch.Watching(); err != nil {

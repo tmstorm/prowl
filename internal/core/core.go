@@ -5,6 +5,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -374,13 +375,26 @@ func (co *Core) RefreshPR(key string) error {
 	return nil
 }
 
+// ErrWatching is Watching's answer while another `prowl watch` runs.
+var ErrWatching = errors.New("prowl watch is already running")
+
 // Watching records that this process is `prowl watch`, which sends the
-// desktop notifications for everyone.
+// desktop notifications for everyone. Only one runs: with another alive, it
+// returns ErrWatching.
 func (co *Core) Watching() error {
+	if co.WatchRunning() {
+		return fmt.Errorf("%w (process %d)", ErrWatching, co.st.Watcher())
+	}
 	co.mu.Lock()
 	co.quiet = false
 	co.mu.Unlock()
 	return co.st.SetWatcher(os.Getpid())
+}
+
+// StopWatching clears this process's record as `prowl watch`, so the prowl
+// it starts to restart on an update isn't turned away while this one exits.
+func (co *Core) StopWatching() {
+	_ = co.st.SetWatcher(0)
 }
 
 // Quiet marks this process as one that never notifies, like `prowl list`.
