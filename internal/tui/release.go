@@ -44,7 +44,7 @@ func (m *Model) releaseTip() {
 		}
 	}
 	if tip != "" {
-		if r.Breaking && !strings.HasPrefix(tip, onTip) {
+		if r.Breaking {
 			tip = breakingTip + " · " + tip
 		}
 		m.tip = tip
@@ -116,7 +116,7 @@ func (m *Model) whatsNew() {
 		return
 	}
 	m.popup = &notesPopup{title: "What's new in prowl " + r.Latest, url: r.URL, notes: r.Notes}
-	if strings.HasPrefix(m.tip, onTip) {
+	if strings.Contains(m.tip, onTip) {
 		m.tip = ""
 		m.layoutNavs()
 	}
@@ -153,6 +153,17 @@ func (p *notesPopup) view(m *Model) string {
 		foot = "j/k scroll · " + foot
 	}
 	return popBox(p.title, strings.Join(shown, "\n")+"\n\n"+sDim.Render(foot), min(popWidth(m), 84), pal.Accent)
+}
+
+// UpdateNote is a line the CLI prints about r, in pink and in cfg's theme.
+// When r's notes list breaking changes it starts with a red warning and ends
+// with where to read them.
+func UpdateNote(cfg config.Config, r core.Release, text string) string {
+	applyConfig(cfg)
+	if !r.Breaking {
+		return sPink.Render(text)
+	}
+	return sRed.Bold(true).Render(breakingTip) + sPink.Render(" · "+text+" · what to do: "+r.URL)
 }
 
 // Installed is what `prowl update` prints once it installed r.Latest at exe:

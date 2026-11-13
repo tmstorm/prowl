@@ -128,7 +128,7 @@ func run(args []string) error {
 			co := core.New(cfg, c, st)
 			_ = co.CheckRelease(false)
 			if r := co.Release(core.Executable()); r.Newer() && !r.Installed {
-				fmt.Printf("prowl %s is out: %s\n", r.Latest, cmp.Or(r.Command, "prowl update"))
+				fmt.Println(tui.UpdateNote(cfg, r, fmt.Sprintf("prowl %s is out: %s", r.Latest, cmp.Or(r.Command, "prowl update"))))
 			}
 		}
 		return nil
@@ -477,13 +477,13 @@ func update(co *core.Core) error {
 	case r.Running == "":
 		return fmt.Errorf("this prowl (%s) was built from source; update it with git pull and go build", core.BuildVersion())
 	case r.Installed:
-		fmt.Printf("prowl %s is installed; restart prowl to run it\n", r.Latest)
+		fmt.Println(tui.UpdateNote(co.Config(), r, fmt.Sprintf("prowl %s is installed; restart prowl to run it", r.Latest)))
 		return nil
 	case !r.Newer():
-		fmt.Printf("prowl %s is the newest release\n", r.Running)
+		fmt.Println(tui.UpdateNote(co.Config(), core.Release{}, fmt.Sprintf("prowl %s is the newest release", r.Running)))
 		return nil
 	case r.Command != "":
-		fmt.Printf("prowl %s is out; this prowl is updated with: %s\n", r.Latest, r.Command)
+		fmt.Println(tui.UpdateNote(co.Config(), r, fmt.Sprintf("prowl %s is out; this prowl is updated with: %s", r.Latest, r.Command)))
 		return nil
 	}
 	stop := showProgress(co, time.Now(), func(time.Time) string { return co.Updating() })

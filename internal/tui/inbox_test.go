@@ -461,8 +461,9 @@ func TestUpdateInstalled(t *testing.T) {
 	}
 }
 
-// A release whose notes list breaking changes says so first, in the tip and
-// in what `prowl update` prints, and its notes mark each one with what to do.
+// A release whose notes list breaking changes says so first: in the tip
+// before and after it runs, which is all a package manager's update shows, and
+// in what `prowl update` prints. Its notes mark each one with what to do.
 func TestBreakingUpdate(t *testing.T) {
 	old := core.Version
 	core.Version = "0.2.0"
@@ -477,10 +478,25 @@ func TestBreakingUpdate(t *testing.T) {
 	a.keys("space", "N")
 	a.want("breaking(agent): local_commands is gone; set an image under run_images to run")
 
-	out := ansi.Strip(tui.Installed(config.Default(), core.Release{Latest: "v0.3.0", Notes: notes, Breaking: true}, "/opt/bin/prowl", false, 80))
+	r := core.Release{Latest: "v0.3.0", Notes: notes, URL: "https://github.com/tmstorm/prowl/releases/tag/v0.3.0", Breaking: true}
+	out := ansi.Strip(tui.Installed(config.Default(), r, "/opt/bin/prowl", false, 80))
 	if !strings.Contains(out, "⚠ breaking changes: read what's new below before you go on") {
 		t.Errorf("prowl update doesn't flag the breaking release:\n%s", out)
 	}
+	out = ansi.Strip(tui.UpdateNote(config.Default(), r, "prowl v0.3.0 is installed; restart prowl to run it"))
+	if out != "⚠ breaking changes · prowl v0.3.0 is installed; restart prowl to run it · what to do: https://github.com/tmstorm/prowl/releases/tag/v0.3.0" {
+		t.Errorf("prowl update after a background install: %q", out)
+	}
+	if out := ansi.Strip(tui.UpdateNote(config.Default(), core.Release{}, "prowl v0.3.0 is the newest release")); out != "prowl v0.3.0 is the newest release" {
+		t.Errorf("a plain update line: %q", out)
+	}
+
+	core.Version = "0.3.0"
+	_ = a.st.SetInstalled("")
+	a = reopen(a)
+	a.want("⚠ breaking changes · you're on prowl v0.3.0")
+	a.keys("space", "N", "esc")
+	a.wantNot("you're on prowl v0.3.0")
 }
 
 // `prowl update` says where it installed the release and what's new in it,
