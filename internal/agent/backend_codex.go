@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -58,10 +61,13 @@ func (codexBackend) SkillDirs() []string {
 	return []string{filepath.Join(codexHome(), "skills"), filepath.Join(home, ".agents", "skills")}
 }
 
-func (codexBackend) Chat(session, dir, model string) *exec.Cmd {
+func (codexBackend) Chat(session, dir, model string, toolServer []string) *exec.Cmd {
 	args := []string{"resume"}
 	if model != "" {
 		args = append(args, "-m", model)
+	}
+	if len(toolServer) > 0 {
+		args = append(args, codexToolServer(toolServer)...)
 	}
 	cmd := exec.Command("codex", append(args, session)...)
 	cmd.Dir = dir
@@ -77,6 +83,35 @@ func codexModel() string {
 	}
 	_, _ = toml.DecodeFile(filepath.Join(codexHome(), "config.toml"), &c)
 	return c.Model
+}
+
+// codexServersOff is the -c flags that turn off the MCP servers in your Codex
+// config for a review, as --strict-mcp-config does for Claude. Codex merges
+// -c into the config, so mcp_servers={} would keep them.
+func codexServersOff() []string {
+	var c struct {
+		MCPServers map[string]toml.Primitive `toml:"mcp_servers"`
+	}
+	_, _ = toml.DecodeFile(filepath.Join(codexHome(), "config.toml"), &c)
+	var args []string
+	for _, name := range slices.Sorted(maps.Keys(c.MCPServers)) {
+		args = append(args, "-c", "mcp_servers."+name+".enabled=false")
+	}
+	return args
+}
+
+// codexToolServer is the -c flags that give Codex prowl's tool server. Its run
+// tool is approved up front: each run is shut in its container, and a review
+// can't ask anyone. Its timeout outlasts runTimeout, so prowl's own ends a run.
+func codexToolServer(toolServer []string) []string {
+	args := make([]string, len(toolServer)-1)
+	for i, a := range toolServer[1:] {
+		args[i] = strconv.Quote(a)
+	}
+	return []string{"-c", "mcp_servers.prowl.command=" + strconv.Quote(toolServer[0]),
+		"-c", "mcp_servers.prowl.args=[" + strings.Join(args, ",") + "]",
+		"-c", `mcp_servers.prowl.tools.run.approval_mode="approve"`,
+		"-c", "mcp_servers.prowl.tool_timeout_sec=" + strconv.Itoa(int(runTimeout.Seconds())+60)}
 }
 
 // Review runs one `codex exec` turn in the read-only sandbox, never asking
@@ -99,6 +134,10 @@ func (codexBackend) Review(t Turn) (*result, string, error) {
 	}
 	args = append(args, "--json", "--output-schema", schemaPath, "-o", lastPath,
 		"-c", `sandbox_mode="read-only"`, "-c", `approval_policy="never"`)
+	args = append(args, codexServersOff()...)
+	if len(t.ToolServer) > 0 {
+		args = append(args, codexToolServer(t.ToolServer)...)
+	}
 	model := t.Model
 	if model != "" {
 		args = append(args, "-m", model)

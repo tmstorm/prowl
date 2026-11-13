@@ -61,7 +61,11 @@ func TestUninstall(t *testing.T) {
 	gitIn(t, repo, "update-ref", "refs/prowl/pr-1-claude", "HEAD")
 	wt := filepath.Join(config.DataDir(), "worktrees", "o", "api", "1", "claude")
 	gitIn(t, repo, "worktree", "add", "-q", "--detach", wt, "refs/prowl/pr-1-claude")
-	if _, err := co.Update(func(c *config.Config) error { c.RepoRoots = []string{root}; return nil }); err != nil {
+	if _, err := co.Update(func(c *config.Config) error {
+		c.RepoRoots = []string{root}
+		c.Agent.RunImages = map[string]string{"*": "golang:1.27", "acme/api": "golang:1.27", "acme/web": "node:22"}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	exe := filepath.Join(t.TempDir(), "prowl")
@@ -70,7 +74,7 @@ func TestUninstall(t *testing.T) {
 	f := core.FindFootprint(co.Config(), exe, true)
 	if f.Service != (runtime.GOOS == "linux") || !slices.Equal(f.Checkouts, []string{repo}) ||
 		!slices.Equal(f.Skills, []string{skill.Dir("claude")}) || !slices.Equal(f.Kept, []string{edited}) || f.Binary != exe || f.Command != "" ||
-		!slices.Equal(f.Dirs, []string{config.Dir(), config.DataDir()}) {
+		!slices.Equal(f.Dirs, []string{config.Dir(), config.DataDir()}) || !slices.Equal(f.Images, []string{"golang:1.27", "node:22"}) {
 		t.Fatalf("footprint: %+v", f)
 	}
 	if err := core.Uninstall(f); err != nil {

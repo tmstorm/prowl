@@ -240,14 +240,14 @@ func findGuidelines(wt string, changed []string) []string {
 	return found
 }
 
-func prompt(j Job, cfg config.Config, be Backend, guidelines []string, h history, dismissed, examples string) string {
+func prompt(j Job, cfg config.Config, be Backend, guidelines []string, h history, dismissed, examples string, canRun bool) string {
 	reader := "the reviewer"
 	if j.Viewer != "" {
 		reader = j.Viewer
 	}
 	var b strings.Builder
 	if j.Dir != "" {
-		b.WriteString(localHeader(j, reader, h, localCommands(cfg, be, j)))
+		b.WriteString(localHeader(j, reader, h))
 	} else {
 		fmt.Fprintf(&b, `You are reviewing pull request #%d in %s for %s, who will read your review before anything is posted.
 
@@ -265,6 +265,9 @@ The PR head is checked out in the current directory. See the change with:
   git log origin/%s..HEAD
 
 `, j.Number, j.Repo, reader, j.Title, j.Author, j.Base, j.Body, j.Base, j.Base)
+	}
+	if canRun {
+		b.WriteString("You can run commands with the `run` tool: it runs a shell command at the root of the repo in a container that has only the repo, so git doesn't work there; use your own git commands for history and diffs. Run the tests to check that the change works and that your findings hold. A failure the change causes is a finding. Say in `note` what you ran and what it showed.\n\n")
 	}
 
 	if h.text != "" {
@@ -494,13 +497,14 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 			return fail(err)
 		}
 	}
+	tools := ToolServerCommand(cfg, be, j.Repo, wt, j.Dir != "")
 	turn := func(input, session, phase string) (*result, string, error) {
 		_ = st.SetReviewActivity(id, phase)
 		return be.Review(Turn{
 			Dir: wt, Prompt: input, Session: session, Model: cfg.Agent.Model(be.Name()),
 			Schema:      Schema(cfg.Agent.Severities()),
 			ContextDirs: existingDirs(cfg.ExpandedContextDirs()),
-			Commands:    localCommands(cfg, be, j),
+			ToolServer:  tools,
 			Activity:    func(s string) { _ = st.SetReviewActivity(id, phase+": "+s) },
 			SetModel:    func(m string) { _ = st.SetReviewModel(id, m) },
 		})
@@ -536,7 +540,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 			posts, _ := st.Posts(time.Time{})
 			examples = editExamples(posts, n)
 		}
-		return prompt(j, cfg, be, findGuidelines(wt, changed), hist, dismissedSection(runs, id), examples)
+		return prompt(j, cfg, be, findGuidelines(wt, changed), hist, dismissedSection(runs, id), examples, tools != nil)
 	}
 
 	if j.Refine != "" {
@@ -777,13 +781,26 @@ var notifyTimeout = 8 * time.Second
 
 func notify(title, body string) { platform.Notify(title, body, notifyTimeout) }
 
-// localCommands are the commands a review of your own checkout may run.
-// Only Claude Code can be held to a list, and a PR review never runs any.
-func localCommands(cfg config.Config, be Backend, j Job) []string {
-	if j.Dir == "" || be.Name() != "claude" {
+// ToolServerCommand is the command that starts the tool server for a review
+// of repo in dir, or nil when the review gets no run tool: no image for the
+// repo, no docker, or an agent prowl can't give MCP servers. local is a
+// review of your own checkout.
+func ToolServerCommand(cfg config.Config, be Backend, repo, dir string, local bool) []string {
+	if be.Name() == "command" || cfg.Agent.RunImage(repo) == "" {
 		return nil
 	}
-	return cfg.Agent.LocalCommands
+	if _, err := exec.LookPath("docker"); err != nil {
+		return nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	args := []string{exe, "agent-tools", repo, dir}
+	if local {
+		args = append(args, "--local")
+	}
+	return args
 }
 
 // prepareWorktree ensures a detached worktree at the PR head and returns its
@@ -889,7 +906,7 @@ func RemoveReview(cfg config.Config, repo string, number int) {
 // reviewed says prowl has no review of: left from before closed PRs lost
 // their refs, or by a discarded review. reviewed is asked as it goes, so a
 // review starting meanwhile keeps its own. A checkout whose origin isn't on
-// GitHub is left alone.
+// GitHub is left alone. It also removes run tool containers past their timeout.
 func PruneOrphans(cfg config.Config, reviewed func(repo string, number int) bool) {
 	root := filepath.Join(config.DataDir(), "worktrees")
 	owners, _ := os.ReadDir(root)
@@ -916,6 +933,7 @@ func PruneOrphans(cfg config.Config, reviewed func(repo string, number int) bool
 		}
 		_ = run(dir, "git", "worktree", "prune")
 	}
+	pruneRunContainers()
 }
 
 // removeWorktrees removes every agent's worktree for a PR (best effort).

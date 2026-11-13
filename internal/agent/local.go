@@ -49,7 +49,7 @@ func localChanges(dir, base string) []string {
 }
 
 // localHeader opens the prompt of a local review.
-func localHeader(j Job, reader string, h history, commands []string) string {
+func localHeader(j Job, reader string, h history) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `You are reviewing local changes on branch %s in %s for %s, before a pull request exists. Nothing you write is posted: it goes back to %s, or to the coding agent working in this checkout.
 
@@ -59,9 +59,6 @@ The checkout is the current directory, and some of the work may not be committed
   git log %s..HEAD
 
 `, j.Branch, j.Repo, reader, reader, gh.Short(h.base), j.Base, gh.Short(h.base))
-	if len(commands) > 0 {
-		fmt.Fprintf(&b, "You may also run `%s`, with any arguments. Run them to check that the change works and that your findings hold. A failure the change causes is a finding. Say in `note` what you ran and what it showed.\n\n", strings.Join(commands, "`, `"))
-	}
 	if h.lastOid != "" {
 		fmt.Fprintf(&b, `You reviewed this branch before, at commit %s. Start from what changed since then (git diff %s), and only raise problems in code you already reviewed when they are must-fix.
 

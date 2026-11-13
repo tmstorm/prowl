@@ -35,8 +35,12 @@ func (claudeBackend) SkillDirs() []string {
 	return []string{filepath.Join(base, "skills")}
 }
 
-func (claudeBackend) Chat(session, dir, model string) *exec.Cmd {
-	cmd := exec.Command("claude", "--resume", session, "--setting-sources", claudeSettings)
+func (claudeBackend) Chat(session, dir, model string, toolServer []string) *exec.Cmd {
+	args := []string{"--resume", session, "--setting-sources", claudeSettings}
+	if len(toolServer) > 0 {
+		args = append(args, "--mcp-config", claudeMCPConfig(toolServer), "--allowedTools", "mcp__prowl__run")
+	}
+	cmd := exec.Command("claude", args...)
 	cmd.Dir = dir
 	cmd.Env = CleanEnv()
 	return cmd
@@ -56,14 +60,11 @@ const (
 		"Bash(git diff *--output*),Bash(git log *--output*),Bash(git show *--output*),Bash(git range-diff *--output*)"
 )
 
-// commandRules allows each command with any arguments: "go test" allows
-// `go test ./...`.
-func commandRules(commands []string) string {
-	var b strings.Builder
-	for _, c := range commands {
-		b.WriteString(",Bash(" + strings.TrimSuffix(c, ":*") + ":*)")
-	}
-	return b.String()
+// claudeMCPConfig is the --mcp-config that gives Claude prowl's tool server.
+func claudeMCPConfig(toolServer []string) string {
+	servers, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
+		"prowl": map[string]any{"command": toolServer[0], "args": toolServer[1:]}}})
+	return string(servers)
 }
 
 // Review runs one `claude -p` turn. The prompt goes on stdin: --allowedTools
@@ -71,9 +72,14 @@ func commandRules(commands []string) string {
 func (claudeBackend) Review(t Turn) (*result, string, error) {
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--setting-sources", claudeSettings,
 		"--strict-mcp-config", "--json-schema", t.schema(),
-		"--allowedTools", claudeAllowed + commandRules(t.Commands),
 		"--disallowedTools", claudeDisallowed,
 	}
+	allowed := claudeAllowed
+	if len(t.ToolServer) > 0 {
+		args = append(args, "--mcp-config", claudeMCPConfig(t.ToolServer))
+		allowed += ",mcp__prowl__run"
+	}
+	args = append(args, "--allowedTools", allowed)
 	if t.Model != "" {
 		args = append(args, "--model", t.Model)
 	}

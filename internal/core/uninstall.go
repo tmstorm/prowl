@@ -3,7 +3,9 @@ package core
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
@@ -20,6 +22,7 @@ type Footprint struct {
 	Binary    string   // the prowl binary, when prowl may remove it
 	Command   string   // what removes prowl when something else owns it
 	Dirs      []string // the config and data dirs, with purge
+	Images    []string // the agent's run images, which stay: you may use them elsewhere
 }
 
 // FindFootprint lists what uninstalling the prowl at exe removes. purge adds
@@ -38,6 +41,7 @@ func FindFootprint(cfg config.Config, exe string, purge bool) Footprint {
 	if purge {
 		f.Dirs = []string{config.Dir(), config.DataDir()}
 	}
+	f.Images = slices.Compact(slices.Sorted(maps.Values(cfg.Agent.RunImages)))
 	return f
 }
 

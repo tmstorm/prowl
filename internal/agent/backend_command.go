@@ -21,13 +21,13 @@ import (
 // Accounts popup and the logout warnings work for any agent.
 type commandBackend struct{ command, login, status string }
 
-func (commandBackend) Name() string                  { return "command" }
-func (commandBackend) Title() string                 { return "Command" }
-func (commandBackend) Resumes() bool                 { return false }
-func (commandBackend) ChatQuit() string              { return "" }
-func (commandBackend) Models() []string              { return []string{""} }
-func (commandBackend) SkillDirs() []string           { return nil }
-func (commandBackend) Chat(_, _, _ string) *exec.Cmd { return nil }
+func (commandBackend) Name() string                              { return "command" }
+func (commandBackend) Title() string                             { return "Command" }
+func (commandBackend) Resumes() bool                             { return false }
+func (commandBackend) ChatQuit() string                          { return "" }
+func (commandBackend) Models() []string                          { return []string{""} }
+func (commandBackend) SkillDirs() []string                       { return nil }
+func (commandBackend) Chat(_, _, _ string, _ []string) *exec.Cmd { return nil }
 
 func (b commandBackend) Check() error {
 	if strings.TrimSpace(b.command) == "" {

@@ -16,7 +16,7 @@ func TestDefaultsAndRoundTrip(t *testing.T) {
 		t.Fatalf("missing defaults: %+v", d)
 	}
 	// nothing specific to one person's machine or org
-	if len(d.Orgs) != 0 || len(d.RepoRoots) != 0 || len(d.Agent.Skills) != 0 || len(d.Agent.ContextDirs) != 0 || d.NerdFont {
+	if len(d.Orgs) != 0 || len(d.RepoRoots) != 0 || len(d.Agent.Skills) != 0 || len(d.Agent.ContextDirs) != 0 || len(d.Agent.RunImages) != 0 || d.NerdFont {
 		t.Fatalf("defaults must be generic: %+v", d)
 	}
 	d.Agent.Skills = []string{"some-skill"}
@@ -27,6 +27,7 @@ func TestDefaultsAndRoundTrip(t *testing.T) {
 	d.SlackNames = map[string]string{"alice": "@Alice"}
 	d.Agent.ReviewInstructions = "line one\nline two"
 	d.Agent.Nits = false
+	d.Agent.RunImages = map[string]string{"*": "golang:1.27", "acme/web": "node:22"}
 	if err := d.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +38,8 @@ func TestDefaultsAndRoundTrip(t *testing.T) {
 	}
 	if got.GroupBy != d.GroupBy || got.ShowLegend != d.ShowLegend || got.SlackNames["alice"] != "@Alice" ||
 		got.Agent.ReviewInstructions != d.Agent.ReviewInstructions || got.NotifyTimeout != d.NotifyTimeout || len(got.Bots) != len(d.Bots) ||
-		got.Agent.Model("codex") != "gpt-x" || got.Agent.Nits || !got.Agent.ShouldFix || got.TypeColors["wip"] != "orange" || len(got.Agent.Skills) != 1 {
+		got.Agent.Model("codex") != "gpt-x" || got.Agent.Nits || !got.Agent.ShouldFix || got.TypeColors["wip"] != "orange" || len(got.Agent.Skills) != 1 ||
+		got.Agent.RunImage("acme/web") != "node:22" || got.Agent.RunImage("acme/api") != "golang:1.27" {
 		t.Fatalf("round trip lost settings:\nsaved %+v\nread  %+v", d, got)
 	}
 }

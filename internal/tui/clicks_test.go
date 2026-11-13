@@ -45,10 +45,12 @@ func TestClickPicker(t *testing.T) {
 
 // Every setting has a place in the options menu, including the newer ones.
 func TestOptionsCoverAgentSettings(t *testing.T) {
-	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}})
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}}, func(c *config.Config) {
+		c.Agent.RunImages = map[string]string{"*": "golang:1.27", "acme/web": "node:22"}
+	})
 	a.resize(160, 80)
 	a.keys("space", ",")
-	a.want("Review profiles", "adversarial", "AI summary for new PRs", "Learn from my edits", "Claude summary model")
+	a.want("Review profiles", "adversarial", "AI summary for new PRs", "Learn from my edits", "Claude summary model", "*: golang:1.27, acme/web: node:22")
 }
 
 // The PR pane's border offers focus mode, and a click on it toggles it.
