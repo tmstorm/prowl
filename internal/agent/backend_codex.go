@@ -87,14 +87,18 @@ func codexModel() string {
 
 // codexServersOff is the -c flags that turn off the MCP servers in your Codex
 // config for a review, as --strict-mcp-config does for Claude. Codex merges
-// -c into the config, so mcp_servers={} would keep them.
-func codexServersOff() []string {
+// -c into the config, so mcp_servers={} would keep them. keep is a server the
+// review sets up itself.
+func codexServersOff(keep string) []string {
 	var c struct {
 		MCPServers map[string]toml.Primitive `toml:"mcp_servers"`
 	}
 	_, _ = toml.DecodeFile(filepath.Join(codexHome(), "config.toml"), &c)
 	var args []string
 	for _, name := range slices.Sorted(maps.Keys(c.MCPServers)) {
+		if name == keep {
+			continue
+		}
 		args = append(args, "-c", "mcp_servers."+name+".enabled=false")
 	}
 	return args
@@ -108,7 +112,7 @@ func codexToolServer(toolServer []string) []string {
 	for i, a := range toolServer[1:] {
 		args[i] = strconv.Quote(a)
 	}
-	return []string{"-c", "mcp_servers.prowl.command=" + strconv.Quote(toolServer[0]),
+	return []string{"-c", "mcp_servers.prowl.enabled=true", "-c", "mcp_servers.prowl.command=" + strconv.Quote(toolServer[0]),
 		"-c", "mcp_servers.prowl.args=[" + strings.Join(args, ",") + "]",
 		"-c", `mcp_servers.prowl.tools.run.approval_mode="approve"`,
 		"-c", "mcp_servers.prowl.tool_timeout_sec=" + strconv.Itoa(int(runTimeout.Seconds())+60)}
@@ -134,9 +138,11 @@ func (codexBackend) Review(t Turn) (*result, string, error) {
 	}
 	args = append(args, "--json", "--output-schema", schemaPath, "-o", lastPath,
 		"-c", `sandbox_mode="read-only"`, "-c", `approval_policy="never"`)
-	args = append(args, codexServersOff()...)
 	if len(t.ToolServer) > 0 {
+		args = append(args, codexServersOff("prowl")...)
 		args = append(args, codexToolServer(t.ToolServer)...)
+	} else {
+		args = append(args, codexServersOff("")...)
 	}
 	model := t.Model
 	if model != "" {

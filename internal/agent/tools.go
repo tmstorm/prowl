@@ -53,7 +53,7 @@ func ToolServer(cfg config.Config, repo, dir string, local bool) (*mcp.Server, e
 	if local {
 		trust = "local"
 	}
-	cache := filepath.Join(config.DataDir(), "cache", strings.ReplaceAll(repo, "/", "-"), trust)
+	cache := filepath.Join(config.DataDir(), "cache", filepath.FromSlash(repo), trust)
 	s := mcp.NewServer(&mcp.Implementation{Name: "prowl"}, nil)
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "run",
@@ -75,13 +75,14 @@ func runInContainer(ctx context.Context, image, dir, cache, command string) (Run
 	name := fmt.Sprintf("prowl-run-%d-%d", os.Getpid(), time.Now().UnixNano())
 	until := strconv.FormatInt(time.Now().Add(runTimeout).Unix(), 10)
 	args := []string{"run", "--rm", "--name", name, "--label", runUntilLabel + "=" + until,
+		"--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=4096",
 		"-v", dir + ":/src:ro", "-v", cache + ":/cache",
 		"-e", "HOME=/cache/home", "-e", "XDG_CACHE_HOME=/cache/xdg", "-e", "GOCACHE=/cache/go-build",
 		"-e", "GOMODCACHE=/cache/go-mod", "-e", "GOFLAGS=-buildvcs=false", "-e", "npm_config_cache=/cache/npm"}
 	if runtime.GOOS != "windows" {
 		args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
 	}
-	args = append(args, image, "sh", "-c", `mkdir -p /tmp/work && tar -C /src --exclude=./.git -cf - . | tar -C /tmp/work -xf - && cd /tmp/work && timeout "$1" sh -c "$2"`,
+	args = append(args, image, "sh", "-c", `mkdir -p /tmp/work && tar -C /src --exclude=./.git -cf - . | tar -C /tmp/work -xof - && cd /tmp/work && timeout "$1" sh -c "$2"`,
 		"sh", strconv.Itoa(int(runTimeout.Seconds())), command)
 
 	ctx, cancel := context.WithTimeout(ctx, runTimeout)

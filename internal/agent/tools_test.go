@@ -18,11 +18,11 @@ import (
 	"github.com/tmstorm/prowl/internal/config"
 )
 
-func runTool(t *testing.T, ctx context.Context, dir string, local bool, command string) (agent.RunOutput, error) {
+func runTool(t *testing.T, ctx context.Context, repo, dir string, local bool, command string) (agent.RunOutput, error) {
 	t.Helper()
 	cfg := config.Default()
 	cfg.Agent.RunImages = map[string]string{"*": "busybox:1.37"}
-	s, err := agent.ToolServer(cfg, "acme/api", dir, local)
+	s, err := agent.ToolServer(cfg, repo, dir, local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,8 +47,8 @@ func runTool(t *testing.T, ctx context.Context, dir string, local bool, command 
 
 // The run tool runs in a container on a copy of the repo: the exit code and
 // output come back, the host's environment stays out, nothing it does reaches
-// the repo on disk, and a review of your own checkout doesn't share a cache
-// with PR reviews.
+// the repo on disk, and neither a review of your own checkout nor another
+// repo shares a cache with a PR review.
 func TestRunTool(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil || runtime.GOOS == "windows" {
 		t.Skip("needs docker with Linux containers")
@@ -64,7 +64,7 @@ func TestRunTool(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := runTool(t, ctx, dir, false, `test -e .git && echo "copied .git"; cat go.mod; echo "token=$GH_TOKEN home=$HOME"; ls ~/.ssh 2>&1; `+
+	out, err := runTool(t, ctx, "acme/api", dir, false, `test -e .git && echo "copied .git"; cat go.mod; echo "token=$GH_TOKEN home=$HOME"; ls ~/.ssh 2>&1; `+
 		`echo "gitdir: evil" > .git && rm go.mod && touch made /cache/from-pr && echo changed; exit 3`)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestRunTool(t *testing.T) {
 		t.Fatalf("the run changed the repo on disk: %v", entries)
 	}
 
-	out, err = runTool(t, ctx, dir, true, `test -e /cache/from-pr`)
+	out, err = runTool(t, ctx, "acme/api", dir, true, `test -e /cache/from-pr`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,18 @@ func TestRunTool(t *testing.T) {
 		t.Fatalf("a local review sees what a PR review left in the cache: %+v", out)
 	}
 
-	out, err = runTool(t, ctx, dir, false, `yes | head -c 100000`)
+	if _, err := runTool(t, ctx, "acme-web/api", dir, false, `touch /cache/from-acme-web`); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runTool(t, ctx, "acme/web-api", dir, false, `test -e /cache/from-acme-web`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ExitCode == 0 {
+		t.Fatalf("acme/web-api shares a cache with acme-web/api: %+v", out)
+	}
+
+	out, err = runTool(t, ctx, "acme/api", dir, false, `yes | head -c 100000`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +113,7 @@ func TestRunToolCancel(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if _, err := runTool(t, ctx, t.TempDir(), false, `sleep 60`); err == nil {
+	if _, err := runTool(t, ctx, "acme/api", t.TempDir(), false, `sleep 60`); err == nil {
 		t.Fatal("a cancelled call succeeded")
 	}
 	deadline := time.Now().Add(10 * time.Second)
