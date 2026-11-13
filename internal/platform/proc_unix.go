@@ -3,6 +3,8 @@
 package platform
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
@@ -29,3 +31,28 @@ func Restart(exe string) error {
 // Reopen replaces this terminal program with a fresh run of exe in the same
 // terminal. It returns only on failure.
 func Reopen(exe string) error { return Restart(exe) }
+
+// Lock is an exclusive lock on a file, held until Unlock or until the process
+// ends, however it ends.
+type Lock struct{ f *os.File }
+
+// TryLock takes the lock on path, creating the file, or returns ErrLocked
+// while another process holds it. The file is closed on exec, so a process
+// that restarts itself in place gives the lock up to its new self.
+func TryLock(path string) (*Lock, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, ErrLocked
+		}
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	return &Lock{f}, nil
+}
+
+// Unlock gives the lock up.
+func (l *Lock) Unlock() { _ = l.f.Close() }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -48,7 +49,8 @@ type Core struct {
 	updateRetry time.Time // a failed background install waits until then to try again
 
 	serviceOnce sync.Once
-	service     bool // prowl watch runs at login
+	service     bool           // prowl watch runs at login
+	watching    *platform.Lock // held while this process is prowl watch
 
 	summaries     map[string]store.Summary
 	summarizing   map[string]bool
@@ -378,24 +380,41 @@ func (co *Core) RefreshPR(key string) error {
 // ErrWatching is Watching's answer while another `prowl watch` runs.
 var ErrWatching = errors.New("prowl watch is already running")
 
-// Watching records that this process is `prowl watch`, which sends the
-// desktop notifications for everyone. Only one runs: with another alive, it
+// Watching makes this process `prowl watch`, which sends the desktop
+// notifications for everyone. Only one runs: it holds a lock on watch.lock in
+// the data dir for as long as it runs, which the OS drops when it ends, so a
+// crash or a reboot never leaves a stale claim. With the lock taken it
 // returns ErrWatching.
 func (co *Core) Watching() error {
-	if co.WatchRunning() {
+	if err := os.MkdirAll(config.DataDir(), 0o700); err != nil {
+		return fmt.Errorf("watch: %w", err)
+	}
+	l, err := platform.TryLock(watchLock())
+	if errors.Is(err, platform.ErrLocked) {
 		return fmt.Errorf("%w (process %d)", ErrWatching, co.st.Watcher())
 	}
+	if err != nil {
+		return fmt.Errorf("watch: %w", err)
+	}
 	co.mu.Lock()
-	co.quiet = false
+	co.watching, co.quiet = l, false
 	co.mu.Unlock()
 	return co.st.SetWatcher(os.Getpid())
 }
 
-// StopWatching clears this process's record as `prowl watch`, so the prowl
-// it starts to restart on an update isn't turned away while this one exits.
+// StopWatching gives up being `prowl watch`, so the prowl it starts to
+// restart on an update isn't turned away while this one exits.
 func (co *Core) StopWatching() {
+	co.mu.Lock()
+	if co.watching != nil {
+		co.watching.Unlock()
+		co.watching = nil
+	}
+	co.mu.Unlock()
 	_ = co.st.SetWatcher(0)
 }
+
+func watchLock() string { return filepath.Join(config.DataDir(), "watch.lock") }
 
 // Quiet marks this process as one that never notifies, like `prowl list`.
 func (co *Core) Quiet() {
@@ -418,8 +437,18 @@ func (co *Core) notifies() bool {
 // WatchRunning reports whether another process is `prowl watch`. A UI then
 // leaves desktop notifications to it, so none arrive twice.
 func (co *Core) WatchRunning() bool {
-	pid := co.st.Watcher()
-	return pid != 0 && pid != os.Getpid() && platform.Alive(pid)
+	co.mu.Lock()
+	mine := co.watching != nil
+	co.mu.Unlock()
+	if mine {
+		return false
+	}
+	l, err := platform.TryLock(watchLock())
+	if err != nil {
+		return errors.Is(err, platform.ErrLocked)
+	}
+	l.Unlock()
+	return false
 }
 
 // Config is the config core works with.

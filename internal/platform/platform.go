@@ -4,6 +4,7 @@
 package platform
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrLocked is TryLock's answer while another process holds the lock.
+var ErrLocked = errors.New("locked by another process")
 
 // Notify shows a desktop notification that expires after timeout, where the
 // OS supports it. It fails silently: notifications are best effort. Linux
