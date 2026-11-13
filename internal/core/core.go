@@ -330,11 +330,13 @@ func (co *Core) pruneClosed(open map[string]string) {
 }
 
 // PruneOrphans removes review worktrees and refs/prowl/* refs left for PRs
-// prowl has no review of, in your checkouts and its own clones.
+// prowl has no review of, in your checkouts and its own clones. A remote may
+// spell the repo in other case than GitHub does, so keys match without case.
 func (co *Core) PruneOrphans() {
 	agent.PruneOrphans(co.Config(), func(repo string, n int) bool {
-		runs, err := co.st.Runs(fmt.Sprintf("%s#%d", repo, n))
-		return err != nil || len(runs) > 0
+		keys, err := co.st.ReviewedPRs()
+		want := fmt.Sprintf("%s#%d", repo, n)
+		return err != nil || slices.ContainsFunc(keys, func(k string) bool { return strings.EqualFold(k, want) })
 	})
 }
 

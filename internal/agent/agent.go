@@ -888,7 +888,8 @@ func RemoveReview(cfg config.Config, repo string, number int) {
 // PruneOrphans removes the review worktrees and refs/prowl/* refs of PRs that
 // reviewed says prowl has no review of: left from before closed PRs lost
 // their refs, or by a discarded review. reviewed is asked as it goes, so a
-// review starting meanwhile keeps its own.
+// review starting meanwhile keeps its own. A checkout whose origin isn't on
+// GitHub is left alone.
 func PruneOrphans(cfg config.Config, reviewed func(repo string, number int) bool) {
 	root := filepath.Join(config.DataDir(), "worktrees")
 	owners, _ := os.ReadDir(root)
@@ -905,6 +906,9 @@ func PruneOrphans(cfg config.Config, reviewed func(repo string, number int) bool
 	}
 	for _, dir := range checkoutDirs(cfg.ExpandedRepoRoots()) {
 		repo := originRepo(dir)
+		if repo == "" {
+			continue
+		}
 		for _, ref := range prowlRefs(dir) {
 			if !reviewed(repo, refPR(ref)) {
 				_ = run(dir, "git", "update-ref", "-d", ref)
