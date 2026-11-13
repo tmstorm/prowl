@@ -54,7 +54,7 @@ When prowl is updated, the running `prowl watch` notices its executable changed 
 prowl asks GitHub once a day whether a newer release is out. What happens next depends on how you installed it.
 
 - **With the install script**, prowl updates itself. The background service installs the new release, or the TUI does when the service isn't running. The TUI you have open keeps the version it started with and says `prowl v0.2.0 is installed`; `<leader>U` restarts it on the new one. `prowl update` does the same by hand and prints what's new.
-- **From the AUR**, and later Homebrew or Scoop, the package manager owns `prowl` and prowl never replaces it. It tells you once per release, under the legend and in `prowl version`, which command updates it, such as `yay -S prowl-bin`.
+- **From a package manager** (the AUR's `prowl-bin` is coming soon, then Homebrew and Scoop), the package manager owns `prowl` and prowl never replaces it. It tells you once per release, under the legend and in `prowl version`, which command updates it, such as `yay -S prowl-bin`.
 - **With `go install`**, it tells you to run `go install github.com/tmstorm/prowl@latest`.
 - **A build from source** never checks.
 
