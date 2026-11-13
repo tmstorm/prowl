@@ -15,7 +15,7 @@ go test -race ./...   # or: task test, which also runs go vet
 
 `task install` builds into `~/.local/bin`. Tests never touch GitHub or a real agent: `internal/ghtest` fakes the GitHub API, and the TUI tests drive the whole app through `internal/tui/harness_test.go`. Start there when you test a change to the interface.
 
-CI runs only when code, the files tests read, or a workflow change. On a pull request it runs the full suite on Linux and vets the code for Windows and macOS, which catches code that doesn't build there. A change to `.goreleaser.yaml` also builds the AUR package on Arch with `makepkg`, installs it and runs it. Once merged to `main`, it runs the full suite on macOS too, the packages that don't need shell scripts on Windows, and the Arch package, so a change that only works on one system shows up there.
+Every pull request gets a `ci` check, which `main` requires; the tests behind it run only when code, the files tests read, or a workflow change. On a pull request they run the full suite on Linux and vet the code for Windows and macOS, which catches code that doesn't build there. A change to `.goreleaser.yaml` also builds the AUR package on Arch with `makepkg`, installs it and runs it. Once merged to `main`, it runs the full suite on macOS too, the packages that don't need shell scripts on Windows, and the Arch package, so a change that only works on one system shows up there.
 
 ## Stay on task
 
