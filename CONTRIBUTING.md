@@ -59,7 +59,15 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org). rele
 | `revert` | reverts an earlier commit |
 
 - Lowercase and imperative, describing the change a user sees: `fix(inbox): keep drafts out of needs review`, not `Fixed bug`.
-- A breaking change takes `!` after the type or scope, and a `BREAKING CHANGE:` footer saying what to do about it.
+- A breaking change takes `!` after the type or scope, and a `BREAKING CHANGE:` footer saying what broke and what to do about it. prowl shows that text first in what's new, so it is the upgrade note users read. A squash merge keeps only the PR title, so put the whole message at the end of the PR description too, where release-please reads it:
+
+  ```
+  BEGIN_COMMIT_OVERRIDE
+  feat(agent)!: let review agents run tests in a container
+
+  BREAKING CHANGE: `local_commands` is removed. To let reviews run tests, set an image under `[agent.run_images]`, e.g. `"*" = "golang:1.27"`. This needs Docker.
+  END_COMMIT_OVERRIDE
+  ```
 - Scopes are the area touched, such as `inbox`, `diff`, `agent`, `config` or `local`.
 
 ## Pull requests
