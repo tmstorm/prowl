@@ -1,0 +1,36 @@
+name: Bug
+description: Something in prowl doesn't work
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what prowl did, and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: prowl version
+      description: The output of `prowl version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed prowl
+      options:
+        - install script
+        - go install
+        - built from source
+        - other
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System and terminal
+      placeholder: Arch Linux, WezTerm
+    validations:
+      required: true

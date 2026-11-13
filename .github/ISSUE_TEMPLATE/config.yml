@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/tmstorm/prowl/security/advisories/new
+    about: Privately, not in a public issue.
+  - name: Docs
+    url: https://github.com/tmstorm/prowl/tree/main/docs
+    about: Installing, config, reviewing and AI reviews.
