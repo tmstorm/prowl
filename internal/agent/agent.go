@@ -790,25 +790,10 @@ func localCommands(cfg config.Config, be Backend, j Job) []string {
 // path. It uses your clone under repo_roots when its origin is the PR's repo,
 // and otherwise its own clone under the data dir.
 func prepareWorktree(cfg config.Config, j Job) (string, error) {
-	owner, name, _ := strings.Cut(j.Repo, "/")
-	clone := ""
-	for _, root := range cfg.ExpandedRepoRoots() {
-		p := filepath.Join(root, name)
-		if _, err := os.Stat(filepath.Join(p, ".git")); err != nil {
-			continue
-		}
-		out, _ := exec.Command("git", "-C", p, "config", "--get", "remote.origin.url").Output()
-		if strings.EqualFold(gh.RemoteRepo(string(out)), j.Repo) {
-			clone = p
-			break
-		}
-	}
-	if clone == "" {
-		clone = filepath.Join(config.DataDir(), "clones", owner, name)
-		if _, err := os.Stat(clone); err != nil {
-			if err := cloneRepo(j.Repo, clone); err != nil {
-				return "", fmt.Errorf("prepare worktree: %w", err)
-			}
+	clone := clonePath(cfg, j.Repo)
+	if _, err := os.Stat(clone); err != nil {
+		if err := cloneRepo(j.Repo, clone); err != nil {
+			return "", fmt.Errorf("prepare worktree: %w", err)
 		}
 	}
 	ref := fmt.Sprintf("refs/prowl/pr-%d-%s", j.Number, strings.ReplaceAll(store.Reviewer(j.Agent, j.Profile), ":", "-"))
@@ -840,6 +825,25 @@ func prepareWorktree(cfg config.Config, j Job) (string, error) {
 	return wt, nil
 }
 
+// clonePath is the clone a repo's reviews use: yours under repo_roots when
+// its origin is the repo, else prowl's own under the data dir, which may not
+// exist yet.
+func clonePath(cfg config.Config, repo string) string {
+	owner, name, _ := strings.Cut(repo, "/")
+	for _, root := range cfg.ExpandedRepoRoots() {
+		p := filepath.Join(root, name)
+		if _, err := os.Stat(filepath.Join(p, ".git")); err == nil && strings.EqualFold(originRepo(p), repo) {
+			return p
+		}
+	}
+	return filepath.Join(config.DataDir(), "clones", owner, name)
+}
+
+func originRepo(dir string) string {
+	out, _ := exec.Command("git", "-C", dir, "config", "--get", "remote.origin.url").Output()
+	return gh.RemoteRepo(string(out))
+}
+
 // cloneRepo makes a partial clone of repo in dir: with gh, which uses your
 // GitHub login, or with plain git and your git credentials when gh isn't
 // installed. It clones beside dir and moves the clone into place, so
@@ -869,8 +873,53 @@ func cloneRepo(repo, dir string) error {
 	return nil
 }
 
-// RemoveWorktrees removes every agent's worktree for a PR (best effort).
-func RemoveWorktrees(repo string, number int) {
+// RemoveReview removes a PR's review worktrees and the refs its reviews
+// fetched (best effort), once the PR is closed.
+func RemoveReview(cfg config.Config, repo string, number int) {
+	removeWorktrees(repo, number)
+	clone := clonePath(cfg, repo)
+	for _, ref := range prowlRefs(clone) {
+		if refPR(ref) == number {
+			_ = run(clone, "git", "update-ref", "-d", ref)
+		}
+	}
+}
+
+// PruneOrphans removes the review worktrees and refs/prowl/* refs of PRs that
+// reviewed says prowl has no review of: left from before closed PRs lost
+// their refs, or by a discarded review. reviewed is asked as it goes, so a
+// review starting meanwhile keeps its own. A checkout whose origin isn't on
+// GitHub is left alone.
+func PruneOrphans(cfg config.Config, reviewed func(repo string, number int) bool) {
+	root := filepath.Join(config.DataDir(), "worktrees")
+	owners, _ := os.ReadDir(root)
+	for _, o := range owners {
+		names, _ := os.ReadDir(filepath.Join(root, o.Name()))
+		for _, n := range names {
+			prs, _ := os.ReadDir(filepath.Join(root, o.Name(), n.Name()))
+			for _, pr := range prs {
+				if num, err := strconv.Atoi(pr.Name()); err == nil && !reviewed(o.Name()+"/"+n.Name(), num) {
+					removeWorktrees(o.Name()+"/"+n.Name(), num)
+				}
+			}
+		}
+	}
+	for _, dir := range checkoutDirs(cfg.ExpandedRepoRoots()) {
+		repo := originRepo(dir)
+		if repo == "" {
+			continue
+		}
+		for _, ref := range prowlRefs(dir) {
+			if !reviewed(repo, refPR(ref)) {
+				_ = run(dir, "git", "update-ref", "-d", ref)
+			}
+		}
+		_ = run(dir, "git", "worktree", "prune")
+	}
+}
+
+// removeWorktrees removes every agent's worktree for a PR (best effort).
+func removeWorktrees(repo string, number int) {
 	dir := prWorktrees(repo, number)
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
@@ -884,14 +933,26 @@ func RemoveWorktrees(repo string, number int) {
 // review worktrees or the refs/prowl/* refs reviews fetch into them.
 func Checkouts(roots []string) []string {
 	var out []string
-	for _, root := range roots {
-		entries, _ := os.ReadDir(root)
-		for _, e := range entries {
-			dir := filepath.Join(root, e.Name())
-			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-				continue
-			}
-			if wts, refs := prowlState(dir); len(wts)+len(refs) > 0 {
+	for _, dir := range checkoutDirs(roots) {
+		if strings.HasPrefix(dir, config.DataDir()) {
+			continue
+		}
+		if wts, refs := prowlState(dir); len(wts)+len(refs) > 0 {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
+// checkoutDirs are the repos reviews may fetch into: the ones directly under
+// roots and prowl's own clones. A linked worktree is left out: it shares its
+// repo's refs.
+func checkoutDirs(roots []string) []string {
+	var out []string
+	for _, root := range append(roots, filepath.Join(config.DataDir(), "clones", "*")) {
+		dirs, _ := filepath.Glob(filepath.Join(root, "*"))
+		for _, dir := range dirs {
+			if fi, err := os.Stat(filepath.Join(dir, ".git")); err == nil && fi.IsDir() {
 				out = append(out, dir)
 			}
 		}
@@ -929,8 +990,22 @@ func prowlState(dir string) (worktrees, refs []string) {
 			worktrees = append(worktrees, p)
 		}
 	}
-	out, _ = exec.Command("git", "-C", dir, "for-each-ref", "--format=%(refname)", "refs/prowl/").Output()
-	return worktrees, strings.Fields(string(out))
+	return worktrees, prowlRefs(dir)
+}
+
+// prowlRefs are the refs/prowl/* refs reviews fetched into a checkout.
+func prowlRefs(dir string) []string {
+	out, _ := exec.Command("git", "-C", dir, "for-each-ref", "--format=%(refname)", "refs/prowl/").Output()
+	return strings.Fields(string(out))
+}
+
+// refPR is the PR a prowl ref is for: refs/prowl/pr-12-claude, or
+// refs/prowl/pr-12 from older prowl. It is 0 for any other name.
+func refPR(ref string) int {
+	rest, _ := strings.CutPrefix(ref, "refs/prowl/pr-")
+	digits, _, _ := strings.Cut(rest, "-")
+	n, _ := strconv.Atoi(digits)
+	return n
 }
 
 func run(dir string, name string, args ...string) error {

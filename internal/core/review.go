@@ -53,9 +53,11 @@ func (co *Core) emit(e Event) {
 // summaries when auto_summary is on, checks the logins every half hour,
 // picks up edits to the config file and checks for updates (installing them
 // when no prowl watch runs to do it), until ctx ends. Each is reported as
-// events. The first sync is the caller's.
+// events. The first sync is the caller's. It also prunes orphaned review
+// worktrees and refs once.
 func (co *Core) Run(ctx context.Context) {
 	var tasks sync.WaitGroup
+	tasks.Go(co.PruneOrphans)
 	tasks.Go(func() {
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()

@@ -242,6 +242,7 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 	if err := co.Watching(); err != nil {
 		return err
 	}
+	go co.PruneOrphans()
 	exe := core.Executable()
 	built, _ := os.Stat(exe)
 	var authAt time.Time
