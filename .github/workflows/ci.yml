@@ -1,22 +1,12 @@
 name: ci
 
-# Only changes that can break the build or the tests run this: code, the
-# files the tests read, and this workflow. Docs and release PRs don't.
+# Every PR and push to main runs this, but the tests only run when code, the
+# files the tests read or this workflow changed; docs and release PRs skip
+# them. The ci job always reports, so main can require it.
 on:
   push:
     branches: [main]
-    paths: &code
-      - "**.go"
-      - "internal/**"
-      - go.mod
-      - go.sum
-      - minisign.pub
-      - docs/images/owl.svg
-      - install.sh
-      - install.ps1
-      - .github/workflows/ci.yml
   pull_request:
-    paths: *code
 
 # A new push to a PR cancels the run for the one before it. Each push to
 # main gets its own group, so none of its runs is cancelled or dropped.
@@ -28,9 +18,31 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "${BASE//0/}" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            echo code=true >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE"...HEAD | grep -qE '^(.*\.go|internal/.*|go\.(mod|sum)|minisign\.pub|docs/images/owl\.svg|install\.(sh|ps1)|\.github/workflows/ci\.yml)$'; then
+            echo code=true >> "$GITHUB_OUTPUT"
+          else
+            echo code=false >> "$GITHUB_OUTPUT"
+          fi
+
   # PRs test on Linux and vet for Windows and macOS, which catches code that
   # doesn't build there. The full suite on each runs once merged to main.
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       matrix:
         os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
@@ -49,6 +61,8 @@ jobs:
   # of the latest release with install.sh once the repo is public (a private
   # repo's releases need a login curl doesn't have).
   scripts:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,7 +78,8 @@ jobs:
   # The TUI, agent and core tests drive fake agents and git through shell
   # scripts, which Windows can't run; the rest of the tests run here.
   windows:
-    if: github.event_name == 'push'
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,3 +89,16 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
       - run: go test ./internal/gh/... ./internal/inbox/... ./internal/store/... ./internal/config/... ./internal/skill/...
+
+  # The check main requires: it fails when a job above failed or was
+  # cancelled, and passes when they passed or had nothing to test.
+  ci:
+    if: always()
+    needs: [changes, test, scripts, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          case " $RESULTS " in *" failure "* | *" cancelled "*) exit 1 ;; esac
