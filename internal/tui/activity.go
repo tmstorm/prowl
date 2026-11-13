@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -111,7 +112,9 @@ type pushCommit struct {
 	oid, head string
 }
 
-// pushes groups commits made close together by the same author into one event.
+// pushes groups commits made close together by the same author into one
+// event, listed newest first like the rest of the activity, so the folded row
+// shows the commit its time is from.
 func (d *detail) pushes(g map[string]string) []activity {
 	var cs []pushCommit
 	for _, e := range d.det.Events {
@@ -133,7 +136,7 @@ func (d *detail) pushes(g map[string]string) []activity {
 		}
 		group := cs[i:j]
 		var b strings.Builder
-		for _, c := range group {
+		for _, c := range slices.Backward(group) {
 			fmt.Fprintf(&b, "- `%s` %s\n", gh.Short(c.oid), c.head)
 		}
 		action := "pushed 1 commit"
