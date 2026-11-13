@@ -13,9 +13,13 @@ import (
 // serviceName names the background `prowl watch` in each OS's service list.
 const serviceName = "prowl-watch"
 
+// runKey is the Windows registry key of programs that start at your login.
+// Unlike a logon task in Task Scheduler, adding to it needs no admin.
+const runKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+
 // InstallService has `exe watch` start at login, and starts it now: a
-// systemd user service on Linux, a launchd agent on macOS, a Task Scheduler
-// task on Windows. It returns what it set up, for people.
+// systemd user service on Linux, a launchd agent on macOS, a startup entry on
+// Windows. It returns what it set up, for people.
 func InstallService(exe string) (string, error) {
 	switch runtime.GOOS {
 	case "darwin":
@@ -31,13 +35,15 @@ func InstallService(exe string) (string, error) {
 		return "launchd agent " + path, nil
 	case "windows":
 		action := fmt.Sprintf(`powershell.exe -NoProfile -WindowStyle Hidden -Command "& '%s' watch"`, strings.ReplaceAll(exe, "'", "''"))
-		if err := run("schtasks", "/Create", "/F", "/TN", serviceName, "/SC", "ONLOGON", "/RL", "LIMITED", "/TR", action); err != nil {
+		if err := run("reg", "add", runKey, "/v", serviceName, "/t", "REG_SZ", "/d", action, "/f"); err != nil {
 			return "", err
 		}
-		if err := run("schtasks", "/Run", "/TN", serviceName); err != nil {
-			return "", err
+		cmd := exec.Command(exe, "watch")
+		Detach(cmd)
+		if err := cmd.Start(); err != nil {
+			return "", fmt.Errorf("start prowl watch: %w", err)
 		}
-		return "Task Scheduler task " + serviceName + ", run at logon", nil
+		return "startup entry " + serviceName + " in " + runKey, nil
 	}
 	path := systemdUnit()
 	if err := writeFile(path, fmt.Sprintf(unit, systemdQuote(exe))); err != nil {
@@ -53,7 +59,8 @@ func InstallService(exe string) (string, error) {
 }
 
 // UninstallService stops the background `prowl watch` and removes what
-// InstallService set up.
+// InstallService set up. On Windows that includes the logon task prowl 0.1.0
+// made, where an admin could make one.
 func UninstallService() error {
 	switch runtime.GOOS {
 	case "darwin":
@@ -61,8 +68,10 @@ func UninstallService() error {
 		_ = exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d", os.Getuid()), path).Run()
 		return removeFile(path)
 	case "windows":
-		_ = exec.Command("schtasks", "/End", "/TN", serviceName).Run()
-		return run("schtasks", "/Delete", "/F", "/TN", serviceName)
+		_ = exec.Command("powershell", "-NoProfile", "-Command",
+			`Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'prowl.exe' -and $_.CommandLine -like '* watch*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`).Run()
+		_ = exec.Command("schtasks", "/Delete", "/F", "/TN", serviceName).Run()
+		return run("reg", "delete", runKey, "/v", serviceName, "/f")
 	}
 	_ = exec.Command("systemctl", "--user", "disable", "--now", serviceName+".service").Run()
 	if err := removeFile(systemdUnit()); err != nil {
@@ -109,7 +118,7 @@ func ServiceInstalled() bool {
 		_, err := os.Stat(launchdPlist())
 		return err == nil
 	case "windows":
-		return exec.Command("schtasks", "/Query", "/TN", serviceName).Run() == nil
+		return exec.Command("reg", "query", runKey, "/v", serviceName).Run() == nil
 	}
 	_, err := os.Stat(systemdUnit())
 	return err == nil

@@ -870,30 +870,47 @@ func read(t *testing.T, path string) string {
 	return string(b)
 }
 
-// While another process is prowl watch, it sends the notifications; once it
-// has exited, or when this process is the watcher, it doesn't count.
+// While another process is prowl watch, it sends the notifications and a
+// second prowl watch is turned away. One that stopped (or ended, which drops
+// its lock) doesn't count, nor does a stale process ID left in the store, and
+// the watcher itself never counts. A lock held only for a moment is waited
+// out.
 func TestWatchRunning(t *testing.T) {
-	path := os.Getenv("PATH")
 	co, st := newCore(t, &ghtest.GitHub{})
 	if co.WatchRunning() {
 		t.Fatal("no watcher has run yet")
 	}
-	t.Setenv("PATH", path)
-	watcher := exec.Command("sleep", "30")
-	if err := watcher.Start(); err != nil {
-		t.Skip("no sleep:", err)
+	other := core.New(config.Default(), nil, st)
+	if err := other.Watching(); err != nil {
+		t.Fatal(err)
 	}
-	_ = st.SetWatcher(watcher.Process.Pid)
-	if !co.WatchRunning() {
-		t.Fatal("a running watcher should count")
+	t.Cleanup(co.StopWatching)
+	if !co.WatchRunning() || other.WatchRunning() {
+		t.Fatal("the other watcher should count, for everyone but itself")
 	}
-	_ = watcher.Process.Kill()
-	_ = watcher.Wait()
+	if err := co.Watching(); !errors.Is(err, core.ErrWatching) {
+		t.Fatalf("a second prowl watch should be turned away: %v", err)
+	}
+	other.StopWatching()
+	if co.WatchRunning() || st.Watcher() != 0 {
+		t.Fatal("a watcher restarting on an update should give up its claim")
+	}
+	_ = st.SetWatcher(1)
 	if co.WatchRunning() {
-		t.Fatal("an exited watcher should not count")
+		t.Fatal("a stale process ID shouldn't count")
 	}
 	if err := co.Watching(); err != nil || co.WatchRunning() {
 		t.Fatalf("this process as the watcher: %v", err)
+	}
+
+	co.StopWatching()
+	probe := core.New(config.Default(), nil, st)
+	if err := probe.Watching(); err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(300*time.Millisecond, probe.StopWatching)
+	if err := co.Watching(); err != nil {
+		t.Fatalf("a lock held for a moment, as a UI checking for a watcher does, should be waited out: %v", err)
 	}
 }
 
@@ -936,7 +953,6 @@ func TestDraftWithReplies(t *testing.T) {
 // from: while prowl watch runs, a UI's sync or prowl list doesn't use up a
 // change before the watcher has notified it.
 func TestOnlyTheNotifierTakesChanges(t *testing.T) {
-	path := os.Getenv("PATH")
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me")}}
 	ui, st := newCore(t, fake)
 	refresh(t, ui)
@@ -948,21 +964,20 @@ func TestOnlyTheNotifierTakesChanges(t *testing.T) {
 		t.Fatalf("prowl list reported changes: %v", changes)
 	}
 
-	t.Setenv("PATH", path)
-	other := exec.Command("sleep", "30")
-	if err := other.Start(); err != nil {
-		t.Skip("no sleep:", err)
+	other := core.New(config.Default(), c, st)
+	if err := other.Watching(); err != nil {
+		t.Fatal(err)
 	}
-	defer func() { _ = other.Process.Kill(); _ = other.Wait() }()
-	_ = st.SetWatcher(other.Process.Pid)
 	if changes, _ := ui.Refresh(); len(changes) != 0 {
 		t.Fatalf("the UI took changes while a watcher runs: %v", changes)
 	}
+	other.StopWatching()
 
 	watch := core.New(config.Default(), c, st)
 	if err := watch.Watching(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(watch.StopWatching)
 	if changes, _ := watch.Refresh(); len(changes) != 1 || changes[0].PR.Key() != "o/api#2" {
 		t.Fatalf("the watcher should still see the new PR: %v", changes)
 	}

@@ -95,7 +95,7 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
 $exe = Join-Path $dir "prowl.exe"
-$service = Get-ScheduledTask -TaskName "prowl-watch" -ErrorAction SilentlyContinue
+$service = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "prowl-watch" -ErrorAction SilentlyContinue
 
 try {
     $zip = Join-Path $tmp $archive
@@ -114,7 +114,6 @@ try {
     # A running prowl.exe can't be replaced: stop the background prowl watch
     # first, and start it again after.
     if ($service) {
-        Stop-ScheduledTask -TaskName "prowl-watch"
         Get-CimInstance Win32_Process -Filter "Name = 'prowl.exe'" |
             Where-Object { $_.ExecutablePath -eq $exe -and $_.CommandLine -like "* watch*" } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
@@ -135,7 +134,7 @@ if (($path -split ";") -notcontains $dir) {
     Note "added $dir to your PATH; open a new terminal to use it"
 }
 if ($service) {
-    Start-ScheduledTask -TaskName "prowl-watch"
+    Start-Process $exe -ArgumentList "watch" -WindowStyle Hidden
     Note "restarted background notifications"
 }
 Ok "$((& $exe version | Select-Object -First 1)) is in $dir"
