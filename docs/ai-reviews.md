@@ -11,7 +11,7 @@ The agents:
 
 | Agent | Runs | Notes |
 | --- | --- | --- |
-| `claude` (default) | `claude -p` with read-only tools and no MCP servers | Needs [Claude Code](https://claude.com/claude-code). |
+| `claude` (default) | `claude -p` with read-only tools and no MCP servers but prowl's own `run` tool | Needs [Claude Code](https://claude.com/claude-code). |
 | `codex` | `codex exec` in the read-only sandbox | Needs the [Codex CLI](https://github.com/openai/codex), logged in. The sandbox has no network, which is fine: prowl puts the PR's history in the prompt. |
 | `command` | any shell command | Reads the prompt on stdin and prints the review as JSON (`prowl schema`). Gets `PROWL_SCHEMA` and `PROWL_MODEL` in its environment. Use it for Gemini, opencode, a local model, or a script. |
 
@@ -62,6 +62,25 @@ prompt = "Look only for security problems: injection, auth, secrets, unsafe inpu
 reviewers = ["codex"]
 ```
 
+## Running tests
+
+By default a review only reads. To let it run the tests, give the repo a container image under `[agent.run_images]` (or Run images in `<leader>,`):
+
+```toml
+[agent.run_images]
+"*" = "golang:1.27"
+"acme/web" = "node:22"
+```
+
+The key is `owner/name`, and `"*"` covers every other repo. The image needs the repo's toolchain. Claude Code and Codex then get a `run` tool from prowl. It runs a shell command at the root of the repo in a fresh Docker container on a copy of the code, with nothing else of yours: no home directory, no environment, no credentials, and no Linux capabilities. It does have the network, which module downloads need, so a PR's tests can reach what your machine can reach over it. A PR's tests are someone else's code, so they never run on your machine directly, and nothing they change reaches your disk. The agent runs the tests to check the change and its findings, treats a failure the change causes as a finding, and says in its note what it ran. The chat (`<leader>ci`) gets the same tool. The `command` agent doesn't.
+
+This is opt-in. Without an image for the repo, or without `docker` on your PATH, reviews only read. It costs:
+
+- Disk: the image (about 800 MB for `golang`) and two caches per repo under prowl's data directory, so later runs don't download modules again: one for PR reviews and one for reviews of your own checkout, so a PR can't plant code that your next local review runs. `prowl uninstall --purge` removes the caches; the images stay, and prowl prints the `docker rmi` that removes them.
+- Time: each run copies the code into the container (`.git` stays out) and adds the test run to the review, and stops after 10 minutes. The first run pulls the image.
+
+Each run's container goes when the run ends, and a run stops itself after 10 minutes even when the agent was killed. git doesn't work in the container, because `.git` isn't copied; the agent reads history and diffs with its own git commands.
+
 ## Learning from your edits
 
 When you post an AI review, prowl keeps the draft it put in your editor next to what you actually posted. `prowl edits [--since 30d] [--repo NAME]` prints each rewrite as draft and posted, the comments you dropped and the ones you added, and how many pieces went out unchanged. Feed it to whatever shapes how you write: a style guide, a writing skill, or a prompt. Set `edit_examples = 3` under `[agent]` to have prowl put your three most recent rewrites into every review prompt, so the agent drifts toward how you write without anything to maintain.
@@ -70,7 +89,7 @@ When you post an AI review, prowl keeps the draft it put in your editor next to 
 
 `prowl review` in a checkout reviews the branch before it has a pull request: everything since it left the default branch, committed or not, and new files not added yet. It runs the same AI review as a PR (your agents, profiles, guidelines, skills, severities and review instructions), in place in your checkout with read-only tools, and prints the findings when it is done. It works the same from a git worktree. It exits with status 2 when a finding is must-fix. A branch with no changes since it left the default branch, committed or not, has nothing to review: prowl says so and exits 0 without starting the agent. `--detach` runs it in the background instead, and `--agent codex` or `--agent claude:adversarial` picks the reviewer.
 
-By default the review only reads. To let it run your tests, list the commands in `local_commands` under `[agent]`, for example `local_commands = ["go test", "go vet"]`. Each one may run with any arguments, so `go test ./...` counts. The agent runs them to check the change and its findings, treats a failure the change causes as a finding, and says in its note what it ran. This needs Claude Code: Codex's read-only sandbox can't write the build caches a test run needs. A PR review never runs them, because a PR's tests are someone else's code running on your machine.
+By default the review only reads. With a run image set (see [Running tests](#running-tests)), it can run your tests too. Each run works on a copy of your checkout, so it can't touch work you haven't committed.
 
 The review shows in prowl under Mine as a local item (`⌂`) with the branch, its overview and diff, and the usual AI review tab: revise, chat, discard, re-run with `<leader>cc`. Nothing about it is on GitHub, so approving or posting from it is off. Running it again on the same branch starts from what changed since the last review. `prowl findings` in the checkout prints it while the branch has no PR. Once you open a PR for the branch (a draft counts), the local review moves to it: its runs show in the PR's AI review tab, marked as from your checkout before the PR, and the next review of the PR starts from what changed since. They can still be posted; to chat with or revise one, start a new review on the PR, since its session lives in your checkout. A local review goes away when you discard it, or when its branch or checkout is gone.
 

@@ -17,6 +17,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/term"
 
 	"github.com/tmstorm/prowl/internal/agent"
@@ -122,6 +123,15 @@ func run(args []string) error {
 		}
 		c, _ := gh.New()
 		return agent.Run(cfg, st, c, job)
+	case "agent-tools":
+		if len(args) < 3 {
+			return fmt.Errorf("agent-tools needs a repo and a directory")
+		}
+		s, err := agent.ToolServer(cfg, args[1], args[2], slices.Contains(args[3:], "--local"))
+		if err != nil {
+			return err
+		}
+		return s.Run(context.Background(), &mcp.StdioTransport{})
 	case "version", "--version":
 		fmt.Println("prowl", core.BuildVersion())
 		if c, err := gh.New(); err == nil {

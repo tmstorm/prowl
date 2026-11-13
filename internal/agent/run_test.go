@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func TestRunReview(t *testing.T) {
 	cfg.RepoRoots = []string{roots}
 	cfg.Agent.Skills = []string{"write-prose"}
 	cfg.Agent.EditExamples = 1
-	cfg.Agent.LocalCommands = []string{"go test"}
+	cfg.Agent.RunImages = map[string]string{"*": "golang:1.27"}
 	job := agent.Job{Repo: "o/api", Number: 7, Title: "feat: a", Author: "alice", Base: "main", Head: head,
 		Viewer: "me", Agent: "claude", Profile: "adversarial"}
 	if err := agent.Run(cfg, st, nil, job); err != nil {
@@ -74,8 +75,9 @@ func TestRunReview(t *testing.T) {
 	if args := read(filepath.Join(bin, "args")); !strings.Contains(args, "--setting-sources\nuser\n--strict-mcp-config\n") || !strings.Contains(args, "Bash(git diff *--output*)") || !strings.Contains(args, "Bash(gh repo view:*)") {
 		t.Error("a review must load only your Claude settings, no MCP server, and deny git --output")
 	}
-	if strings.Contains(read(filepath.Join(bin, "args")), "go test") || strings.Contains(turns[1], "go test") {
-		t.Error("a PR review never runs local_commands")
+	wt := agent.WorktreePath("o/api", 7, "claude:adversarial")
+	if args := read(filepath.Join(bin, "args")); !strings.Contains(args, `"args":["agent-tools","o/api",`+strconv.Quote(wt)+`]`) || !strings.Contains(args, "mcp__prowl__run") || !strings.Contains(turns[1], "the `run` tool") {
+		t.Errorf("a PR review gets the run tool on its worktree, read-write:\n%s", args)
 	}
 	if !strings.Contains(turns[2], "verify your review") || !strings.Contains(read(filepath.Join(bin, "args")), "--resume\ns1") {
 		t.Error("the second turn should verify the draft in the same session")
@@ -119,6 +121,7 @@ func setupRun(t *testing.T) (st *store.Store, roots, bin, head string) {
 
 	bin = filepath.Join(tmp, "bin")
 	_ = os.MkdirAll(bin, 0o755)
+	_ = os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\n"), 0o755)
 	_ = os.WriteFile(filepath.Join(bin, "notify-send"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$(dirname \"$0\")/notified\"\n"), 0o755)
 	_ = os.WriteFile(filepath.Join(bin, "osascript"), []byte(`#!/bin/sh
 n="$(dirname "$0")/notified"
@@ -169,6 +172,24 @@ func TestSeverityToggles(t *testing.T) {
 	prompt := read(filepath.Join(bin, "prompts"))
 	if !strings.Contains(prompt, "Look only at error handling.") || strings.Contains(prompt, "senior engineer") || strings.Contains(prompt, "- nit:") {
 		t.Errorf("prompt:\n%s", prompt)
+	}
+}
+
+// The run tool is opt-in: with no image for the repo the agent gets no tool
+// server and the prompt doesn't offer one.
+func TestRunToolOptIn(t *testing.T) {
+	st, roots, bin, head := setupRun(t)
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	cfg.Agent.RunImages = map[string]string{"acme/web": "node:22"}
+	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if args := read(filepath.Join(bin, "args")); strings.Contains(args, "--mcp-config") || strings.Contains(args, "mcp__prowl__run") {
+		t.Errorf("no image, yet the agent got the tool server:\n%s", args)
+	}
+	if strings.Contains(read(filepath.Join(bin, "prompts")), "`run` tool") {
+		t.Error("no image, yet the prompt offers the run tool")
 	}
 }
 

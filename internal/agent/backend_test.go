@@ -47,6 +47,9 @@ func backend(t *testing.T, name string, configure ...func(*config.Config)) agent
 // Codex: JSONL events, the review from the final agent message, the thread
 // ID as the session, read-only sandbox, and resume by ID.
 func TestCodexReview(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	_ = os.WriteFile(filepath.Join(home, "config.toml"), []byte("[mcp_servers.docs]\ncommand = \"docs-server\"\n[mcp_servers.prowl]\ncommand = \"prowl\"\nargs = [\"mcp\"]\n"), 0o600)
 	dir := fakeBin(t, "codex", `
 echo '{"type":"thread.started","thread_id":"th-1"}'
 echo '{"type":"item.started","item":{"type":"command_execution","command":"bash -lc '"'"'git diff origin/main...HEAD'"'"'"}}'
@@ -75,11 +78,19 @@ echo '{"type":"turn.completed"}'
 	if len(acts) == 0 || acts[0] != "running git diff origin/main...HEAD" {
 		t.Errorf("activity = %q", acts)
 	}
-	if _, _, err := be.Review(agent.Turn{Dir: t.TempDir(), Prompt: "verify", Session: "th-1"}); err != nil {
+	if strings.Contains(args, "mcp_servers.prowl.command") || !strings.Contains(args, "mcp_servers.docs.enabled=false") || !strings.Contains(args, "mcp_servers.prowl.enabled=false") {
+		t.Errorf("a review without tools loads no MCP server, yours included:\n%s", args)
+	}
+	if _, _, err := be.Review(agent.Turn{Dir: t.TempDir(), Prompt: "verify", Session: "th-1",
+		ToolServer: []string{"/bin/prowl", "agent-tools", "o/api", `C:\wt`}}); err != nil {
 		t.Fatal(err)
 	}
 	if args := read(filepath.Join(dir, "args")); !strings.HasPrefix(args, "exec\nresume\n") || !strings.Contains(args, "\nth-1\n-\n") {
 		t.Errorf("resume args wrong:\n%s", args)
+	}
+	if args := read(filepath.Join(dir, "args")); !strings.Contains(args, `mcp_servers.prowl.args=["agent-tools","o/api","C:\\wt"]`) || !strings.Contains(args, `mcp_servers.prowl.tools.run.approval_mode="approve"`) || !strings.Contains(args, "mcp_servers.prowl.tool_timeout_sec=660") ||
+		strings.Contains(args, "mcp_servers.prowl.enabled=false") || !strings.Contains(args, "mcp_servers.prowl.enabled=true") {
+		t.Errorf("the tool server and its approved run tool should reach codex:\n%s", args)
 	}
 }
 

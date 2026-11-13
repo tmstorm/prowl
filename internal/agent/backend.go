@@ -17,7 +17,7 @@ type Turn struct {
 	Session     string   // non-empty: continue this session
 	Model       string   // "" = the agent's default
 	ContextDirs []string // extra directories the agent may read
-	Commands    []string // commands the agent may run, e.g. "go test"
+	ToolServer  []string // the command that starts prowl's tool server; nil: no tools
 	Schema      string   // the JSON Schema of the answer; "" is a review with every severity
 	Activity    func(string)
 	SetModel    func(string)
@@ -56,7 +56,7 @@ type Backend interface {
 	Resumes() bool
 	// Chat is the interactive session for <leader>ci, or nil if the agent
 	// has none.
-	Chat(session, dir, model string) *exec.Cmd
+	Chat(session, dir, model string, toolServer []string) *exec.Cmd
 	// ChatQuit is what ends the interactive session, e.g. "/exit".
 	ChatQuit() string
 	// Models are the models to pick from in the options menu, as the agent

@@ -88,9 +88,9 @@ type Agent struct {
 	// Extra directories the agent may read, e.g. a clone of the org's
 	// standards repo that AGENTS.md / CONTRIBUTING.md link to.
 	ContextDirs []string `toml:"context_dirs"`
-	// Commands a review of your own checkout (prowl review) may run, e.g.
-	// "go test". PR reviews never run them.
-	LocalCommands []string `toml:"local_commands"`
+	// Container image per repo (owner/name) for the agent's run tool; "*" is
+	// the fallback. No image: the agent can't run commands.
+	RunImages map[string]string `toml:"run_images"`
 	// How to review: what to look for and how to write it. Empty uses
 	// DefaultReviewInstructions.
 	ReviewInstructions string `toml:"review_instructions"`
@@ -167,6 +167,14 @@ func (a Agent) Main() string {
 
 // Model is the configured model for the named agent ("" = its default).
 func (a Agent) Model(name string) string { return a.Models[name] }
+
+// RunImage is the container image the agent's run tool uses for repo ("" = none).
+func (a Agent) RunImage(repo string) string {
+	if img := a.RunImages[repo]; img != "" {
+		return img
+	}
+	return a.RunImages["*"]
+}
 
 // SummaryModel is the model for the named agent's PR summaries.
 func (a Agent) SummaryModel(name string) string {
@@ -488,7 +496,6 @@ func (c Config) Save() error {
 	str("# For the command agent: checks the login; exit 0 means logged in. It may print\n# {\"loggedIn\": true, \"account\": \"...\", \"expiresAt\": \"<RFC 3339>\"} to say more.\n", "status_command", c.Agent.StatusCommand, d.Agent.StatusCommand)
 	strs("# Skills the agent must use on every review. Its other skills stay available.\n", "skills", c.Agent.Skills, d.Agent.Skills)
 	strs("# Directories the agent may read besides the PR, e.g. the org standards repo\n# that AGENTS.md and CONTRIBUTING.md link to. GitHub links into these repos\n# are resolved to the local clone.\n", "context_dirs", c.Agent.ContextDirs, d.Agent.ContextDirs)
-	strs("# Commands a review of your own checkout (`prowl review`) may run to check the\n# change and its findings, e.g. \"go test\" or \"pnpm test\". Claude Code only. PR\n# reviews never run them: a PR's tests are someone else's code.\n", "local_commands", c.Agent.LocalCommands, d.Agent.LocalCommands)
 	boolean("# Report should-fix findings: real problems that don't block the merge.\n# Must-fix findings are always reported.\n", "should_fix", c.Agent.ShouldFix, d.Agent.ShouldFix)
 	boolean("# Report nits: minor, optional findings.\n", "nits", c.Agent.Nits, d.Agent.Nits)
 	w("# How to review: what to look for and how to write it. Severities and the\n# review format are fixed. Commented out: prowl's built-in instructions, below.\n")
@@ -505,6 +512,8 @@ func (c Config) Save() error {
 	mapLines(&b, c.Agent.Models, "# claude = \"opus\"\n")
 	w("\n# Model per agent for AI summaries. Missing: the agent's review model. A small,\n# fast model is plenty, e.g. claude = \"haiku\".\n[agent.summary_models]\n")
 	mapLines(&b, c.Agent.SummaryModels, "# claude = \"haiku\"\n")
+	w("\n# Container image per repo (owner/name) for the agent's run tool, which runs\n# commands like go test in Docker on a copy of the code. \"*\" is the\n# fallback. No image, or no docker: reviews only read.\n[agent.run_images]\n")
+	mapLines(&b, c.Agent.RunImages, "# \"*\" = \"golang:1.27\"\n# \"acme/web\" = \"node:22\"\n")
 	w("\n# Review profiles, run with <leader>cp: a focus for a review, and optionally\n# its own reviewers and skills. \"adversarial\" is built in; a profile with\n# its name replaces it.\n")
 	if len(c.Agent.Profiles) == 0 {
 		w("# [[agent.profiles]]\n# name = \"security\"\n# prompt = \"Look only for security problems: injection, auth, secrets, unsafe input.\"\n# reviewers = [\"codex\"]\n")

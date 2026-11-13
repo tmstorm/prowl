@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -175,9 +177,8 @@ var options = []option{
 	{section: "Review agent", title: "Extra directories", label: "context_dirs", help: "Directories the agent may read besides the PR, e.g. your org's standards repo. Comma separated.", kind: optText,
 		get: func(c *config.Config) string { return strings.Join(c.Agent.ContextDirs, ", ") },
 		set: func(c *config.Config, v string) error { c.Agent.ContextDirs = splitList(v); return nil }},
-	{section: "Review agent", title: "Local review commands", label: "local_commands", help: "Commands prowl review may run in your own checkout, e.g. go test. Claude Code only; PR reviews never run them. Comma separated.", kind: optText,
-		get: func(c *config.Config) string { return strings.Join(c.Agent.LocalCommands, ", ") },
-		set: func(c *config.Config, v string) error { c.Agent.LocalCommands = splitList(v); return nil }},
+	mapOpt("Review agent", "Run images", "run_images", "# owner/name = container image for the agent's run tool, which runs commands\n# like go test in Docker on a copy of the code. \"*\" is the fallback.\n# No image, or no docker: reviews only read.\n# \"*\" = \"golang:1.27\"\n# \"acme/web\" = \"node:22\"\n",
+		func(c *config.Config) *map[string]string { return &c.Agent.RunImages }),
 	{section: "Review agent", title: "Review instructions", label: "review_instructions", help: "What the agent looks for and how it writes. Opens your editor with the current text; save it unchanged or empty to keep prowl's.", kind: optEditor,
 		get: func(c *config.Config) string { return c.Agent.Instructions() },
 		set: func(c *config.Config, v string) error {
@@ -515,6 +516,12 @@ func (p *optionsPopup) value(m *Model, o option, sel bool) string {
 			first = fmt.Sprintf("%d mapped", len(m.cfg.SlackNames))
 		case "type_colors":
 			first = fmt.Sprintf("%d set", len(m.cfg.TypeColors))
+		case "run_images":
+			var images []string
+			for _, repo := range slices.Sorted(maps.Keys(m.cfg.Agent.RunImages)) {
+				images = append(images, repo+": "+m.cfg.Agent.RunImages[repo])
+			}
+			first = strings.Join(images, ", ")
 		case "profiles":
 			var names []string
 			for _, p := range m.cfg.Agent.AllProfiles() {

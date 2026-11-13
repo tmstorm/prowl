@@ -359,12 +359,13 @@ func (co *Core) Chat(key, reviewer string) (Command, error) {
 	if err != nil {
 		return Command{}, err
 	}
-	var wt string
-	if l, err := co.local(key); err == nil {
-		wt = l.Dir
+	var repo, wt string
+	l, err := co.local(key)
+	if err == nil {
+		repo, wt = l.Repo, l.Dir
 	} else {
-		repo, n, err := parseKey(key)
-		if err != nil {
+		var n int
+		if repo, n, err = parseKey(key); err != nil {
 			return Command{}, fmt.Errorf("chat: %w", err)
 		}
 		wt = agent.WorktreePath(repo, n, reviewer)
@@ -372,7 +373,7 @@ func (co *Core) Chat(key, reviewer string) (Command, error) {
 	if _, err := os.Stat(wt); err != nil {
 		return Command{}, fmt.Errorf("the review's worktree is gone; run the review again")
 	}
-	cmd := be.Chat(run.SessionID, wt, cfg.Agent.Model(be.Name()))
+	cmd := be.Chat(run.SessionID, wt, cfg.Agent.Model(be.Name()), agent.ToolServerCommand(cfg, be, repo, wt, l.Dir != ""))
 	if cmd == nil {
 		return Command{}, fmt.Errorf("%s has no interactive session to chat in; ask it to revise instead", be.Title())
 	}

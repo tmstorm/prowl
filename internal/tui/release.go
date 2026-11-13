@@ -230,6 +230,9 @@ func Uninstalling(cfg config.Config, f core.Footprint, ask bool) string {
 	if f.Command != "" {
 		b.WriteString("  " + sDim.Render("A package manager owns prowl itself: "+f.Command) + "\n")
 	}
+	if len(f.Images) > 0 {
+		b.WriteString("  " + sDim.Render("It keeps the agent's run images, which you may use elsewhere: docker rmi "+strings.Join(f.Images, " ")+" removes them.") + "\n")
+	}
 	if ask && len(items) > 0 {
 		b.WriteString("\n" + sYellow.Bold(true).Render("?") + " Remove these? " + sDim.Render("[y/N]") + " ")
 	}

@@ -33,10 +33,10 @@
 | `command`, `login_command`, `status_command` | none | the `command` agent and its login |
 | `skills` | none | skills every review must use |
 | `context_dirs` | none | extra directories the agent may read, e.g. your org's standards repo |
-| `local_commands` | none | commands `prowl review` may run in your checkout, e.g. `go test` (Claude Code only) |
 | `should_fix`, `nits` | `true` | report should-fix findings and nits |
 | `review_instructions` | built in | what to look for and how to write it |
 | `auto_summary` | `false` | write an AI summary of each PR as it first needs you |
 | `edit_examples` | `0` | your recent rewrites of drafts fed into reviews as examples |
+| `[agent.run_images]` | none | container image per repo (`owner/name`, `"*"` for the rest) for the agent's `run` tool; see [Running tests](ai-reviews.md#running-tests) |
 | `[agent.models]`, `[agent.summary_models]` | each agent's default | model per agent, for reviews and for summaries |
 | `[[agent.profiles]]` | `adversarial` built in | named review focuses for `<leader>cp` |

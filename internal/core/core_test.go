@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -406,6 +407,19 @@ func TestChat(t *testing.T) {
 	}
 	if strings.Join(spec.Args, " ") != "claude --resume s1 --setting-sources user" || spec.Dir != wt || spec.Quit == "" {
 		t.Fatalf("chat: %q in %s, quit %q", spec.Args, spec.Dir, spec.Quit)
+	}
+
+	bin := t.TempDir()
+	_ = os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\n"), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cfg := config.Default()
+	cfg.Agent.RunImages = map[string]string{"*": "golang:1.27"}
+	spec, err = core.New(cfg, mustClient(t), st).Chat("o/api#1", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args := strings.Join(spec.Args, " "); !strings.Contains(args, `"args":["agent-tools","o/api",`+strconv.Quote(wt)+`]`) || !strings.Contains(args, "--allowedTools mcp__prowl__run") {
+		t.Fatalf("a chat about a PR review gets the run tool on its worktree: %s", args)
 	}
 }
 
@@ -815,8 +829,9 @@ cat >> "$d/prompts"
 echo '{"type":"result","session_id":"s1","structured_output":{"summary":"A panics.","verdict":"request_changes","findings":[{"severity":"must-fix","path":"a.go","line":3,"title":"A panics","body":"Remove the panic.","rule":""}],"note":"","points":[],"thread_replies":[],"guidelines_read":[],"skills_used":[]}}'
 `), 0o755)
 	_ = os.WriteFile(filepath.Join(bin, "notify-send"), []byte("#!/bin/sh\n"), 0o755)
+	_ = os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\n"), 0o755)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+path)
-	if _, err := co.Update(func(c *config.Config) error { c.Agent.LocalCommands = []string{"go test"}; return nil }); err != nil {
+	if _, err := co.Update(func(c *config.Config) error { c.Agent.RunImages = map[string]string{"*": "golang:1.27"}; return nil }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -831,13 +846,13 @@ echo '{"type":"result","session_id":"s1","structured_output":{"summary":"A panic
 		t.Fatalf("runs: %+v", runs)
 	}
 	prompt := read(t, filepath.Join(bin, "prompts"))
-	for _, want := range []string{"local changes on branch feat/x in o/api", "git diff ", "git status --short", "You may also run `go test`"} {
+	for _, want := range []string{"local changes on branch feat/x in o/api", "git diff ", "git status --short", "the `run` tool"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt is missing %q", want)
 		}
 	}
-	if !strings.Contains(read(t, filepath.Join(bin, "args")), "Bash(go test:*)") {
-		t.Error("a local review may run the local_commands")
+	if args := read(t, filepath.Join(bin, "args")); !strings.Contains(args, `"agent-tools","o/api"`) || !strings.Contains(args, `"--local"]`) {
+		t.Errorf("a local review gets the run tool on your checkout, with its own cache: %s", args)
 	}
 	if strings.Contains(prompt, "Points raised") {
 		t.Error("a local review has no points raised by others")
