@@ -471,9 +471,10 @@ func TestAgentDraftAndSubmit(t *testing.T) {
 
 // Approving an agent draft written before the author pushed approves the
 // head; the draft's inline comments go first, on the commit they were
-// written on.
+// written on. When the approval fails, a retry doesn't send them again.
 func TestApproveAgentDraftAfterPush(t *testing.T) {
-	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")},
+		RejectReview: map[int]bool{2: true}}
 	_, st := newCore(t, fake)
 	run, _ := st.StartRun("o/api#7", "abc1234", "claude", "", 0)
 	_ = st.FinishReview(run, "s1", "Looks fine.", "", []store.Finding{{Severity: "should-fix", Path: "a.go", Line: 10, Title: "naming", Body: "Rename."}})
@@ -486,6 +487,13 @@ func TestApproveAgentDraftAfterPush(t *testing.T) {
 	}
 	fake.PRs[0].HeadRefOid = "def5678"
 	refresh(t, co)
+	d.Event = "APPROVE"
+	if sent, err := co.Submit("o/api#7", d); err == nil || sent.Review {
+		t.Fatalf("the approval should fail and not count as sent: %+v %v", sent, err)
+	}
+	if d, err = co.AgentDraft("o/api#7"); err != nil || len(d.Comments) != 0 {
+		t.Fatalf("the retry draft still holds the sent comments: %+v %v", d.Comments, err)
+	}
 	d.Event = "APPROVE"
 	if _, err := co.Submit("o/api#7", d); err != nil {
 		t.Fatal(err)

@@ -214,6 +214,9 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 		}
 		out.URL = u
 		co.dropPending(key, g.comments)
+		if len(d.Runs) > 0 {
+			co.markSent(d.Runs, g.comments)
+		}
 	}
 	switch {
 	case then != "" && len(main.comments) == 0 && len(earlier) == 0:
@@ -380,6 +383,24 @@ func (co *Core) PostReply(runID int64, threadID, body string) error {
 type commitComments struct {
 	commit   string
 	comments []gh.DraftComment
+}
+
+// markSent marks the findings that went out as inline comments posted, so a
+// retry after a later call fails doesn't post them twice.
+func (co *Core) markSent(runs []int64, sent []gh.DraftComment) {
+	for _, id := range runs {
+		r, _ := co.st.Run(id)
+		if r == nil {
+			continue
+		}
+		for i, f := range r.Findings {
+			if !f.Excluded && slices.ContainsFunc(sent, func(c gh.DraftComment) bool { return c.Path == f.Path && c.Line == f.Line }) {
+				r.Findings[i].Posted = true
+			}
+		}
+		_ = co.st.SaveFindings(id, r.Findings)
+	}
+	co.loadRuns()
 }
 
 // dropPending forgets pending comments that went out, so a retry after a
