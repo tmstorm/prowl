@@ -461,6 +461,28 @@ func TestUpdateInstalled(t *testing.T) {
 	}
 }
 
+// A release whose notes list breaking changes says so first, in the tip and
+// in what `prowl update` prints, and its notes mark each one with what to do.
+func TestBreakingUpdate(t *testing.T) {
+	old := core.Version
+	core.Version = "0.2.0"
+	t.Cleanup(func() { core.Version = old })
+	notes := "## [0.3.0](https://github.com/tmstorm/prowl/compare/v0.2.0...v0.3.0) (2026-11-20)\n\n\n### ⚠ BREAKING CHANGES\n\n" +
+		"* **agent:** local_commands is gone; set an image under run_images to run tests ([#27](https://github.com/tmstorm/prowl/issues/27))\n"
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.3.0", Notes: notes, URL: "https://github.com/tmstorm/prowl/releases/tag/v0.3.0"})
+	_ = a.st.SetInstalled("v0.3.0")
+	a = reopen(a)
+	a.want("⚠ breaking changes · prowl v0.3.0 is installed")
+	a.keys("space", "N")
+	a.want("breaking(agent): local_commands is gone; set an image under run_images to run")
+
+	out := ansi.Strip(tui.Installed(config.Default(), core.Release{Latest: "v0.3.0", Notes: notes, Breaking: true}, "/opt/bin/prowl", false, 80))
+	if !strings.Contains(out, "⚠ breaking changes: read what's new below before you go on") {
+		t.Errorf("prowl update doesn't flag the breaking release:\n%s", out)
+	}
+}
+
 // `prowl update` says where it installed the release and what's new in it,
 // including text added to the notes by hand.
 func TestInstalled(t *testing.T) {

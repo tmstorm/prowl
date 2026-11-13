@@ -83,6 +83,7 @@ type Release struct {
 	URL       string // its page on GitHub
 	Installed bool   // prowl installed Latest itself; a restart runs it
 	Command   string // what updates prowl when it can't do it itself; "" when it can
+	Breaking  bool   // the newest release's notes list breaking changes
 }
 
 // Newer reports whether a newer release than the running one is out.
@@ -94,7 +95,8 @@ func (r Release) Newer() bool {
 // asks nothing of GitHub; CheckRelease does.
 func (co *Core) Release(exe string) Release {
 	last, _ := co.st.Release()
-	r := Release{Running: releaseVersion(), Latest: last.Tag, Notes: last.Notes, URL: last.URL}
+	r := Release{Running: releaseVersion(), Latest: last.Tag, Notes: last.Notes, URL: last.URL,
+		Breaking: strings.Contains(last.Notes, "BREAKING CHANGES")}
 	if r.Running != "" {
 		r.Installed = semver.IsValid(last.Installed) && semver.Compare(last.Installed, r.Running) > 0
 		r.Command = updateCommand(exe)

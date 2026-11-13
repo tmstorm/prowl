@@ -21,6 +21,10 @@ func (m *Model) Restart() bool { return m.restart }
 // them clears.
 const onTip = "you're on prowl "
 
+// breakingTip leads news of a release whose notes list breaking changes, in
+// red where the rest is pink.
+const breakingTip = "⚠ breaking changes"
+
 // releaseTip puts news about prowl's own updates under the legend: a
 // release installed and waiting for a restart, one to install, or what's new
 // in the release now running.
@@ -40,6 +44,9 @@ func (m *Model) releaseTip() {
 		}
 	}
 	if tip != "" {
+		if r.Breaking && !strings.HasPrefix(tip, onTip) {
+			tip = breakingTip + " · " + tip
+		}
 		m.tip = tip
 		m.layoutNavs()
 	}
@@ -85,9 +92,13 @@ func (m *Model) upgraded(msg upgradeMsg) {
 		m.fail("update: " + msg.err.Error())
 	case msg.installed != "":
 		m.releaseTip()
-		m.info(sGreen.Render("✓") + " prowl " + msg.installed + " is installed · " + leader + "U restarts into it · " + leader + "N what's new")
+		line := sGreen.Render("✓") + " "
+		if m.core.Release(m.exe).Breaking {
+			line += sRed.Bold(true).Render(breakingTip) + sPink.Render(" · ")
+		}
+		m.info(line + sPink.Render("prowl "+msg.installed+" is installed · "+leader+"U restarts into it · "+leader+"N what's new"))
 	default:
-		m.info(msg.note)
+		m.info(sPink.Render(msg.note))
 	}
 }
 
@@ -150,6 +161,9 @@ func (p *notesPopup) view(m *Model) string {
 func Installed(cfg config.Config, r core.Release, exe string, restarting bool, w int) string {
 	applyConfig(cfg)
 	out := sGreen.Render("✓") + " " + sBold.Render("prowl "+r.Latest) + " is installed at " + sDim.Render(exe)
+	if r.Breaking {
+		out += "\n  " + sRed.Bold(true).Render(breakingTip) + sPink.Render(": read what's new below before you go on")
+	}
 	if restarting {
 		out += "\n  " + sDim.Render("the background service restarts into it in a few seconds")
 	}

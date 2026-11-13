@@ -433,7 +433,12 @@ func (m *Model) tipLines(w int) []string {
 	}
 	lines := []string{sBorder.Render("┄┄ ") + sDim.Render("prowl") + sBorder.Render(" "+strings.Repeat("┄", max(w-9, 0)))}
 	for _, l := range wrap(strings.ReplaceAll(m.tip, "<leader>", leader), w-2) {
-		lines = append(lines, " "+sPink.Render(strings.TrimRight(l, " ")))
+		l = strings.TrimRight(l, " ")
+		if rest, ok := strings.CutPrefix(l, breakingTip); ok {
+			lines = append(lines, " "+sRed.Bold(true).Render(breakingTip)+sPink.Render(rest))
+			continue
+		}
+		lines = append(lines, " "+sPink.Render(l))
 	}
 	return lines
 }
@@ -1043,7 +1048,7 @@ func (m *Model) statusline() string {
 		sync = sYellow.Render(fmt.Sprintf("reviewing ×%d", running)) + " " + sDim.Render(thinR) + " " + sync
 	}
 	if step := m.core.Updating(); step != "" {
-		sync = updatingMark(m) + " " + sYellow.Render(step) + " " + sDim.Render(thinR) + " " + sync
+		sync = updatingMark(m) + " " + sPink.Render(step) + " " + sDim.Render(thinR) + " " + sync
 	}
 	syncW := lipgloss.Width(sync)
 	authW := 0
