@@ -1,0 +1,9 @@
+# Keeps the actions in .github/workflows current: once a month Dependabot
+# opens a PR that moves each pinned SHA, and its version comment, to the
+# action's latest release.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
