@@ -109,6 +109,18 @@ func TestMultiAgentReviews(t *testing.T) {
 	a.want("claude says")
 }
 
+// After a review is posted the PR is fetched again: one merged in the
+// meantime leaves the inbox.
+func TestPostRefetchesPR(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.gh.Closed = map[string]bool{"o/api#7": true}
+	a.keys("space", "a", "y")
+	if !a.wrote("POST /repos/o/api/pulls/7/reviews") {
+		t.Fatal("not approved")
+	}
+	a.wantNot("fix: crash")
+}
+
 // The AI review tab before any review: the owl, and how to start one.
 func TestEmptyReviewTab(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})

@@ -174,7 +174,7 @@ func demoReview(p *gh.PR, who, state string, at time.Time, oid, body string) {
 
 // demoThread is a review thread: who said what, in turns.
 func demoThread(id, path string, line int, at time.Time, turns ...string) gh.Thread {
-	t := gh.Thread{ID: id, Path: path, Line: line, DiffSide: "RIGHT", ViewerCanResolve: true}
+	t := gh.Thread{ID: id, Path: path, Line: line, DiffSide: "RIGHT"}
 	for i := 0; i+1 < len(turns); i += 2 {
 		t.Comments.Nodes = append(t.Comments.Nodes, gh.Comment{ID: fmt.Sprintf("%s-%d", id, i), Author: &gh.Actor{Login: turns[i]},
 			CreatedAt: at.Add(time.Duration(i) * 13 * time.Hour), Body: turns[i+1], Path: path, Line: line})

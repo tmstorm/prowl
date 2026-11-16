@@ -276,7 +276,6 @@ type AgentReview struct {
 	Model                           string    // model ID the session ran on
 	Agent                           string    // backend that ran it: claude, codex, command
 	Profile                         string    // review profile it ran with, "" for a plain review
-	PostedURL                       string
 	Findings                        []Finding
 	Replies                         []ThreadReply
 	Points                          []Point
@@ -322,6 +321,9 @@ func (r *AgentReview) Unsent() int {
 
 // Reviewer names who reviewed: the agent, or agent:profile.
 func (r *AgentReview) Reviewer() string { return Reviewer(r.Agent, r.Profile) }
+
+// Finished reports whether the review ran to its end, posted or not.
+func (r *AgentReview) Finished() bool { return r.Status == "done" || r.Status == "posted" }
 
 // Reviewer is the key for an agent running with a profile ("" for none).
 func Reviewer(agent, profile string) string {
@@ -543,7 +545,7 @@ func Current(runs []*AgentReview) []*AgentReview {
 
 func (s *Store) reviews(where string, args ...any) ([]*AgentReview, error) {
 	rows, err := s.db.Query(`SELECT id, key, status, head_oid, session_id, pid, started_at, finished_at,
-  activity, activity_at, summary, findings, replies, points, action, action_reason, origin, error, posted_url, guidance, model, agent, profile FROM review_runs `+where, args...)
+  activity, activity_at, summary, findings, replies, points, action, action_reason, origin, error, guidance, model, agent, profile FROM review_runs `+where, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reviews: %w", err)
 	}
@@ -554,7 +556,7 @@ func (s *Store) reviews(where string, args ...any) ([]*AgentReview, error) {
 		var started, finished, activityAt int64
 		var findings, replies, points string
 		if err := rows.Scan(&c.ID, &c.Key, &c.Status, &c.HeadOid, &c.SessionID, &c.PID, &started, &finished,
-			&c.Activity, &activityAt, &c.Summary, &findings, &replies, &points, &c.Action, &c.ActionReason, &c.Origin, &c.Error, &c.PostedURL, &c.Guidance, &c.Model, &c.Agent, &c.Profile); err != nil {
+			&c.Activity, &activityAt, &c.Summary, &findings, &replies, &points, &c.Action, &c.ActionReason, &c.Origin, &c.Error, &c.Guidance, &c.Model, &c.Agent, &c.Profile); err != nil {
 			return nil, fmt.Errorf("reviews: %w", err)
 		}
 		c.StartedAt = time.Unix(started, 0)

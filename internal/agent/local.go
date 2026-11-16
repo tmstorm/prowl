@@ -27,7 +27,7 @@ func localHistory(dir string, j Job, runs []*store.AgentReview, current int64) h
 // than current, and whether there is one.
 func lastRun(runs []*store.AgentReview, reviewer string, current int64) (string, time.Time, bool) {
 	for _, r := range runs {
-		if r.ID != current && r.Reviewer() == reviewer && (r.Status == "done" || r.Status == "posted") {
+		if r.ID != current && r.Reviewer() == reviewer && r.Finished() {
 			return r.HeadOid, r.FinishedAt, true
 		}
 	}

@@ -64,7 +64,7 @@ func FindingsMarkdown(runs []*store.AgentReview, notes map[string][]store.LogEnt
 	fmt.Fprintf(&b, "# Review findings for %s\n\n", key)
 	var at *store.AgentReview
 	for _, r := range runs {
-		if r.Status == "done" || r.Status == "posted" {
+		if r.Finished() {
 			if at == nil || r.FinishedAt.After(at.FinishedAt) {
 				at = r
 			}

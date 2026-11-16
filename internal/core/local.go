@@ -138,6 +138,22 @@ func (co *Core) withLocals(items []inbox.Item) []inbox.Item {
 	return items
 }
 
+// showLocals puts a local review that has runs but no item in the inbox,
+// and reports whether there was one: `prowl review` in a checkout starts it
+// from another process, and it shouldn't wait for the next sync to show.
+func (co *Core) showLocals() bool {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	for key := range co.runs {
+		if _, ok := co.item(key); !ok && strings.HasPrefix(key, "local:") {
+			before := len(co.inbox.Items)
+			co.inbox.Items = co.withLocals(co.inbox.Items)
+			return len(co.inbox.Items) != before
+		}
+	}
+	return false
+}
+
 // foldLocals moves each local review whose branch now has an open PR of
 // yours to that PR: its runs become the PR's earlier reviews, and the next
 // review of the PR starts from what changed since.

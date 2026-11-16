@@ -287,6 +287,7 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 		} else {
 			core.Notify(changes, cfg.NotifyTimeout.Duration)
 			fmt.Printf("%s synced %d PRs, %d changes\n", time.Now().Format(time.TimeOnly), len(co.Inbox().Items), len(changes))
+			co.PruneClosed()
 		}
 		time.Sleep(interval)
 	}

@@ -166,8 +166,12 @@ func (m *Model) listPane(l layout, x int) string {
 
 	shortNames := map[filter]string{fNeedsMe: "Me", fAll: "All", fMine: "Mine", fApproved: "Appr", fWaiting: "Wait"}
 
+	counts := map[filter]string{}
+	for _, f := range filterOrder {
+		counts[f] = m.tabCount(f)
+	}
 	label := func(level, i int, f filter) string {
-		name, n := filterNames[f], m.tabCount(f)
+		name, n := filterNames[f], counts[f]
 		if level >= 2 {
 			name = shortNames[f]
 		}
@@ -1035,7 +1039,7 @@ func (m *Model) statusline() string {
 	case !m.lastSync.IsZero():
 		sync = sDim.Render("synced " + agoText(m.lastSync))
 	}
-	switch running := m.runningReviews(); {
+	switch running := m.running; {
 	case running == 1:
 		for _, runs := range m.review {
 			for _, r := range store.Current(runs) {
@@ -1052,11 +1056,12 @@ func (m *Model) statusline() string {
 	}
 	syncW := lipgloss.Width(sync)
 	authW := 0
-	if w := m.authWarning(); w != "" {
-		sync = w + " " + sDim.Render(thinR) + " " + sync
-		authW = lipgloss.Width(w)
+	warn, sc := m.authWarning(), m.showcmd()
+	if warn != "" {
+		sync = warn + " " + sDim.Render(thinR) + " " + sync
+		authW = lipgloss.Width(warn)
 	}
-	if sc := m.showcmd(); sc != "" {
+	if sc != "" {
 		sync = sBold.Render(sc) + "  " + sync
 	}
 	v := m.activeNav()
@@ -1067,7 +1072,7 @@ func (m *Model) statusline() string {
 	menu := sDim.Render(leader + " menu")
 	menuW := lipgloss.Width(menu) + 2
 	menu += "  "
-	for i, right := range []string{segC.Render(menu+sync+" ") + pos, segC.Render(menu+strings.TrimSpace(m.authWarning()+" "+m.showcmd())+" ") + pos, segC.Render(menu)} {
+	for i, right := range []string{segC.Render(menu+sync+" ") + pos, segC.Render(menu+strings.TrimSpace(warn+" "+sc)+" ") + pos, segC.Render(menu)} {
 		if gap := m.w - lipgloss.Width(left) - lipgloss.Width(right); gap >= 1 {
 			x := m.w - lipgloss.Width(right)
 			m.hits.add(x, m.h-1, menuW-2, 1, func(m *Model) tea.Cmd {

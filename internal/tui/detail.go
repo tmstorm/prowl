@@ -337,7 +337,6 @@ func (d *detail) fetch(co *core.Core) tea.Cmd {
 
 func (d *detail) setTab(t int, co *core.Core) tea.Cmd {
 	d.tab = t
-	d.dirty = true
 	return d.ensureLoaded(co)
 }
 
@@ -987,7 +986,7 @@ func (d *detail) agentSection(run *store.AgentReview, cur []*store.AgentReview) 
 	if run.Model != "" {
 		head += sDim.Render(" · ") + sPink.Render(modelName(run.Model))
 	}
-	if run.Status == "done" || run.Status == "posted" {
+	if run.Finished() {
 		head += sDim.Render(fmt.Sprintf(" · %d findings", len(run.Findings)))
 		if n := run.Unsent(); n > 0 {
 			head += sYellow.Render(fmt.Sprintf(" · %d to send", n))
@@ -1065,7 +1064,7 @@ func (d *detail) agentSection(run *store.AgentReview, cur []*store.AgentReview) 
 				}
 			}
 		}
-		if (run.Status == "done" || run.Status == "posted") && len(run.Findings) == 0 {
+		if run.Finished() && len(run.Findings) == 0 {
 			a.add("")
 			a.add("  " + sGreen.Render("No findings."))
 		}
