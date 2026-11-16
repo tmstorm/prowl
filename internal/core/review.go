@@ -30,12 +30,13 @@ type EventKind int
 
 const (
 	Syncing        EventKind = iota // a background sync started
-	InboxChanged                    // a background sync finished, or a local review joined the inbox
+	InboxChanged                    // a background sync finished
 	RunsChanged                     // an agent review started, progressed or finished
 	SummaryChanged                  // an auto summary was written, or failed
 	AuthChanged                     // the periodic login check finished
 	ConfigChanged                   // the config file was edited outside prowl
 	ReleaseChanged                  // the hourly update check ran, or an update moved on a step
+	LocalsChanged                   // a local review started by another prowl joined the inbox
 )
 
 // Events delivers events to one reader. An event that finds the buffer full
@@ -70,7 +71,7 @@ func (co *Core) Run(ctx context.Context) {
 			case <-tick.C:
 				if co.loadRuns() {
 					if co.showLocals() {
-						co.emit(Event{Kind: InboxChanged})
+						co.emit(Event{Kind: LocalsChanged})
 					}
 					co.emit(Event{Kind: RunsChanged})
 				}

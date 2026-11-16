@@ -357,7 +357,7 @@ func TestRunShowsLocalReviewStartedElsewhere(t *testing.T) {
 	if _, err := st.StartRun(key, "abc", "claude", "", 0); err != nil {
 		t.Fatal(err)
 	}
-	waitEvent(t, co, core.InboxChanged)
+	waitEvent(t, co, core.LocalsChanged)
 	if it, ok := find(co.Inbox(), key); !ok || it.Bucket != inbox.Local {
 		t.Fatalf("the local review isn't in the inbox: %+v", co.Inbox().Items)
 	}

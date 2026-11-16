@@ -531,6 +531,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.listen(), m.applySync(msg.Changes, msg.Err))
 		case core.RunsChanged:
 			m.loadReviews()
+		case core.LocalsChanged:
+			m.applyPR(prRefreshedMsg{})
 		case core.SummaryChanged:
 			m.summaryDone(msg.Key, msg.Err)
 		case core.AuthChanged:
