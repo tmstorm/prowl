@@ -100,8 +100,8 @@ type Model struct {
 
 	items    []inbox.Item
 	snoozed  map[string]time.Time
-	review   map[string][]*store.AgentReview // every PR's review runs, newest first
-	running  int                             // agents reviewing right now, across PRs
+	runs     map[string][]*store.Run // every PR's review runs, newest first
+	running  int                     // agents reviewing right now, across PRs
 	viewer   string
 	lastSync time.Time
 	loading  bool
@@ -187,14 +187,14 @@ func New(co *core.Core) *Model {
 	ti.Prompt = ""
 	m := &Model{
 		cfg: cfg, core: co, loading: true, waking: true, started: time.Now(),
-		review:      map[string][]*store.AgentReview{},
+		runs:        map[string][]*store.Run{},
 		snoozed:     map[string]time.Time{},
 		details:     map[string]*detail{},
 		searchInput: ti,
 		exe:         core.Executable(),
 	}
 	m.list.scrolloff = 2
-	m.loadReviews()
+	m.loadRuns()
 	if in := m.core.Inbox(); !in.At.IsZero() {
 		m.setInbox(in)
 		m.rebuildRows()
@@ -327,7 +327,7 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 	m.synced = true
 	selKey := m.selectionKey()
 	m.setInbox(m.core.Inbox())
-	m.loadReviews()
+	m.loadRuns()
 	for _, it := range m.items {
 		if d := m.details[it.PR.Key()]; d != nil {
 			d.setItem(it)
@@ -530,7 +530,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case core.InboxChanged:
 			return m, tea.Batch(m.listen(), m.applySync(msg.Changes, msg.Err))
 		case core.RunsChanged:
-			m.loadReviews()
+			m.loadRuns()
 		case core.LocalsChanged:
 			m.applyPR(prRefreshedMsg{})
 		case core.SummaryChanged:
@@ -630,7 +630,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.info(msg.verb)
 		}
-		m.loadReviews()
+		m.loadRuns()
 		var reload tea.Cmd
 		if d := m.details[msg.key]; d != nil {
 			reload = d.fetch(m.core)
@@ -949,7 +949,7 @@ func (m *Model) detailFor(it inbox.Item) *detail {
 	if d == nil {
 		d = newDetail(it, m.viewer)
 		d.pending = m.core.Pending(key)
-		d.setReview(m.review[key])
+		d.setRuns(m.runs[key])
 		d.setLogs(m.core.Notes(key))
 		d.setSummary(m.core.Summary(key), slices.Contains(m.core.Summarizing(), key))
 		m.details[key] = d
@@ -1513,8 +1513,8 @@ func (m *Model) agentAction(key string) tea.Cmd {
 		}
 		return m.startReview(*it, "", true, target.Reviewer())
 	case "h":
-		var done []*store.AgentReview
-		for _, r := range store.Current(m.review[k]) {
+		var done []*store.Run
+		for _, r := range store.Current(m.runs[k]) {
 			if r.Finished() {
 				done = append(done, r)
 			}
@@ -1544,7 +1544,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 				m.fail(err.Error())
 				return nil
 			}
-			m.loadReviews()
+			m.loadRuns()
 			m.setItems(m.core.Inbox().Items)
 			m.rebuildRows()
 			m.info("discarded " + core.ReviewerTitle(target.Reviewer()) + "'s review; its previous one (if any) is current again")
@@ -1748,7 +1748,7 @@ func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 		m.fail(msg.err.Error() + " · your review is kept: post it again to reopen it")
 		return nil
 	}
-	m.loadReviews()
+	m.loadRuns()
 	var reload tea.Cmd
 	if d := m.details[msg.key]; d != nil {
 		d.pending = nil
@@ -1862,7 +1862,7 @@ func (m *Model) startAll(it inbox.Item) tea.Cmd {
 	default:
 		m.info(strings.Join(started, " and ") + " are reviewing")
 	}
-	m.loadReviews()
+	m.loadRuns()
 	return m.startAnim()
 }
 
@@ -1882,7 +1882,7 @@ func (m *Model) startReview(it inbox.Item, refine string, sync bool, reviewer st
 	default:
 		m.info(title + " review started")
 	}
-	m.loadReviews()
+	m.loadRuns()
 	return m.startAnim()
 }
 
@@ -1907,7 +1907,7 @@ func (m *Model) startProfile(it inbox.Item, p config.Profile) tea.Cmd {
 		return nil
 	}
 	m.info(strings.Join(started, " and ") + " reviewing")
-	m.loadReviews()
+	m.loadRuns()
 	return m.startAnim()
 }
 
@@ -1934,11 +1934,11 @@ func (m *Model) launchReview(it inbox.Item, refine string, sync bool, reviewer s
 	return core.ReviewerTitle(started), nil
 }
 
-// loadReviews takes every review run, and the open PR's notes, from core.
-func (m *Model) loadReviews() {
-	m.review = m.core.Reviews()
+// loadRuns takes every review run, and the open PR's notes, from core.
+func (m *Model) loadRuns() {
+	m.runs = m.core.Runs()
 	m.running = 0
-	for _, runs := range m.review {
+	for _, runs := range m.runs {
 		for _, r := range store.Current(runs) {
 			if r.Status == "running" {
 				m.running++
@@ -1946,7 +1946,7 @@ func (m *Model) loadReviews() {
 		}
 	}
 	for k, d := range m.details {
-		d.setReview(m.review[k])
+		d.setRuns(m.runs[k])
 	}
 	if d := m.current(); d != nil {
 		d.setLogs(m.core.Notes(d.item.PR.Key()))
@@ -1956,8 +1956,8 @@ func (m *Model) loadReviews() {
 // targetRun is the review an agent action applies to: the agent whose
 // section the cursor is in on the AI review tab, else the main reviewer's,
 // else whichever agent has reviewed the PR.
-func (m *Model) targetRun(it inbox.Item) *store.AgentReview {
-	runs := m.review[it.PR.Key()]
+func (m *Model) targetRun(it inbox.Item) *store.Run {
+	runs := m.runs[it.PR.Key()]
 	if d := m.details[it.PR.Key()]; d != nil && d.tab == tabReview && m.focus == fDetail {
 		v := &d.navs[tabReview]
 		if rows := d.rows[tabReview]; v.cur < len(rows) && rows[v.cur].agent != "" {

@@ -44,7 +44,7 @@ func TestEditsMarkdown(t *testing.T) {
 // the findings, but not your side of the chat. The prompt for a coding agent
 // says a note is not a finding.
 func TestFindingsMarkdownNotes(t *testing.T) {
-	runs := []*store.AgentReview{{Agent: "claude", Status: "done", HeadOid: "bd7038b2aa", FinishedAt: time.Now()}}
+	runs := []*store.Run{{Agent: "claude", Status: "done", HeadOid: "bd7038b2aa", FinishedAt: time.Now()}}
 	notes := map[string][]store.LogEntry{"claude": {
 		{Who: "agent", Text: "Not blocking: watch retries a failed install on every poll."},
 		{Who: "you", Text: "why?"},

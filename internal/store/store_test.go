@@ -18,7 +18,7 @@ func TestRunsAndPrune(t *testing.T) {
 	}
 	defer st.Close()
 	a, _ := st.StartRun("o/r#1", "h1", "claude", "", 0)
-	_ = st.FinishReview(a, "s1", "first", "", []store.Finding{{Title: "x", Excluded: true}})
+	_ = st.FinishRun(a, "s1", "first", "", []store.Finding{{Title: "x", Excluded: true}})
 	b, _ := st.StartRun("o/r#1", "h2", "codex", "", 0)
 	c, _ := st.StartRun("o/r#1", "h2", "claude", "", 0)
 	runs, _ := st.Runs("o/r#1")

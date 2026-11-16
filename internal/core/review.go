@@ -138,11 +138,11 @@ func (co *Core) loadRuns() bool {
 	return true
 }
 
-// Reviews are every PR's review runs, newest first, by PR key.
-func (co *Core) Reviews() map[string][]*store.AgentReview {
+// Runs are every PR's review runs, newest first, by PR key.
+func (co *Core) Runs() map[string][]*store.Run {
 	co.mu.Lock()
 	defer co.mu.Unlock()
-	out := make(map[string][]*store.AgentReview, len(co.runs))
+	out := make(map[string][]*store.Run, len(co.runs))
 	for key, runs := range co.runs {
 		for _, r := range runs {
 			c := *r
@@ -280,7 +280,7 @@ func (co *Core) Discard(runID int64) error {
 		return fmt.Errorf("discard: %w", err)
 	}
 	co.loadRuns()
-	if _, err := co.local(run.Key); err == nil && len(co.Reviews()[run.Key]) == 0 {
+	if _, err := co.local(run.Key); err == nil && len(co.Runs()[run.Key]) == 0 {
 		if err := co.st.DeleteLocal(run.Key); err != nil {
 			return fmt.Errorf("discard: %w", err)
 		}
@@ -293,7 +293,7 @@ func (co *Core) Discard(runID int64) error {
 
 // SetExcluded includes a finding in what gets posted, or leaves it out.
 func (co *Core) SetExcluded(runID int64, finding int, excluded bool) error {
-	return co.editFindings(func(r *store.AgentReview) bool { return r.ID == runID }, func(i int, f store.Finding) bool {
+	return co.editFindings(func(r *store.Run) bool { return r.ID == runID }, func(i int, f store.Finding) bool {
 		if i == finding {
 			return excluded
 		}
@@ -310,13 +310,13 @@ func (co *Core) MustFixOnly(key string, on bool) error {
 		ids = append(ids, r.ID)
 	}
 	co.mu.Unlock()
-	return co.editFindings(func(r *store.AgentReview) bool { return slices.Contains(ids, r.ID) }, func(_ int, f store.Finding) bool {
+	return co.editFindings(func(r *store.Run) bool { return slices.Contains(ids, r.ID) }, func(_ int, f store.Finding) bool {
 		return on && f.Severity != "must-fix"
 	})
 }
 
 // editFindings sets Excluded on the findings of the runs that match.
-func (co *Core) editFindings(match func(*store.AgentReview) bool, excluded func(int, store.Finding) bool) error {
+func (co *Core) editFindings(match func(*store.Run) bool, excluded func(int, store.Finding) bool) error {
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	for _, runs := range co.runs {
@@ -412,7 +412,7 @@ var owlWords = []string{
 // Progress is what a running review is doing, for people: its step and the
 // agent's latest action, or once the agent has gone quiet to write, what the
 // owl is up to (plain "writing" with the owl turned off).
-func (co *Core) Progress(r *store.AgentReview, now time.Time) string {
+func (co *Core) Progress(r *store.Run, now time.Time) string {
 	if r.Activity == "" {
 		return "starting"
 	}

@@ -430,7 +430,7 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-	var cur []*store.AgentReview
+	var cur []*store.Run
 	for _, r := range store.Current(runs) {
 		if only != "" && r.Agent != only && r.Reviewer() != only {
 			continue
@@ -617,7 +617,7 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 	start := time.Now()
 	stop := showProgress(co, start, func(now time.Time) string {
 		runs, _ := st.Runs(key)
-		if i := slices.IndexFunc(runs, func(r *store.AgentReview) bool { return r.Status == "running" }); i >= 0 {
+		if i := slices.IndexFunc(runs, func(r *store.Run) bool { return r.Status == "running" }); i >= 0 {
 			return co.Progress(runs[i], now)
 		}
 		return ""
@@ -635,7 +635,7 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 		return err
 	}
 	total, mustFix := 0, 0
-	for _, r := range store.Current(co.Reviews()[key]) {
+	for _, r := range store.Current(co.Runs()[key]) {
 		total += len(r.Findings)
 		mustFix += r.MustFix()
 	}

@@ -100,21 +100,21 @@ func Launch(st *store.Store, j Job) error {
 	payload, _ := json.Marshal(j)
 	jobFile := filepath.Join(config.DataDir(), "jobs", fmt.Sprintf("%d.json", j.RunID))
 	if err := os.MkdirAll(filepath.Dir(jobFile), 0o700); err != nil {
-		_ = st.FailReview(j.RunID, err.Error())
+		_ = st.FailRun(j.RunID, err.Error())
 		return fmt.Errorf("launch: %w", err)
 	}
 	if err := os.WriteFile(jobFile, payload, 0o600); err != nil {
-		_ = st.FailReview(j.RunID, err.Error())
+		_ = st.FailRun(j.RunID, err.Error())
 		return fmt.Errorf("launch: %w", err)
 	}
 	cmd := exec.Command(exe, "agent-run", jobFile)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	platform.Detach(cmd)
 	if err := cmd.Start(); err != nil {
-		_ = st.FailReview(j.RunID, err.Error())
+		_ = st.FailRun(j.RunID, err.Error())
 		return fmt.Errorf("start review job: %w", err)
 	}
-	_ = st.SetReviewPID(j.RunID, cmd.Process.Pid)
+	_ = st.SetRunPID(j.RunID, cmd.Process.Pid)
 	return cmd.Process.Release()
 }
 
@@ -452,7 +452,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 	if cfg.NotifyTimeout.Duration > 0 {
 		notifyTimeout = cfg.NotifyTimeout.Duration
 	}
-	var prev *store.AgentReview
+	var prev *store.Run
 	if j.RunID != 0 {
 		if prev, _ = st.Run(j.RunID); prev != nil {
 			j.Agent, j.Profile = prev.Agent, prev.Profile
@@ -469,10 +469,10 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 		j.RunID = id
 	}
 	id := j.RunID
-	_ = st.SetReviewPID(id, os.Getpid())
+	_ = st.SetRunPID(id, os.Getpid())
 	be, err := For(cfg, j.Agent)
 	if err != nil {
-		_ = st.FailReview(id, err.Error())
+		_ = st.FailRun(id, err.Error())
 		return err
 	}
 	fail := func(err error) error {
@@ -485,28 +485,28 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 			notify(be.Title()+" revise failed", key+": "+err.Error())
 			return err
 		}
-		_ = st.FailReview(id, err.Error())
+		_ = st.FailRun(id, err.Error())
 		notify(be.Title()+" review failed", key+": "+err.Error())
 		return err
 	}
 
 	wt := j.Dir
 	if wt == "" {
-		_ = st.SetReviewActivity(id, "preparing worktree")
+		_ = st.SetRunActivity(id, "preparing worktree")
 		if wt, err = prepareWorktree(cfg, j); err != nil {
 			return fail(err)
 		}
 	}
 	tools := ToolServerCommand(cfg, be, j.Repo, wt, j.Dir != "")
 	turn := func(input, session, phase string) (*result, string, error) {
-		_ = st.SetReviewActivity(id, phase)
+		_ = st.SetRunActivity(id, phase)
 		return be.Review(Turn{
 			Dir: wt, Prompt: input, Session: session, Model: cfg.Agent.Model(be.Name()),
 			Schema:      Schema(cfg.Agent.Severities()),
 			ContextDirs: existingDirs(cfg.ExpandedContextDirs()),
 			ToolServer:  tools,
-			Activity:    func(s string) { _ = st.SetReviewActivity(id, phase+": "+s) },
-			SetModel:    func(m string) { _ = st.SetReviewModel(id, m) },
+			Activity:    func(s string) { _ = st.SetRunActivity(id, phase+": "+s) },
+			SetModel:    func(m string) { _ = st.SetRunModel(id, m) },
 		})
 	}
 
@@ -519,7 +519,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 			hist = localHistory(wt, j, runs, id)
 			changed = localChanges(wt, hist.base)
 		} else {
-			_ = st.SetReviewActivity(id, "reading review history")
+			_ = st.SetRunActivity(id, "reading review history")
 			hist = loadHistory(c, j)
 			waiting = hist.waiting
 			if hist.lastOid == "" && hist.reader != "" && hist.reader == j.Author {
@@ -534,7 +534,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 			out, _ := exec.Command("git", "-C", wt, "diff", "--name-only", "origin/"+j.Base+"...HEAD").Output()
 			changed = strings.Fields(string(out))
 		}
-		_ = st.SetReviewActivity(id, "finding repo guidelines")
+		_ = st.SetRunActivity(id, "finding repo guidelines")
 		var examples string
 		if n := cfg.Agent.EditExamples; n > 0 {
 			posts, _ := st.Posts(time.Time{})
@@ -641,7 +641,7 @@ func keepState(next, prev []store.Finding) {
 
 // dismissedSection lists findings the reviewer excluded from earlier reviews
 // of this PR (by any agent), so the agent doesn't raise them again.
-func dismissedSection(runs []*store.AgentReview, current int64) string {
+func dismissedSection(runs []*store.Run, current int64) string {
 	var b strings.Builder
 	seen := map[string]bool{}
 	for _, r := range runs {
@@ -669,7 +669,7 @@ func dismissedSection(runs []*store.AgentReview, current int64) string {
 }
 
 // previousReview shows an agent without sessions the review it is revising.
-func previousReview(prev *store.AgentReview) string {
+func previousReview(prev *store.Run) string {
 	b, _ := json.MarshalIndent(map[string]any{"summary": prev.Summary, "findings": prev.Findings, "points": prev.Points, "thread_replies": prev.Replies, "pr_action": prev.Action, "pr_action_reason": prev.ActionReason}, "", "  ")
 	return "\n## Your previous review\n\n```json\n" + string(b) + "\n```\n\n"
 }
@@ -723,7 +723,7 @@ func finish(st *store.Store, be Backend, id int64, key, sessionID string, res *r
 		}
 	}
 	guidance, _ := json.Marshal(g)
-	if err := st.FinishReview(id, sessionID, summary, string(guidance), res.Findings); err != nil {
+	if err := st.FinishRun(id, sessionID, summary, string(guidance), res.Findings); err != nil {
 		return fmt.Errorf("finish: %w", err)
 	}
 	if err := st.SaveReplies(id, replies); err != nil {
@@ -739,13 +739,13 @@ func finish(st *store.Store, be Backend, id int64, key, sessionID string, res *r
 	if err := st.SaveAction(id, action, res.PRReason); err != nil {
 		return fmt.Errorf("finish: %w", err)
 	}
-	notify(be.Title()+" review ready", readyText(key, &store.AgentReview{Findings: res.Findings, Replies: replies, Points: res.Points, Action: action}))
+	notify(be.Title()+" review ready", readyText(key, &store.Run{Findings: res.Findings, Replies: replies, Points: res.Points, Action: action}))
 	return nil
 }
 
 // readyText says what a finished review holds, for its notification:
 // "api#7: 3 findings, 1 must-fix · 2 still open · 2 replies to send".
-func readyText(key string, r *store.AgentReview) string {
+func readyText(key string, r *store.Run) string {
 	_, pr, _ := strings.Cut(strings.TrimPrefix(key, "local:"), "/")
 	text := "no findings"
 	switch n := len(r.Findings); n {

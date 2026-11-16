@@ -38,9 +38,9 @@ type Core struct {
 	quiet    bool      // this process never notifies (prowl list)
 	accounts []Account
 	inbox    Inbox
-	peek     map[string]bool     // repos (owner/name) whose open PRs are fetched this session
-	opened   map[string]prNumber // PRs opened by link this session, kept through syncs
-	runs     map[string][]*store.AgentReview
+	peek     map[string]bool  // repos (owner/name) whose open PRs are fetched this session
+	opened   map[string]prRef // PRs opened by link this session, kept through syncs
+	runs     map[string][]*store.Run
 	pending  map[string][]gh.DraftComment // your inline comments, by PR, until the next review
 	drafted  map[string]store.Review      // agent drafts on their way out, as prowl wrote them
 	unsent   map[string]Draft             // reviews that failed to post, by PR, until reopened
@@ -59,7 +59,7 @@ type Core struct {
 	events chan Event
 }
 
-type prNumber struct {
+type prRef struct {
 	repo string
 	n    int
 }
@@ -153,9 +153,9 @@ func (co *Core) Open(repo string, n int) (inbox.Item, error) {
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	if co.opened == nil {
-		co.opened = map[string]prNumber{}
+		co.opened = map[string]prRef{}
 	}
-	co.opened[pr.Key()] = prNumber{repo, n}
+	co.opened[pr.Key()] = prRef{repo, n}
 	co.inbox.Items = co.withOpened(co.inbox.Items, []gh.PR{*pr}, co.inbox.Viewer)
 	if it, ok := co.item(pr.Key()); ok {
 		return it, nil

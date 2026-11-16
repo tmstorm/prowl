@@ -29,7 +29,7 @@ var severityRank = map[string]int{"must-fix": 0, "should-fix": 1, "nit": 2}
 // they are posted: excluded findings left out (unless all), and a finding
 // two agents agree on kept once, at the higher severity. Findings from the
 // same agent are never merged, however close.
-func Combine(runs []*store.AgentReview, all bool) []store.Finding {
+func Combine(runs []*store.Run, all bool) []store.Finding {
 	var out []store.Finding
 	for _, r := range runs {
 		if r.Status != "done" && r.Status != "posted" {
@@ -59,10 +59,10 @@ func Combine(runs []*store.AgentReview, all bool) []store.Finding {
 // another agent (or a person) to act on, then each reviewer's notes from
 // notes (by reviewer, as core.Notes returns them): what it held back or
 // couldn't check. Excluded findings are left out unless all is set.
-func FindingsMarkdown(runs []*store.AgentReview, notes map[string][]store.LogEntry, key, currentHead string, all bool) string {
+func FindingsMarkdown(runs []*store.Run, notes map[string][]store.LogEntry, key, currentHead string, all bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Review findings for %s\n\n", key)
-	var at *store.AgentReview
+	var at *store.Run
 	for _, r := range runs {
 		if r.Finished() {
 			if at == nil || r.FinishedAt.After(at.FinishedAt) {

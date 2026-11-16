@@ -12,7 +12,7 @@ import (
 
 // localHistory is what a local review starts from: where the branch left
 // the default branch, and the commit this reviewer last reviewed, if any.
-func localHistory(dir string, j Job, runs []*store.AgentReview, current int64) history {
+func localHistory(dir string, j Job, runs []*store.Run, current int64) history {
 	h := history{base: j.Base}
 	if out, err := exec.Command("git", "-C", dir, "merge-base", "origin/"+j.Base, "HEAD").Output(); err == nil {
 		h.base = strings.TrimSpace(string(out))
@@ -25,7 +25,7 @@ func localHistory(dir string, j Job, runs []*store.AgentReview, current int64) h
 
 // lastRun is the commit and time of reviewer's latest finished run other
 // than current, and whether there is one.
-func lastRun(runs []*store.AgentReview, reviewer string, current int64) (string, time.Time, bool) {
+func lastRun(runs []*store.Run, reviewer string, current int64) (string, time.Time, bool) {
 	for _, r := range runs {
 		if r.ID != current && r.Reviewer() == reviewer && r.Finished() {
 			return r.HeadOid, r.FinishedAt, true

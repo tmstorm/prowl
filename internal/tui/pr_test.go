@@ -90,7 +90,7 @@ func TestMultiAgentReviews(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	run := func(agent string, f ...store.Finding) {
 		id, _ := a.st.StartRun("o/api#7", "abc1234", agent, "", 0)
-		_ = a.st.FinishReview(id, "s-"+agent, agent+" says", "", f)
+		_ = a.st.FinishRun(id, "s-"+agent, agent+" says", "", f)
 	}
 	run("claude", store.Finding{Severity: "nit", Title: "old one", Path: "z.go", Line: 1})
 	run("claude", store.Finding{Severity: "must-fix", Path: "a.go", Line: 10, Title: "nil map write"})
@@ -164,7 +164,7 @@ func TestChat(t *testing.T) {
 		"claude": `case "$1" in auth) echo '{"loggedIn":true}';; --resume) echo ready; read x; echo "got $x"; read y;; esac`}}
 	a := newApp(t, f)
 	id, _ := a.st.StartRun("o/api#7", "abc1234", "claude", "", 0)
-	_ = a.st.FinishReview(id, "s1", "summary", "", nil)
+	_ = a.st.FinishRun(id, "s1", "summary", "", nil)
 	if err := os.MkdirAll(agent.WorktreePath("o/api", 7, "claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestFoldFromInside(t *testing.T) {
 func TestReviewRunningOwl(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	id, _ := a.st.StartRun("o/api#7", "abc1234", "claude", "", 0)
-	_ = a.st.SetReviewActivity(id, "reading a.go")
+	_ = a.st.SetRunActivity(id, "reading a.go")
 	a = reopen(a)
 	a.keys("enter", "4")
 	a.want("reading the PR", "===^===^===")
@@ -332,7 +332,7 @@ func TestDraftReply(t *testing.T) {
 		{ID: "c2", Author: &gh.Actor{Login: "alice"}, Body: "Done, wrapped too."}}
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Threads: map[int][]gh.Thread{7: {thread}}})
 	id, _ := a.st.StartRun("o/api#7", "abc1234", "claude", "", 0)
-	_ = a.st.FinishReview(id, "s1", "fine", "", nil)
+	_ = a.st.FinishRun(id, "s1", "fine", "", nil)
 	_ = a.st.SaveReplies(id, []store.ThreadReply{{ThreadID: "t1", Path: "a.go", Line: 3, To: "alice", Last: "Done, wrapped too.", Body: "Thanks, looks right."}})
 	a = reopen(a)
 	a.want("replies to send")
@@ -363,7 +363,7 @@ func TestDraftReply(t *testing.T) {
 func TestPoints(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	id, _ := a.st.StartRun("o/api#7", "abc1234", "claude", "", 0)
-	_ = a.st.FinishReview(id, "s1", "fine", "", nil)
+	_ = a.st.FinishRun(id, "s1", "fine", "", nil)
 	_ = a.st.SavePoints(id, []store.Point{
 		{Who: "me", Point: "add a test", Verdict: "addressed", Why: "a_test.go covers it."},
 		{Who: "axes[bot]", Path: "a.go", Line: 40, Point: "nil map write", Verdict: "open", Why: "m is never made."}})
@@ -403,7 +403,7 @@ func TestLocalReview(t *testing.T) {
 	key := store.LocalKey("o/api", "feat/x")
 	_ = a.st.SaveLocal(store.Local{Key: key, Repo: "o/api", Branch: "feat/x", Dir: dir, Base: "main", At: time.Now()})
 	id, _ := a.st.StartRun(key, "abc1234", "claude", "", 0)
-	_ = a.st.FinishReview(id, "s1", "A is fine.", "", nil)
+	_ = a.st.FinishRun(id, "s1", "A is fine.", "", nil)
 	a = reopen(a)
 	a.keys("4")
 	a.want("LOCAL", "⌂", "feat: add A")
@@ -414,7 +414,7 @@ func TestLocalReview(t *testing.T) {
 	a.want("isn't on GitHub")
 	for i := 0; i < 3; i++ {
 		id, _ := a.st.StartRun(key, "abc1234", "claude", "", 0)
-		_ = a.st.FinishReview(id, "s1", fmt.Sprintf("run %d", i), "", nil)
+		_ = a.st.FinishRun(id, "s1", fmt.Sprintf("run %d", i), "", nil)
 	}
 	a = reopen(a)
 	a.keys("4", "enter", "4")
@@ -430,7 +430,7 @@ func TestLocalReview(t *testing.T) {
 func TestSuggestsClosing(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	id, _ := a.st.StartRun("o/api#7", "abc1234", "claude", "", 0)
-	_ = a.st.FinishReview(id, "s1", "Superseded.", "", nil)
+	_ = a.st.FinishRun(id, "s1", "Superseded.", "", nil)
 	_ = a.st.SaveAction(id, "close", "Closing in favor of #9, which does the same with a migration.")
 	a = reopen(a)
 	a.keys("enter", "4")
