@@ -253,8 +253,10 @@ func indent(s, prefix string) string {
 }
 
 // reReviewSection tells the agent to review like the reader does on a second
-// pass: start from what changed and from what the reader said is left.
-func reReviewSection(j Job, h history) string {
+// pass: start from what changed and from what the reader said is left. An
+// agent that can run commands tests only what changed, which keeps a
+// re-review of a small fix from rerunning a slow suite.
+func reReviewSection(j Job, h history, canRun bool) string {
 	if h.lastOid == "" || h.reader == "" {
 		return ""
 	}
@@ -288,5 +290,8 @@ On a re-review:
 2. Review what changed since the reader's last review.
 3. Only raise problems in code the reader already reviewed when they are must-fix (a bug, security issue, data loss, or broken contract). Do not re-review the whole PR.
 `)
+	if canRun {
+		b.WriteString("4. Run only the tests for the code that changed since then, not the whole suite, with the checks the repo's own test command uses, such as the race detector.\n")
+	}
 	return b.String()
 }

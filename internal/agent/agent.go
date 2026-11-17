@@ -274,7 +274,7 @@ The PR head is checked out in the current directory. See the change with:
 		b.WriteString("## Review history\n\nThis is what is already on the PR page. Read it before reviewing, the way a reviewer would.\n\n")
 		b.WriteString(h.text + "\n")
 	}
-	if rr := reReviewSection(j, h); rr != "" {
+	if rr := reReviewSection(j, h, canRun); rr != "" {
 		b.WriteString(rr + "\n")
 	}
 	b.WriteString(dismissed)

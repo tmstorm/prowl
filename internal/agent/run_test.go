@@ -413,8 +413,29 @@ func TestOwnPRStartsFromLastAIReview(t *testing.T) {
 	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Author: "me", Viewer: "me", Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
-	if p := read(filepath.Join(bin, "prompts")); !strings.Contains(p, "This is me's own PR. An AI review for them last looked at it") {
+	p := read(filepath.Join(bin, "prompts"))
+	if !strings.Contains(p, "This is me's own PR. An AI review for them last looked at it") {
 		t.Errorf("the re-review should start from the last AI review:\n%s", p)
+	}
+	if strings.Contains(p, "Run only the tests") {
+		t.Error("an agent that can't run commands shouldn't be told which tests to run")
+	}
+}
+
+// An agent that can run commands tests only what changed on a re-review,
+// with the repo's usual checks, rather than the whole suite again.
+func TestReReviewTestsWhatChanged(t *testing.T) {
+	st, roots, bin, head := setupRun(t)
+	prev, _ := st.StartRun("o/api#7", head, "claude", "", 0)
+	_ = st.FinishRun(prev, "s0", "earlier", "", nil)
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	cfg.Agent.RunImages = map[string]string{"*": "golang:1.27"}
+	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Author: "me", Viewer: "me", Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := read(filepath.Join(bin, "prompts")); !strings.Contains(p, "Run only the tests for the code that changed since then, not the whole suite, with the checks the repo's own test command uses, such as the race detector.") {
+		t.Errorf("the re-review should test only what changed:\n%s", p)
 	}
 }
 
