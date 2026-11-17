@@ -21,6 +21,7 @@ prowl has two panes: the inbox on the left and the PR pane on the right. Under 1
 | `zz`/`zt`/`zb` | put the cursor line in the middle, top or bottom |
 | `/`, `n`/`N` | search, next and previous (`N` searches backwards); `:noh` clears the highlight |
 | `:42` | go to line 42 |
+| `:help`, `:h` | open these docs; `:help stale_after` opens them at a key, option or heading, and `tab` completes it |
 | `ctrl+p`, `<leader><leader>`, `<leader>ff` | fuzzy-find a PR, or paste a link to one |
 | `o` | open the PR on GitHub |
 | `R`, `<leader>r` | refresh now |
