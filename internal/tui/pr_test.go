@@ -480,3 +480,45 @@ func TestAskForReviewsPicker(t *testing.T) {
 		t.Fatal("no review request sent")
 	}
 }
+
+// A filter that leaves fewer rows than the picker had scrolled past keeps
+// it drawing, with the cursor on a row that's left.
+func TestReviewerPickerScrollThenFilter(t *testing.T) {
+	var people []string
+	for i := range 32 {
+		people = append(people, fmt.Sprintf("kay%02d", i))
+	}
+	for i := range 8 {
+		people = append(people, fmt.Sprintf("wes%02d", i))
+	}
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Assignable: people})
+	a.keys("space", "A")
+	a.want("kay00")
+	for range 39 {
+		a.keys("down")
+	}
+	a.want("wes07")
+	a.keys("k")
+	a.want("kay31")
+	a.wantNot("wes07")
+}
+
+// Enter with nobody checked asks the row under the cursor; a typed name that
+// matches nobody is asked along with whoever is checked; a click checks a row.
+func TestReviewerPickerEnterAndClick(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Assignable: []string{"bob", "carol"}})
+	a.keys("space", "A", "bob", "enter")
+	a.want("asked bob to review")
+
+	p := needsReview("api", 7, "fix: crash")
+	p.Reviews.Nodes = []gh.Review{{Author: &gh.Actor{Login: "dave"}, State: "APPROVED", SubmittedAt: time.Now()}}
+	b := newApp(t, &fakeGitHub{PRs: []gh.PR{p}, Assignable: []string{"bob", "dave"}})
+	b.keys("space", "A", "newcomer", "enter")
+	b.want("asked dave, newcomer to review")
+
+	c := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Assignable: []string{"bob", "carol"}})
+	c.keys("space", "A")
+	c.clickFirst("Carol Example")
+	c.want("[x] carol")
+	c.wantNot("[x] bob")
+}

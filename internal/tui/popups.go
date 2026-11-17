@@ -1007,7 +1007,8 @@ func (p *reviewerPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// ask requests everyone checked, or the name typed when it matches nobody.
+// ask requests everyone checked, and the name typed when it matches nobody.
+// With nobody checked, it asks the row under the cursor.
 func (p *reviewerPicker) ask(m *Model) tea.Cmd {
 	var names []string
 	for _, r := range p.all {
@@ -1015,8 +1016,11 @@ func (p *reviewerPicker) ask(m *Model) tea.Cmd {
 			names = append(names, r.login)
 		}
 	}
-	if typed := strings.TrimSpace(p.input.Value()); len(names) == 0 && len(p.results) == 0 && typed != "" {
-		names = strings.Split(typed, ",")
+	switch typed := strings.TrimSpace(p.input.Value()); {
+	case len(p.results) == 0 && typed != "":
+		names = append(names, strings.Split(typed, ",")...)
+	case len(names) == 0 && p.cur < len(p.results):
+		names = []string{p.all[p.results[p.cur]].login}
 	}
 	m.popup = nil
 	if len(names) == 0 {
@@ -1027,6 +1031,24 @@ func (p *reviewerPicker) ask(m *Model) tea.Cmd {
 	return func() tea.Msg {
 		return threadDoneMsg{key, "asked " + who + " to review", co.RequestReviews(key, names)}
 	}
+}
+
+// height is how many rows the picker shows at once.
+func (p *reviewerPicker) height(m *Model) int { return max(m.h-14, 6) }
+
+// click checks or unchecks the row clicked; rows start below the title, a
+// blank line, the filter and a rule.
+func (p *reviewerPicker) click(_ *Model, _, y int) tea.Cmd {
+	if i := p.top + y - 5; y >= 5 && i < len(p.results) {
+		p.cur = i
+		r := &p.all[p.results[i]]
+		r.on = !r.on
+	}
+	return nil
+}
+
+func (p *reviewerPicker) wheel(_ *Model, d int) {
+	p.cur = min(max(p.cur+d, 0), max(len(p.results)-1, 0))
 }
 
 func (p *reviewerPicker) view(m *Model) string {
@@ -1053,13 +1075,15 @@ func (p *reviewerPicker) view(m *Model) string {
 	} else {
 		lines[p.cur] = highlight(lines[p.cur], w-4, sTitle)
 	}
-	at := p.cur
-	if len(lines) > max(m.h-14, 6) {
-		p.top = min(p.top, at)
-		p.top = max(p.top, at-max(m.h-14, 6)+1)
-		lines = lines[p.top : p.top+max(m.h-14, 6)]
+	if height := p.height(m); len(lines) > height {
+		p.top = min(p.top, p.cur)
+		p.top = max(p.top, p.cur-height+1)
+		p.top = min(p.top, len(lines)-height)
+		lines = lines[p.top : p.top+height]
+	} else {
+		p.top = 0
 	}
-	help := sDim.Render(" type to filter · ↑↓ move · space check · enter ask · esc cancel")
+	help := sDim.Render(" type to filter · ↑↓ move · space or click check · enter ask · esc cancel")
 	return popBox("Ask for reviews on "+prName(p.item.PR), p.input.View()+"\n"+sBorder.Render(strings.Repeat("─", w-4))+"\n"+
 		strings.Join(lines, "\n")+"\n\n"+help, w, pal.Accent)
 }
