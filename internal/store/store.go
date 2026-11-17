@@ -859,6 +859,7 @@ func (s *Store) Watcher() int {
 type SlackShare struct {
 	Channel, TS, PRKey, PRID, ChannelName, ThreadTS, User, UserName string
 	At                                                              time.Time
+	MyReaction                                                      string // the emoji prowl last set on it
 }
 
 // SaveSlackShares keeps shares, updating the ones already kept but not the
@@ -879,7 +880,7 @@ ON CONFLICT(channel, ts, pr_key) DO UPDATE SET pr_id=excluded.pr_id, channel_nam
 
 // SlackShares are every kept share, newest first.
 func (s *Store) SlackShares() ([]SlackShare, error) {
-	rows, err := s.db.Query(`SELECT channel, ts, pr_key, pr_id, channel_name, thread_ts, user, user_name, at
+	rows, err := s.db.Query(`SELECT channel, ts, pr_key, pr_id, channel_name, thread_ts, user, user_name, at, my_reaction
 FROM slack_shares ORDER BY at DESC, ts DESC`)
 	if err != nil {
 		return nil, wrap("slack shares", err)
@@ -889,13 +890,20 @@ FROM slack_shares ORDER BY at DESC, ts DESC`)
 	for rows.Next() {
 		var sh SlackShare
 		var at int64
-		if err := rows.Scan(&sh.Channel, &sh.TS, &sh.PRKey, &sh.PRID, &sh.ChannelName, &sh.ThreadTS, &sh.User, &sh.UserName, &at); err != nil {
+		if err := rows.Scan(&sh.Channel, &sh.TS, &sh.PRKey, &sh.PRID, &sh.ChannelName, &sh.ThreadTS, &sh.User, &sh.UserName, &at, &sh.MyReaction); err != nil {
 			return nil, wrap("slack shares", err)
 		}
 		sh.At = time.Unix(at, 0)
 		out = append(out, sh)
 	}
 	return out, wrap("slack shares", rows.Err())
+}
+
+// SetSlackReaction records the emoji prowl set on a share, "" for none.
+func (s *Store) SetSlackReaction(sh SlackShare, emoji string) error {
+	_, err := s.db.Exec(`UPDATE slack_shares SET my_reaction = ? WHERE channel = ? AND ts = ? AND pr_key = ?`,
+		emoji, sh.Channel, sh.TS, sh.PRKey)
+	return wrap("set slack reaction", err)
 }
 
 // DeleteSlackShares forgets the shares of a PR, once it closes.

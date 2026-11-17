@@ -75,8 +75,21 @@ type Config struct {
 	SlackChannels []string `toml:"slack_channels"`
 	// PR links sent to you in Slack DMs show in the inbox.
 	SlackDMs bool `toml:"slack_dms"`
+	// What prowl does on the Slack message that shared a PR once you review
+	// it: "react", "reply" in its thread, or "off".
+	SlackAfterReview string `toml:"slack_after_review"`
+	// The emoji prowl reacts with, by Slack name.
+	SlackReactions SlackReactions `toml:"slack_reactions"`
 	// GitHub login -> name used in Slack lines (e.g. "@alice").
 	SlackNames map[string]string `toml:"slack_names"`
+}
+
+// SlackReactions are the emoji for where your review of a shared PR stands.
+type SlackReactions struct {
+	Reviewing        string `toml:"reviewing"`
+	Approved         string `toml:"approved"`
+	ChangesRequested string `toml:"changes_requested"`
+	Commented        string `toml:"commented"`
 }
 
 // Agent configures the coding agents that review PRs and write summaries.
@@ -254,6 +267,8 @@ func Default() Config {
 	return Config{
 		PollInterval:     Duration{3 * time.Minute},
 		SlackDMs:         true,
+		SlackAfterReview: "react",
+		SlackReactions:   SlackReactions{Reviewing: "eyes", Approved: "white_check_mark", ChangesRequested: "x", Commented: "speech_balloon"},
 		StaleAfter:       Duration{24 * time.Hour},
 		NotifyTimeout:    Duration{8 * time.Second},
 		CheckUpdates:     true,
@@ -373,6 +388,9 @@ func Load() (Config, error) {
 	cfg.Agent.ReviewInstructions = strings.Trim(cfg.Agent.ReviewInstructions, "\n")
 	if !slices.Contains(Leaders, cfg.Leader) {
 		return cfg, fmt.Errorf(`leader = %q: use "space", ",", "\\" or ";"`, cfg.Leader)
+	}
+	if !slices.Contains([]string{"react", "reply", "off"}, cfg.SlackAfterReview) {
+		return cfg, fmt.Errorf(`slack_after_review = %q: use "react", "reply" or "off"`, cfg.SlackAfterReview)
 	}
 	if len(cfg.Agent.Reviewers) == 0 {
 		cfg.Agent.Reviewers = []string{"claude"}
@@ -499,6 +517,7 @@ func (c Config) Save() error {
 	str("# Client ID of your team's prowl Slack app; `prowl slack` signs you in to\n# it. Not a secret. Empty: `prowl slack` shows how to make the app.\n", "slack_client_id", c.SlackClientID, d.SlackClientID)
 	strs("# Slack channel IDs whose PR links show in the inbox, as shared, until you\n# review them. Only channels you're in.\n", "slack_channels", c.SlackChannels, d.SlackChannels)
 	boolean("# PR links sent to you in Slack DMs and group DMs show in the inbox too.\n", "slack_dms", c.SlackDMs, d.SlackDMs)
+	str("# Once you review a PR someone shared in Slack: react (keep an emoji on their\n# message in step with your review, wherever you reviewed; see [slack_reactions]),\n# reply (post the Slack line in its thread when you submit from prowl), or off.\n", "slack_after_review", c.SlackAfterReview, d.SlackAfterReview)
 
 	w("# Agent ----------------------------------------------------------------\n\n")
 	w("[agent]\n")
@@ -542,7 +561,14 @@ func (c Config) Save() error {
 	w("\n# Color per Conventional Commit type, added to or replacing the built-in\n# ones: red, green, orange, pink, yellow, purple, cyan, dim or \"#rrggbb\".\n[type_colors]\n")
 	mapLines(&b, c.TypeColors, "# wip = \"orange\"\n")
 
-	w("\n# GitHub login -> how to refer to them in copied Slack lines.\n[slack_names]\n")
+	w("\n# The emoji prowl reacts with on a shared PR's message, by Slack name, without\n# colons. prowl only removes the ones it added.\n[slack_reactions]\n")
+	r, dr := c.SlackReactions, d.SlackReactions
+	str("", "reviewing", r.Reviewing, dr.Reviewing)
+	str("", "approved", r.Approved, dr.Approved)
+	str("", "changes_requested", r.ChangesRequested, dr.ChangesRequested)
+	str("", "commented", r.Commented, dr.Commented)
+
+	w("# GitHub login -> how to refer to them in copied Slack lines.\n[slack_names]\n")
 	mapLines(&b, c.SlackNames, "# octocat = \"@Mona\"\n")
 
 	tmp := Path() + ".tmp"

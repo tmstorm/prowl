@@ -17,6 +17,7 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/ghtest"
+	"github.com/tmstorm/prowl/internal/slack"
 	"github.com/tmstorm/prowl/internal/store"
 	"github.com/tmstorm/prowl/internal/tui"
 )
@@ -46,6 +47,12 @@ type app struct {
 
 func newApp(t *testing.T, fake *fakeGitHub, configure ...func(*config.Config)) *app {
 	t.Helper()
+	return newSlackApp(t, fake, nil, configure...)
+}
+
+// newSlackApp is newApp signed in to Slack through sl.
+func newSlackApp(t *testing.T, fake *fakeGitHub, sl *slack.Client, configure ...func(*config.Config)) *app {
+	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	bin := t.TempDir() // no real gh, claude or codex: only the fakes
@@ -72,7 +79,7 @@ func newApp(t *testing.T, fake *fakeGitHub, configure ...func(*config.Config)) *
 		f(&cfg)
 	}
 	a := &app{t: t, gh: fake, st: st, cfg: cfg, w: 160, h: 44, late: make(chan tea.Msg, 1024)}
-	a.m = tui.New(start(t, cfg, c, st))
+	a.m = tui.New(start(t, cfg, c, st, sl))
 	a.send(tea.WindowSizeMsg{Width: a.w, Height: a.h})
 	a.queue = append(a.queue, a.m.Init())
 	a.settle()
@@ -80,8 +87,11 @@ func newApp(t *testing.T, fake *fakeGitHub, configure ...func(*config.Config)) *
 }
 
 // start runs a core for one TUI until the test ends.
-func start(t *testing.T, cfg config.Config, c *gh.Client, st *store.Store) *core.Core {
+func start(t *testing.T, cfg config.Config, c *gh.Client, st *store.Store, sl *slack.Client) *core.Core {
 	co := core.New(cfg, c, st)
+	if sl != nil {
+		co.UseSlack(sl)
+	}
 	ctx, stop := context.WithCancel(context.Background())
 	t.Cleanup(stop)
 	go co.Run(ctx)
@@ -288,7 +298,7 @@ func reopen(a *app) *app {
 		a.t.Fatal(err)
 	}
 	b := &app{t: a.t, gh: a.gh, st: a.st, cfg: a.cfg, w: a.w, h: a.h, late: make(chan tea.Msg, 1024)}
-	b.m = tui.New(start(a.t, a.cfg, c, a.st))
+	b.m = tui.New(start(a.t, a.cfg, c, a.st, nil))
 	b.send(tea.WindowSizeMsg{Width: b.w, Height: b.h})
 	b.queue = append(b.queue, b.m.Init())
 	b.settle()

@@ -33,19 +33,20 @@ type Core struct {
 
 	syncing sync.Mutex // one sync at a time
 
-	mu       sync.Mutex
-	cfg      config.Config
-	cfgMod   time.Time // the config file's mtime when last read or written
-	quiet    bool      // this process never notifies (prowl list)
-	accounts []Account
-	inbox    Inbox
-	peek     map[string]bool  // repos (owner/name) whose open PRs are fetched this session
-	opened   map[string]prRef // PRs opened by link this session, kept through syncs
-	runs     map[string][]*store.Run
-	pending  map[string][]gh.DraftComment // your inline comments, by PR, until the next review
-	drafted  map[string]store.Review      // agent drafts on their way out, as prowl wrote them
-	unsent   map[string]Draft             // reviews that failed to post, by PR, until reopened
-	shared   map[string]gh.Share          // PRs shared in Slack, as of the last sync
+	mu          sync.Mutex
+	cfg         config.Config
+	cfgMod      time.Time // the config file's mtime when last read or written
+	quiet       bool      // this process never notifies (prowl list)
+	accounts    []Account
+	inbox       Inbox
+	peek        map[string]bool  // repos (owner/name) whose open PRs are fetched this session
+	opened      map[string]prRef // PRs opened by link this session, kept through syncs
+	runs        map[string][]*store.Run
+	pending     map[string][]gh.DraftComment // your inline comments, by PR, until the next review
+	drafted     map[string]store.Review      // agent drafts on their way out, as prowl wrote them
+	unsent      map[string]Draft             // reviews that failed to post, by PR, until reopened
+	shared      map[string]gh.Share          // PRs shared in Slack, as of the last sync
+	slackShares map[string]store.SlackShare  // each shared PR's newest share by someone else
 
 	slack    *slack.Client // nil when you aren't signed in to Slack
 	slackErr error         // why the last sync couldn't read Slack
@@ -200,7 +201,10 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	if sl != nil {
 		kept, _ = co.st.SlackShares()
 	}
-	_, keep := shared(cfg, co.slackMe, kept)
+	var keep []string
+	for _, s := range newestShares(cfg, co.slackMe, kept) {
+		keep = append(keep, s.PRID)
+	}
 	byLink := make([]*gh.PR, len(opened))
 	var fetching sync.WaitGroup
 	for i, o := range opened {
@@ -216,8 +220,9 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	if err != nil {
 		return nil, fmt.Errorf("refresh: %w", err)
 	}
+	var shares map[string]store.SlackShare
 	if sl != nil {
-		co.withShares(in, cfg, newlyShared)
+		shares = co.withShares(in, cfg, newlyShared)
 	}
 	if data, err := json.Marshal(in); err == nil {
 		_ = co.st.SaveInbox(data, time.Now())
@@ -248,9 +253,15 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	co.pruneLocals()
 	co.foldLocals(items, in.Viewer)
 	co.mu.Lock()
-	co.shared, co.slackErr = in.Shared, slackErr
+	co.shared, co.slackShares = in.Shared, shares
 	co.inbox = Inbox{Items: co.withOpened(items, extra, in.Viewer), Snoozed: snoozed, Viewer: in.Viewer, Teams: in.Teams, At: time.Now()}
 	co.inbox.Items = co.withLocals(co.inbox.Items)
+	co.mu.Unlock()
+	if sl != nil && slackErr == nil {
+		slackErr = co.reconcileReactions(sl)
+	}
+	co.mu.Lock()
+	co.slackErr = slackErr
 	co.mu.Unlock()
 	return slices.DeleteFunc(changes, func(it inbox.Item) bool { _, ok := snoozed[it.PR.Key()]; return ok }), nil
 }

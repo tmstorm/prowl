@@ -197,6 +197,33 @@ func (c *Client) Login(ctx context.Context, clientID string, open func(string) e
 	return out.AuthedUser.AccessToken, nil
 }
 
+// React adds your emoji to a message. One already there is fine.
+func (c *Client) React(ctx context.Context, channel, ts, emoji string) error {
+	err := c.call(ctx, "reactions.add", url.Values{"channel": {channel}, "timestamp": {ts}, "name": {emoji}}, nil)
+	if se, ok := errors.AsType[*Error](err); ok && se.Code == "already_reacted" {
+		return nil
+	}
+	return err
+}
+
+// Unreact removes your emoji from a message. One already gone is fine.
+func (c *Client) Unreact(ctx context.Context, channel, ts, emoji string) error {
+	err := c.call(ctx, "reactions.remove", url.Values{"channel": {channel}, "timestamp": {ts}, "name": {emoji}}, nil)
+	if se, ok := errors.AsType[*Error](err); ok && se.Code == "no_reaction" {
+		return nil
+	}
+	return err
+}
+
+// Post sends text to a channel as you, in the thread threadTS when set.
+func (c *Client) Post(ctx context.Context, channel, threadTS, text string) error {
+	v := url.Values{"channel": {channel}, "text": {text}, "unfurl_links": {"false"}}
+	if threadTS != "" {
+		v.Set("thread_ts", threadTS)
+	}
+	return c.call(ctx, "chat.postMessage", v, nil)
+}
+
 // Share is one PR link in a Slack message.
 type Share struct {
 	Repo     string // owner/name

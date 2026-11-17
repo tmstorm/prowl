@@ -26,6 +26,8 @@ func TestDefaultsAndRoundTrip(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	d.SlackNames = map[string]string{"alice": "@Alice"}
 	d.SlackClientID = "123.456"
+	d.SlackReactions.Approved = "shipit"
+	d.SlackAfterReview = "reply"
 	d.Agent.ReviewInstructions = "line one\nline two"
 	d.Agent.Nits = false
 	d.Agent.RunImages = map[string]string{"*": "golang:1.27", "acme/web": "node:22"}
@@ -38,6 +40,7 @@ func TestDefaultsAndRoundTrip(t *testing.T) {
 		t.Fatalf("saved config does not parse: %v\n%s", err, b)
 	}
 	if got.GroupBy != d.GroupBy || got.ShowLegend != d.ShowLegend || got.SlackNames["alice"] != "@Alice" || got.SlackClientID != "123.456" ||
+		got.SlackReactions.Approved != "shipit" || got.SlackReactions.Reviewing != "eyes" || got.SlackAfterReview != "reply" ||
 		got.Agent.ReviewInstructions != d.Agent.ReviewInstructions || got.NotifyTimeout != d.NotifyTimeout || len(got.Bots) != len(d.Bots) ||
 		got.Agent.Model("codex") != "gpt-x" || got.Agent.Nits || !got.Agent.ShouldFix || got.TypeColors["wip"] != "orange" || len(got.Agent.Skills) != 1 ||
 		got.Agent.RunImage("acme/web") != "node:22" || got.Agent.RunImage("acme/api") != "golang:1.27" {

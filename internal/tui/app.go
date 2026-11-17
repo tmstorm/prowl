@@ -219,7 +219,8 @@ type errMsg struct{ err error }
 type infoMsg string
 type submittedMsg struct {
 	key, event string
-	posted     bool // your review went out, even if err says a reply didn't
+	posted     bool   // your review went out, even if err says a reply didn't
+	slack      string // what prowl did on the PR's Slack share, if anything
 	err        error
 }
 
@@ -682,6 +683,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case submittedMsg:
 		return m, m.submitted(msg)
+
+	case slackPostedMsg:
+		if msg.err != nil {
+			m.fail(msg.err.Error())
+		} else {
+			m.info("posted in the " + msg.where + " thread")
+		}
+		return m, nil
 
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress {
@@ -1307,7 +1316,7 @@ var leaderKeys = []leaderKey{
 	{cat: "Inbox", key: "z", desc: "show snoozed"},
 	{cat: "Inbox", key: "w", desc: "watch / unwatch repo"},
 	{cat: "Inbox", key: "r", desc: "refresh"},
-	{cat: "Share", key: "y", desc: "copy slack line"},
+	{cat: "Share", key: "y", desc: "post / copy slack line"},
 	{cat: "Share", key: "o", desc: "open in browser"},
 	{cat: "prowl", key: ",", desc: "options"},
 	{cat: "prowl", key: "U", desc: "update prowl"},
@@ -1395,7 +1404,7 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 	case "y":
 		if onGitHub() {
-			return m.copySlack(*it)
+			return m.postSlack(*it)
 		}
 	case "o":
 		if onGitHub() {
@@ -1717,6 +1726,30 @@ func (m *Model) copySlack(it inbox.Item) tea.Cmd {
 	return nil
 }
 
+// postSlack posts the Slack line in the thread of the message that shared
+// the PR, once you confirm, or copies it when no message did.
+func (m *Model) postSlack(it inbox.Item) tea.Cmd {
+	where := m.core.SharedIn(it.PR.Key())
+	if where == "" {
+		return m.copySlack(it)
+	}
+	line := slack.Line(it, m.cfg.SlackNames)
+	co, key := m.core, it.PR.Key()
+	m.mode = modeConfirm
+	m.confirm = &confirm{prompt: "post in the " + where + " thread: " + ansi.Strip(line) + " [y/N]", yes: func() tea.Cmd {
+		return func() tea.Msg {
+			where, err := co.PostInThread(key, line)
+			return slackPostedMsg{where: where, err: err}
+		}
+	}}
+	return nil
+}
+
+type slackPostedMsg struct {
+	where string
+	err   error
+}
+
 func (m *Model) askApprove(it inbox.Item) tea.Cmd {
 	d := m.core.Draft(it.PR.Key(), "APPROVE")
 	prompt := "approve " + prName(it.PR)
@@ -1733,12 +1766,13 @@ func (m *Model) submit(it inbox.Item, d core.Draft) tea.Cmd {
 	m.info("submitting " + strings.ToLower(strings.ReplaceAll(d.Event, "_", " ")) + "…")
 	return func() tea.Msg {
 		sent, err := co.Submit(key, d)
-		return submittedMsg{key: key, event: d.Event, posted: sent.Review, err: err}
+		return submittedMsg{key: key, event: d.Event, posted: sent.Review, slack: sent.Slack, err: err}
 	}
 }
 
 // submitted shows a posted review: the PR in its new section, the findings
-// that went out, and a Slack line on the clipboard.
+// that went out, and what prowl did on the PR's Slack share, or else a Slack
+// line on the clipboard.
 func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 	if dt := m.details[msg.key]; dt != nil {
 		dt.pending = m.core.Pending(msg.key)
@@ -1758,8 +1792,11 @@ func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 	m.applyPR(prRefreshedMsg{key: msg.key})
 	note := map[string]string{"APPROVE": "approved", "REQUEST_CHANGES": "requested changes", "COMMENT": "commented",
 		"CLOSE": "closed", "DRAFT": "made it a draft", "NOTE": "commented in the conversation"}[msg.event]
+	if msg.slack != "" {
+		note += " · " + msg.slack
+	}
 	for _, it := range m.items {
-		if msg.event == "CLOSE" || msg.event == "DRAFT" || msg.event == "NOTE" {
+		if msg.slack != "" || msg.event == "CLOSE" || msg.event == "DRAFT" || msg.event == "NOTE" {
 			break
 		}
 		if it.PR.Key() != msg.key {

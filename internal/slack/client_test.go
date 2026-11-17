@@ -120,3 +120,37 @@ func TestShares(t *testing.T) {
 		t.Errorf("shares:\n got %q\nwant %q", got, want)
 	}
 }
+
+// Adding an emoji already there, or removing one already gone, isn't an
+// error; a post in a thread names it and doesn't unfurl.
+func TestReactAndPost(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		got = append(got, r.URL.Path+" "+r.Form.Get("channel")+" "+r.Form.Get("timestamp")+r.Form.Get("thread_ts")+" "+r.Form.Get("name")+r.Form.Get("unfurl_links"))
+		switch r.URL.Path {
+		case "/reactions.add":
+			fmt.Fprint(w, `{"ok":false,"error":"already_reacted"}`)
+		case "/reactions.remove":
+			fmt.Fprint(w, `{"ok":false,"error":"no_reaction"}`)
+		default:
+			fmt.Fprint(w, `{"ok":true}`)
+		}
+	}))
+	defer srv.Close()
+	c := slack.NewWith("xoxp-1", srv.URL+"/")
+	ctx := context.Background()
+	if err := c.React(ctx, "C1", "1.0", "eyes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Unreact(ctx, "C1", "1.0", "eyes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Post(ctx, "C1", "0.5", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/reactions.add C1 1.0 eyes", "/reactions.remove C1 1.0 eyes", "/chat.postMessage C1 0.5 false"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("calls:\n got %q\nwant %q", got, want)
+	}
+}

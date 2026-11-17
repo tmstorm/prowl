@@ -67,7 +67,7 @@ func TestDataDirIsPrivate(t *testing.T) {
 }
 
 // Shares are kept once per message and PR, newest first, until the PR closes,
-// and the last search survives a restart.
+// a save keeps the reaction prowl set, and the last search survives a restart.
 func TestSlackShares(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(dir)
@@ -84,6 +84,11 @@ func TestSlackShares(t *testing.T) {
 	got, err := st.SlackShares()
 	if err != nil || len(got) != 3 || got[0].TS != "2.0" || got[1].PRKey != "o/r#2" || got[2] != old {
 		t.Fatalf("shares = %+v, %v", got, err)
+	}
+	_ = st.SetSlackReaction(got[0], "eyes")
+	_ = st.SaveSlackShares([]store.SlackShare{newer})
+	if got, _ := st.SlackShares(); got[0].MyReaction != "eyes" || got[1].MyReaction != "" {
+		t.Fatalf("reaction not kept through a save: %+v", got)
 	}
 	_ = st.DeleteSlackShares("o/r#1")
 	if got, _ := st.SlackShares(); len(got) != 1 || got[0].PRKey != "o/r#2" {

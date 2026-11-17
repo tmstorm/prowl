@@ -3,6 +3,9 @@ package core
 import (
 	"cmp"
 	"context"
+	"errors"
+	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -10,6 +13,7 @@ import (
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/slack"
 	"github.com/tmstorm/prowl/internal/store"
 )
@@ -113,21 +117,19 @@ func watchedShare(cfg config.Config, channel string, dm bool) bool {
 	return slices.Contains(cfg.SlackChannels, channel)
 }
 
-// shared is each PR's newest share by someone else, in a channel or DM that
-// counts, and the node IDs of those PRs. shares is newest first.
-func shared(cfg config.Config, me string, shares []store.SlackShare) (map[string]gh.Share, []string) {
-	out := map[string]gh.Share{}
-	var ids []string
+// newestShares is each PR's newest share by someone else, in a channel or DM
+// that counts. shares is newest first.
+func newestShares(cfg config.Config, me string, shares []store.SlackShare) map[string]store.SlackShare {
+	out := map[string]store.SlackShare{}
 	for _, s := range shares {
 		if s.User == me || s.PRID == "" || !watchedShare(cfg, s.Channel, s.ChannelName == "") {
 			continue
 		}
 		if _, ok := out[s.PRKey]; !ok {
-			out[s.PRKey] = gh.Share{Channel: s.ChannelName, From: s.UserName, At: s.At}
-			ids = append(ids, s.PRID)
+			out[s.PRKey] = s
 		}
 	}
-	return out, ids
+	return out
 }
 
 // pruneShares forgets the shares of PRs that are closed. A share outside
@@ -154,8 +156,9 @@ func (co *Core) pruneShares(open map[string]string) {
 }
 
 // withShares adds the PRs first shared this sync to in, and which PRs are
-// shared. The shares are read again, so the ones saved this sync count.
-func (co *Core) withShares(in *gh.Inbox, cfg config.Config, newlyShared []gh.PR) {
+// shared, and returns each PR's newest share. The shares are read again, so
+// the ones saved this sync count.
+func (co *Core) withShares(in *gh.Inbox, cfg config.Config, newlyShared []gh.PR) map[string]store.SlackShare {
 	have := map[string]bool{}
 	for _, pr := range in.PRs {
 		have[pr.ID] = true
@@ -165,6 +168,176 @@ func (co *Core) withShares(in *gh.Inbox, cfg config.Config, newlyShared []gh.PR)
 			in.PRs = append(in.PRs, pr)
 		}
 	}
-	shares, _ := co.st.SlackShares()
-	in.Shared, _ = shared(cfg, co.slackMe, shares)
+	all, _ := co.st.SlackShares()
+	shares := newestShares(cfg, co.slackMe, all)
+	in.Shared = map[string]gh.Share{}
+	for key, s := range shares {
+		in.Shared[key] = gh.Share{Channel: s.ChannelName, From: s.UserName, At: s.At}
+	}
+	return shares
+}
+
+// reconcileReactions keeps your emoji on each shared PR's newest share in
+// step with your review, wherever you made it. Only a share whose emoji
+// should change costs Slack calls.
+func (co *Core) reconcileReactions(sl *slack.Client) error {
+	co.mu.Lock()
+	cfg, shares, viewer := co.cfg, maps.Clone(co.slackShares), co.inbox.Viewer
+	items := slices.Clone(co.inbox.Items)
+	co.mu.Unlock()
+	if cfg.SlackAfterReview != "react" {
+		return nil
+	}
+	var errs []error
+	for _, it := range items {
+		s, ok := shares[it.PR.Key()]
+		if !ok || it.PR.AuthorLogin() == viewer {
+			continue
+		}
+		if want := co.reaction(cfg, it, viewer, s.At); want != s.MyReaction {
+			errs = append(errs, co.setReaction(sl, s, want))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// reaction is the emoji for where your review of a PR stands since it was
+// shared at since: your latest review after it, else reviewing while prowl
+// holds an agent review or your inline comments for it, else none. A comment
+// review counts when it has a body or starts a thread; replying in someone
+// else's thread doesn't.
+func (co *Core) reaction(cfg config.Config, it inbox.Item, me string, since time.Time) string {
+	var last *gh.Review
+	for i, r := range it.PR.Reviews.Nodes {
+		if r.Author == nil || r.Author.Login != me || !r.SubmittedAt.After(since) || last != nil && !r.SubmittedAt.After(last.SubmittedAt) {
+			continue
+		}
+		if r.State == "APPROVED" || r.State == "CHANGES_REQUESTED" || r.State == "COMMENTED" && commented(it.PR, r, me) {
+			last = &it.PR.Reviews.Nodes[i]
+		}
+	}
+	emoji := cfg.SlackReactions
+	if last != nil {
+		return map[string]string{"APPROVED": emoji.Approved, "CHANGES_REQUESTED": emoji.ChangesRequested, "COMMENTED": emoji.Commented}[last.State]
+	}
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	key := it.PR.Key()
+	if len(co.pending[key]) > 0 || slices.ContainsFunc(co.runs[key], func(r *store.Run) bool {
+		return r.StartedAt.After(since) && (r.Status == "running" || r.Status == "done")
+	}) {
+		return emoji.Reviewing
+	}
+	return ""
+}
+
+// commented reports whether a comment review r says something: a body, or a
+// thread you started around when it was submitted.
+func commented(pr gh.PR, r gh.Review, me string) bool {
+	if strings.TrimSpace(r.Body) != "" {
+		return true
+	}
+	for _, t := range pr.ReviewThreads.Nodes {
+		if !t.OpenedBy(me) {
+			continue
+		}
+		for _, c := range t.Comments.Nodes {
+			if c.Author != nil && c.Author.Login == me && c.CreatedAt.Sub(r.SubmittedAt).Abs() < time.Minute {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// setReaction swaps the emoji prowl set on a share for want ("" for none).
+func (co *Core) setReaction(sl *slack.Client, s store.SlackShare, want string) error {
+	ctx := context.Background()
+	if s.MyReaction != "" {
+		if err := sl.Unreact(ctx, s.Channel, s.TS, s.MyReaction); err != nil {
+			return err
+		}
+	}
+	if want != "" {
+		if err := sl.React(ctx, s.Channel, s.TS, want); err != nil {
+			want = ""
+			_ = co.st.SetSlackReaction(s, want)
+			return err
+		}
+	}
+	if err := co.st.SetSlackReaction(s, want); err != nil {
+		return err
+	}
+	co.mu.Lock()
+	if cur, ok := co.slackShares[s.PRKey]; ok && cur.Channel == s.Channel && cur.TS == s.TS {
+		cur.MyReaction = want
+		co.slackShares[s.PRKey] = cur
+	}
+	co.mu.Unlock()
+	return nil
+}
+
+// afterReview tells the newest Slack share of the PR about the review you
+// just posted, as slack_after_review says, and says what it did: "" when
+// the PR has no share or Slack isn't connected.
+func (co *Core) afterReview(key, event string) (string, error) {
+	co.mu.Lock()
+	sl, cfg := co.slack, co.cfg
+	s, shared := co.slackShares[key]
+	it, _ := co.item(key)
+	co.mu.Unlock()
+	state := map[string]string{"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED"}[event]
+	if sl == nil || !shared || state == "" {
+		return "", nil
+	}
+	where := place(s)
+	switch cfg.SlackAfterReview {
+	case "react":
+		emoji := map[string]string{"APPROVED": cfg.SlackReactions.Approved, "CHANGES_REQUESTED": cfg.SlackReactions.ChangesRequested,
+			"COMMENTED": cfg.SlackReactions.Commented}[state]
+		note := "reacted :" + emoji + ": in " + where
+		if emoji == s.MyReaction {
+			return note, nil
+		}
+		return note, co.setReaction(sl, s, emoji)
+	case "reply":
+		it.MyLastReview = &gh.Review{State: state}
+		return "replied in " + where, sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), slack.Line(it, cfg.SlackNames))
+	}
+	return "", nil
+}
+
+// SharedIn is where the PR's newest Slack share is, e.g. "#reviews" or
+// "DM", or "" when it has none or Slack isn't connected.
+func (co *Core) SharedIn(key string) string {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	s, ok := co.slackShares[key]
+	if co.slack == nil || !ok {
+		return ""
+	}
+	return place(s)
+}
+
+func place(s store.SlackShare) string {
+	if s.ChannelName == "" {
+		return "DM"
+	}
+	return "#" + s.ChannelName
+}
+
+// PostInThread posts text in the thread of the PR's newest Slack share and
+// says where.
+func (co *Core) PostInThread(key, text string) (string, error) {
+	co.mu.Lock()
+	sl := co.slack
+	s, ok := co.slackShares[key]
+	co.mu.Unlock()
+	if sl == nil || !ok {
+		return "", fmt.Errorf("%s has no Slack share to post in", key)
+	}
+	if err := sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), text); err != nil {
+		return "", fmt.Errorf("post in %s: %w", place(s), err)
+	}
+	return place(s), nil
 }
