@@ -383,3 +383,28 @@ func TestSlackAccount(t *testing.T) {
 		t.Fatalf("login: %v %+v", err, login)
 	}
 }
+
+// A sync that finds the token refused marks Slack logged out instead of
+// failing, as a check would. Slack actions are then refused until a check
+// finds you logged in again.
+func TestSlackLoggedOutInSync(t *testing.T) {
+	co, _ := newCore(t, &ghtest.GitHub{})
+	sl := &fakeSlack{authErr: "token_revoked"}
+	co.UseSlack(sl.client(t))
+	if _, err := co.Refresh(); err != nil || co.SlackErr() != nil {
+		t.Fatalf("sync: %v, Slack: %v", err, co.SlackErr())
+	}
+	if err := co.DMAuthor(inbox.Item{}); err == nil || err.Error() != "Slack isn't logged in" {
+		t.Fatalf("DM while logged out: %v", err)
+	}
+	if _, _, err := co.SlackActivity(); err == nil || err.Error() != "Slack isn't logged in" {
+		t.Fatalf("channels while logged out: %v", err)
+	}
+	sl.mu.Lock()
+	sl.authErr = ""
+	sl.mu.Unlock()
+	co.CheckAuth()
+	if _, _, err := co.SlackActivity(); err != nil {
+		t.Fatalf("channels after logging in: %v", err)
+	}
+}

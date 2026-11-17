@@ -63,7 +63,7 @@ func (co *Core) CheckAuth() {
 }
 
 // checkSlack asks Slack whose token prowl has. No token, or Slack refusing
-// it, means you're signed out; failing to reach Slack says nothing.
+// it, means you're logged out; failing to reach Slack says nothing.
 func (co *Core) checkSlack() agent.Auth {
 	co.mu.Lock()
 	sl := co.slack
@@ -72,7 +72,7 @@ func (co *Core) checkSlack() agent.Auth {
 		return agent.Auth{Known: true}
 	}
 	id, err := sl.AuthTest(context.Background())
-	if _, ok := errors.AsType[*slack.Error](err); ok {
+	if slack.LoggedOut(err) {
 		return agent.Auth{Known: true}
 	}
 	if err != nil {
@@ -101,6 +101,30 @@ func (co *Core) Login(key string) (Command, error) {
 		return Command{}, fmt.Errorf("prowl can't log %s in", be.Title())
 	}
 	return commandOf(cmd, ""), nil
+}
+
+// setLoggedOut records that a call found the account logged out, ahead of
+// the next check.
+func (co *Core) setLoggedOut(key string) {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	for i := range co.accounts {
+		if co.accounts[i].Key == key {
+			co.accounts[i].Auth = agent.Auth{Known: true}
+		}
+	}
+}
+
+// slackFor is the Slack client to act with, or why there's none: you never
+// signed in, or the last check found you logged out. co.mu is held.
+func (co *Core) slackFor() (*slack.Client, error) {
+	if co.slack == nil {
+		return nil, errors.New("Slack isn't logged in")
+	}
+	if err := co.authErr("slack"); err != nil {
+		return nil, err
+	}
+	return co.slack, nil
 }
 
 // loggedIn fails when the last check found the agent logged out.

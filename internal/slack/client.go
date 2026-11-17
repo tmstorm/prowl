@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,6 +78,13 @@ type Error struct {
 }
 
 func (e *Error) Error() string { return "slack " + e.Method + ": " + e.Code }
+
+// LoggedOut reports whether err is Slack refusing the token, which only
+// signing in again fixes.
+func LoggedOut(err error) bool {
+	se, ok := errors.AsType[*Error](err)
+	return ok && slices.Contains([]string{"not_authed", "invalid_auth", "token_revoked", "token_expired", "account_inactive", "invalid_refresh_token"}, se.Code)
+}
 
 // call calls method, renewing the token once if it has expired.
 func (c *Client) call(ctx context.Context, method string, params url.Values, out any) error {

@@ -198,6 +198,7 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	}
 	opened := slices.Collect(maps.Values(co.opened))
 	sl := co.slack
+	slackOn := sl != nil && co.authErr("slack") == nil
 	var known []string
 	for _, it := range co.inbox.Items {
 		if _, linked := co.opened[it.PR.Key()]; !linked && !it.PR.Local() {
@@ -221,7 +222,7 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	}
 	var newlyShared []gh.PR
 	var slackErr error
-	if sl != nil {
+	if slackOn {
 		fetching.Go(func() { newlyShared, slackErr = co.syncSlack(sl, cfg, kept) })
 	}
 	in, err := co.gh.FetchInbox(cfg.Orgs, cfg.WatchRepos, known, keep)
@@ -232,6 +233,8 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	var shares map[string]store.SlackShare
 	if sl != nil {
 		shares = co.withShares(in, cfg, newlyShared)
+	}
+	if slackOn {
 		var err error
 		in.Reactions, err = co.reactionsOnYours(sl, cfg, in)
 		slackErr = errors.Join(slackErr, err)
@@ -269,8 +272,12 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	co.inbox = Inbox{Items: co.withOpened(items, extra, in.Viewer), Snoozed: snoozed, Viewer: in.Viewer, Teams: in.Teams, At: time.Now()}
 	co.inbox.Items = co.withLocals(co.inbox.Items)
 	co.mu.Unlock()
-	if sl != nil && slackErr == nil {
+	if slackOn && slackErr == nil {
 		slackErr = co.reconcileReactions(sl)
+	}
+	if slack.LoggedOut(slackErr) {
+		co.setLoggedOut("slack")
+		slackErr = nil
 	}
 	co.mu.Lock()
 	co.slackErr = slackErr
