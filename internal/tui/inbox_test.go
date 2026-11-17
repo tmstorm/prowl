@@ -666,18 +666,22 @@ func TestDocsViewer(t *testing.T) {
 
 // Links in the docs show as [label] and follow from prose, from a table, and
 // within a page. Of two links with the same label, each goes to its own
-// target: reviewing.md links [Slack] to slack.md#keys in a table first.
+// target: reviewing.md links [Slack] to slack.md#keys in a table first. A
+// label in a table cell doesn't wrap: config.md's [Review profiles] sits
+// at the end of a long cell.
 func TestDocsLinks(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	a.resize(160, 24)
 	a.keys("?", "d", "/", "runs it at login", "enter", "enter")
 	a.want("prowl docs · Running prowl", "at login and starts it now")
-	a.keys("/", "see [watching", "enter")
-	a.want("prowl docs · Config", "see [Watching a repo]")
+	a.keys("/", "see [watching a repo]", "enter")
+	a.want("prowl docs · Config", "see [Watching")
 	a.keys("enter")
 	a.want("prowl docs · The inbox", "prowl normally shows only PRs that involve you")
 	a.keys("/", "see [slack]", "enter", "enter")
 	a.want("prowl docs · Slack", "Setting it up")
 	a.keys("/", "signed in to [slack]", "enter", "enter")
 	a.want("prowl docs · Slack", "Setting it up")
+	a.keys("/", "[review profiles]", "enter", "enter")
+	a.want("prowl docs · AI reviews", "A profile is a named way to review")
 }

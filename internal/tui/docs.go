@@ -31,7 +31,8 @@ type docsSpot struct{ page, line int }
 // [Running tests](ai-reviews.md#running-tests) or [Updating](#updating).
 // The viewer shows it as its label in brackets, like vim help's |tag|: the
 // renderer would drop the target of a link within a page, move a table's
-// links under the table, and wrap long targets.
+// links under the table, and wrap long targets. The label's spaces don't
+// break, so a label in a table cell stays on one line.
 var docLink = regexp.MustCompile(`\[([^\[\]\n]+)\]\(([a-z][\w-]*\.md(?:#[\w-]+)?|#[\w-]+)\)`)
 
 // linkLabel is a link's label as the viewer shows it, without code marks.
@@ -52,7 +53,10 @@ func (p *docsPopup) width(m *Model) int  { return max(min(m.w-6, 110), 40) }
 func (p *docsPopup) height(m *Model) int { return max(m.h-11, 5) }
 
 func (p *docsPopup) lines(m *Model, page int) []string {
-	return renderMarkdown(docLink.ReplaceAllString(p.pages[page].Markdown, "[$1]"), p.width(m)-4, m.cfg.Theme)
+	md := docLink.ReplaceAllStringFunc(p.pages[page].Markdown, func(l string) string {
+		return "[" + strings.ReplaceAll(docLink.FindStringSubmatch(l)[1], " ", "\u00a0") + "]"
+	})
+	return renderMarkdown(md, p.width(m)-4, m.cfg.Theme)
 }
 
 func (p *docsPopup) mode() mode {
