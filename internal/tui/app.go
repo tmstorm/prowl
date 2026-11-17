@@ -505,8 +505,20 @@ func (m *Model) openFetched(msg prFetchedMsg) tea.Cmd {
 	return nil
 }
 
-func (m *Model) info(s string) { m.msg, m.msgErr, m.msgAt = s, false, time.Now() }
-func (m *Model) fail(s string) { m.msg, m.msgErr, m.msgAt = s, true, time.Now() }
+func (m *Model) info(s string) { m.msg, m.msgErr, m.msgAt = oneLine(s), false, time.Now() }
+func (m *Model) fail(s string) { m.msg, m.msgErr, m.msgAt = oneLine(s), true, time.Now() }
+
+// oneLine keeps a message to the bottom row: the lines of one with several,
+// such as errors.Join's, joined with "; " and without repeats.
+func oneLine(s string) string {
+	var lines []string
+	for l := range strings.Lines(s) {
+		if l = strings.TrimSpace(l); l != "" && !slices.Contains(lines, l) {
+			lines = append(lines, l)
+		}
+	}
+	return strings.Join(lines, "; ")
+}
 
 // ---- update
 
