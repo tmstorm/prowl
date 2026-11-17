@@ -4,8 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"runtime"
 	"slices"
@@ -21,7 +19,6 @@ import (
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
-	"github.com/tmstorm/prowl/internal/slack"
 	"github.com/tmstorm/prowl/internal/store"
 	"github.com/tmstorm/prowl/internal/tui"
 )
@@ -578,26 +575,10 @@ func TestAskIcons(t *testing.T) {
 // in the share's thread once you confirm.
 func TestPostSlackLine(t *testing.T) {
 	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
-	var mu sync.Mutex
-	var posted []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		switch r.URL.Path {
-		case "/auth.test":
-			fmt.Fprint(w, `{"ok":true,"user_id":"U1"}`)
-		case "/search.messages":
-			fmt.Fprintf(w, `{"ok":true,"messages":{"paging":{"pages":1},"matches":[{"ts":%q,"user":"U2","username":"bob",
-"text":"<https://github.com/o/api/pull/7>","permalink":"https://x.slack.com/archives/C1/p1","channel":{"id":"C1","name":"reviews"}}]}}`, ts)
-		default:
-			mu.Lock()
-			posted = append(posted, r.URL.Path+" "+r.Form.Get("thread_ts")+" "+r.Form.Get("text"))
-			mu.Unlock()
-			fmt.Fprint(w, `{"ok":true}`)
-		}
-	}))
-	t.Cleanup(srv.Close)
+	sl := &fakeSlack{matches: fmt.Sprintf(`{"ts":%q,"user":"U2","username":"bob","text":"<https://github.com/o/api/pull/7>",
+"permalink":"https://x.slack.com/archives/C1/p1","channel":{"id":"C1","name":"reviews"}}`, ts)}
 	fake := &fakeGitHub{Others: []gh.PR{pr("api", 7, "fix: crash", "alice")}}
-	a := newSlackApp(t, fake, slack.NewWith("xoxp-test", srv.URL+"/"), func(c *config.Config) { c.SlackChannels = []string{"C1"} })
+	a := newSlackApp(t, fake, sl.client(t), func(c *config.Config) { c.SlackChannels = []string{"C1"} })
 	a.refresh()
 	a.waitFor("fix: crash")
 	a.want("shared in #reviews by bob")
@@ -605,9 +586,24 @@ func TestPostSlackLine(t *testing.T) {
 	a.want("post in the #reviews thread: https://github.com/o/api/pull/7 Needs review · alice")
 	a.keys("y")
 	a.waitFor("posted in the #reviews thread")
-	mu.Lock()
-	defer mu.Unlock()
-	if len(posted) != 1 || posted[0] != "/chat.postMessage "+ts+" https://github.com/o/api/pull/7 Needs review · alice · fix: crash" {
-		t.Fatalf("posted %q", posted)
+	if p := sl.posts(); len(p) != 1 || p[0] != "/chat.postMessage C1 "+ts+" https://github.com/o/api/pull/7 Needs review · alice · fix: crash" {
+		t.Fatalf("posted %q", p)
+	}
+}
+
+// <leader>Y DMs the author their PR's Slack line once you confirm. An author
+// with no Slack user yet opens the Slack names on them, and once you accept
+// one and save, the DM goes on.
+func TestDMAuthor(t *testing.T) {
+	sl := &fakeSlack{users: `{"id":"U0ALICE123","name":"alice","real_name":"Alice Archer"}`}
+	a := newSlackApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, sl.client(t))
+	a.keys("space", "Y")
+	a.want("Slack names", "alice", "Alice Archer", "login matches their Slack name")
+	a.keys(" ", "enter")
+	a.want("saved 1 Slack name", "DM alice: https://github.com/o/api/pull/7 Needs review · @Alice Archer")
+	a.keys("y")
+	a.waitFor("sent alice a DM")
+	if p := sl.posts(); len(p) != 1 || p[0] != "/chat.postMessage D9  https://github.com/o/api/pull/7 Needs review · <@U0ALICE123> · fix: crash" {
+		t.Fatalf("posted %q", p)
 	}
 }

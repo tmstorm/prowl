@@ -154,3 +154,27 @@ func TestReactAndPost(t *testing.T) {
 		t.Errorf("calls:\n got %q\nwant %q", got, want)
 	}
 }
+
+// Users follows the pages and leaves out bots and deactivated accounts.
+func TestUsers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.Form.Get("cursor") == "" {
+			fmt.Fprint(w, `{"ok":true,"members":[{"id":"U1","name":"alice","real_name":"Alice A","profile":{"display_name":"Al","email":"a@x.dev"}},
+{"id":"B1","name":"bot","is_bot":true},{"id":"USLACKBOT","name":"slackbot"}],"response_metadata":{"next_cursor":"next"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"ok":true,"members":[{"id":"U2","name":"gone","deleted":true},{"id":"U3","name":"carol"}],"response_metadata":{"next_cursor":""}}`)
+	}))
+	defer srv.Close()
+	users, err := slack.NewWith("xoxp-1", srv.URL+"/").Users(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(users) != "[{U1 alice Alice A Al a@x.dev} {U3 carol   }]" {
+		t.Errorf("users = %v", users)
+	}
+	if !slack.IsUserID("U0BEN123456") || slack.IsUserID("@alice") || slack.IsUserID("Ursula") {
+		t.Error("IsUserID")
+	}
+}

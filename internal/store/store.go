@@ -797,6 +797,13 @@ func (s *Store) FirstTime(name string) bool {
 	return n == 1
 }
 
+// Shown reports whether FirstTime was asked about name before.
+func (s *Store) Shown(name string) bool {
+	var n int
+	_ = s.db.QueryRow(`SELECT count(*) FROM tips WHERE name = ?`, name).Scan(&n)
+	return n > 0
+}
+
 // Release is what prowl last heard about its own newest release.
 type Release struct {
 	Checked              time.Time

@@ -833,6 +833,7 @@ func connectSlack(cfg config.Config, args []string) error {
 		return err
 	}
 	fmt.Printf("signed in to Slack as %s in %s\n", id.User, id.Team)
+	fmt.Println("Next, in prowl's options (<leader>,): list the channels to watch in slack_channels,\nand open Slack names to match your teammates to their Slack users.")
 	return nil
 }
 

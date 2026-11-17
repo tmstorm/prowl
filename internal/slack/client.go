@@ -224,6 +224,70 @@ func (c *Client) Post(ctx context.Context, channel, threadTS, text string) error
 	return c.call(ctx, "chat.postMessage", v, nil)
 }
 
+// User is a person in the Slack workspace.
+type User struct {
+	ID       string
+	Handle   string // e.g. "alice"
+	RealName string
+	Display  string // the display name, often empty
+	Email    string
+}
+
+// Users lists the workspace's people, without bots or deactivated accounts.
+func (c *Client) Users(ctx context.Context) ([]User, error) {
+	var out []User
+	cursor := ""
+	for range 20 {
+		var res struct {
+			Members []struct {
+				ID       string `json:"id"`
+				Name     string `json:"name"`
+				Deleted  bool   `json:"deleted"`
+				IsBot    bool   `json:"is_bot"`
+				RealName string `json:"real_name"`
+				Profile  struct {
+					DisplayName string `json:"display_name"`
+					Email       string `json:"email"`
+				} `json:"profile"`
+			} `json:"members"`
+			Meta struct {
+				NextCursor string `json:"next_cursor"`
+			} `json:"response_metadata"`
+		}
+		if err := c.call(ctx, "users.list", url.Values{"limit": {"200"}, "cursor": {cursor}}, &res); err != nil {
+			return nil, err
+		}
+		for _, m := range res.Members {
+			if !m.Deleted && !m.IsBot && m.ID != "USLACKBOT" {
+				out = append(out, User{ID: m.ID, Handle: m.Name, RealName: m.RealName, Display: m.Profile.DisplayName, Email: m.Profile.Email})
+			}
+		}
+		if cursor = res.Meta.NextCursor; cursor == "" {
+			break
+		}
+	}
+	return out, nil
+}
+
+// DM sends text to a person in a direct message, as you.
+func (c *Client) DM(ctx context.Context, user, text string) error {
+	var res struct {
+		Channel struct {
+			ID string `json:"id"`
+		} `json:"channel"`
+	}
+	if err := c.call(ctx, "conversations.open", url.Values{"users": {user}}, &res); err != nil {
+		return err
+	}
+	return c.Post(ctx, res.Channel.ID, "", text)
+}
+
+var userID = regexp.MustCompile(`^[UW][A-Z0-9]{6,}$`)
+
+// IsUserID reports whether a slack_names value is a Slack user ID rather
+// than a name to print as it is.
+func IsUserID(s string) bool { return userID.MatchString(s) }
+
 // Share is one PR link in a Slack message.
 type Share struct {
 	Repo     string // owner/name

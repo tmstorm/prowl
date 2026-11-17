@@ -3,9 +3,13 @@ package tui_test
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -332,4 +336,41 @@ func (a *app) clickFirst(text string) {
 		}
 	}
 	a.t.Fatalf("%q is not on screen:\n%s", text, a.screen())
+}
+
+// fakeSlack is a Slack workspace for the TUI: search finds matches and
+// users.list lists users (both as JSON), and every post is recorded.
+type fakeSlack struct {
+	mu             sync.Mutex
+	matches, users string
+	posted         []string
+}
+
+func (f *fakeSlack) client(t *testing.T) *slack.Client {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		switch r.URL.Path {
+		case "/auth.test":
+			fmt.Fprint(w, `{"ok":true,"user_id":"U1"}`)
+		case "/search.messages":
+			fmt.Fprintf(w, `{"ok":true,"messages":{"paging":{"pages":1},"matches":[%s]}}`, f.matches)
+		case "/users.list":
+			fmt.Fprintf(w, `{"ok":true,"members":[%s]}`, f.users)
+		case "/conversations.open":
+			fmt.Fprint(w, `{"ok":true,"channel":{"id":"D9"}}`)
+		default:
+			f.posted = append(f.posted, strings.TrimSpace(r.URL.Path+" "+r.Form.Get("channel")+" "+r.Form.Get("thread_ts")+" "+r.Form.Get("text")))
+			fmt.Fprint(w, `{"ok":true}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return slack.NewWith("xoxp-test", srv.URL+"/")
+}
+
+func (f *fakeSlack) posts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.posted)
 }

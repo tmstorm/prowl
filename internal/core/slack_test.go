@@ -22,6 +22,7 @@ import (
 type fakeSlack struct {
 	mu      sync.Mutex
 	matches string
+	users   string // users.list members, as JSON
 	calls   []string
 }
 
@@ -49,6 +50,10 @@ func (f *fakeSlack) client(t *testing.T) *slack.Client {
 			fmt.Fprint(w, `{"ok":true,"user":"me","user_id":"U1"}`)
 		case "/search.messages":
 			fmt.Fprintf(w, `{"ok":true,"messages":{"paging":{"pages":1},"matches":[%s]}}`, f.matches)
+		case "/users.list":
+			fmt.Fprintf(w, `{"ok":true,"members":[%s]}`, f.users)
+		case "/conversations.open":
+			fmt.Fprint(w, `{"ok":true,"channel":{"id":"D9"}}`)
 		default:
 			_ = r.ParseForm()
 			f.calls = append(f.calls, strings.TrimSpace(r.URL.Path[1:]+" "+r.Form.Get("channel")+" "+r.Form.Get("timestamp")+

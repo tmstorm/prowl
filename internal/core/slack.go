@@ -39,8 +39,8 @@ const slackIndexLag = 5 * time.Minute
 // syncSlack keeps the PR links posted in your channels and DMs since the last
 // search, with each PR's node ID and its key as GitHub spells it. A PR shared
 // by someone else that prowl hasn't seen shared before is looked up once, and
-// returned so this sync shows it. The caller holds co.syncing, which guards
-// co.slackMe.
+// returned so this sync shows it. Only a sync, which holds co.syncing, sets
+// co.slackMe, so the sync reads it without co.mu.
 func (co *Core) syncSlack(sl *slack.Client, cfg config.Config, kept []store.SlackShare) ([]gh.PR, error) {
 	ctx := context.Background()
 	if co.slackMe == "" {
@@ -48,7 +48,10 @@ func (co *Core) syncSlack(sl *slack.Client, cfg config.Config, kept []store.Slac
 		if err != nil {
 			return nil, err
 		}
+		co.mu.Lock()
 		co.slackMe = id.UserID
+		co.mu.Unlock()
+		_, _ = co.loadSlackUsers(sl)
 	}
 	since := co.st.SlackSearched()
 	if since.IsZero() {
@@ -302,7 +305,7 @@ func (co *Core) afterReview(key, event string) (string, error) {
 		return note, co.setReaction(sl, s, emoji)
 	case "reply":
 		it.MyLastReview = &gh.Review{State: state}
-		return "replied in " + where, sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), slack.Line(it, cfg.SlackNames))
+		return "replied in " + where, sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), co.SlackLine(it, true))
 	}
 	return "", nil
 }

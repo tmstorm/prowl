@@ -245,7 +245,7 @@ var options = []option{
 	{section: "Editor & Slack", title: "Editor", label: "editor", empty: "$VISUAL, $EDITOR or vi", help: "For reviews and long text. Empty uses $VISUAL, then $EDITOR, then vi (notepad on Windows).", kind: optText,
 		get: func(c *config.Config) string { return c.Editor },
 		set: func(c *config.Config, v string) error { c.Editor = strings.TrimSpace(v); return nil }},
-	mapOpt("Editor & Slack", "Slack names", "slack_names", "# GitHub login = \"name used in Slack lines\"\n# some-login = \"@alice\"\n",
+	mapOpt("Editor & Slack", "Slack names", "slack_names", "# GitHub login = \"their Slack user ID\" (a mention), or a name to print as it is\n# some-login = \"U0123ABCD\"\n",
 		func(c *config.Config) *map[string]string { return &c.SlackNames }),
 	{section: "Updates", title: "Check for updates", label: "check_updates", help: "Asks GitHub once a day whether a newer prowl is out, and says so under the legend.", kind: optBool,
 		get: func(c *config.Config) string { return fmt.Sprint(c.CheckUpdates) },
@@ -363,17 +363,45 @@ func (p *optionsPopup) forward(_ *Model, msg tea.Msg) tea.Cmd {
 
 // apply sets an option, saves the TOML file, and applies live settings.
 func (p *optionsPopup) apply(m *Model, o option, v string) tea.Cmd {
-	if err := o.set(&config.Config{}, v); err != nil {
-		p.err = err.Error()
-		return nil
-	}
-	if _, err := m.core.Update(func(c *config.Config) error { return o.set(c, v) }); err != nil {
+	if err := saveOption(m, o, v); err != nil {
 		p.err = err.Error()
 		return nil
 	}
 	p.err = ""
 	m.info("saved " + config.Path())
 	return m.configChanged()
+}
+
+// editOption edits an option's value in your editor, then saves it and
+// returns to the options.
+func (m *Model) editOption(p *optionsPopup, o option) tea.Cmd {
+	m.popup = nil
+	return m.openEditor(o.label+".toml", o.get(&m.cfg), func(m *Model, text string, saved bool) tea.Cmd {
+		if p != nil {
+			m.popup = p
+		}
+		if !saved {
+			return nil
+		}
+		if p == nil {
+			if err := saveOption(m, o, text); err != nil {
+				m.fail(err.Error())
+				return nil
+			}
+			m.info("saved " + config.Path())
+			return m.configChanged()
+		}
+		return p.apply(m, o, text)
+	})
+}
+
+// saveOption sets an option to v in the config file, if v is valid.
+func saveOption(m *Model, o option, v string) error {
+	if err := o.set(&config.Config{}, v); err != nil {
+		return err
+	}
+	_, err := m.core.Update(func(c *config.Config) error { return o.set(c, v) })
+	return err
 }
 
 func (p *optionsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
@@ -451,14 +479,10 @@ func (p *optionsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 			m.popup = newReviewersPopup(m, p, o)
 			return nil
 		case optEditor:
-			m.popup = nil
-			return m.openEditor(o.label+".toml", o.get(&m.cfg), func(m *Model, text string, saved bool) tea.Cmd {
-				m.popup = p
-				if !saved {
-					return nil
-				}
-				return p.apply(m, o, text)
-			})
+			if o.label == "slack_names" && m.core.SlackConnected() {
+				return m.matchSlackNames(namesProposedMsg{back: p})
+			}
+			return m.editOption(p, o)
 		}
 	}
 	return nil

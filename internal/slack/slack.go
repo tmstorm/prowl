@@ -13,7 +13,9 @@ import (
 // Line builds e.g.
 //
 //	https://github.com/org/repo/pull/123 Approved · alice · Fix search pagination
-func Line(it inbox.Item, names map[string]string) string {
+//
+// who is how to name the author.
+func Line(it inbox.Item, who string) string {
 	pr := it.PR
 	var status string
 	switch {
@@ -30,10 +32,6 @@ func Line(it inbox.Item, names map[string]string) string {
 	}
 	if pr.NeedsRebase() {
 		status += ", needs rebase"
-	}
-	who := pr.AuthorLogin()
-	if n, ok := names[who]; ok {
-		who = n
 	}
 	return strings.Join([]string{pr.URL + " " + status, who, pr.Title}, " · ")
 }

@@ -41,6 +41,7 @@ type GitHub struct {
 	JobSteps     map[int64]string  // Actions job -> the step that failed
 	RejectReview map[int]bool      // review submissions (1 is the first) that fail with a server error
 	Repos        []string
+	Members      []gh.Person // the org's members
 	Closed       map[string]bool
 	Release      *gh.Release      // the latest release of any repo; nil: none
 	Assets       map[int64][]byte // release asset -> its bytes
@@ -146,6 +147,8 @@ func (f *GitHub) graphql(q string, v map[string]any) any {
 		return map[string]any{"viewer": map[string]any{"login": f.Viewer}}
 	case strings.Contains(q, "teams(first"):
 		return map[string]any{"organization": map[string]any{"teams": map[string]any{"nodes": []any{}}}}
+	case strings.Contains(q, "membersWithRole(first"):
+		return map[string]any{"organization": map[string]any{"membersWithRole": map[string]any{"nodes": f.Members, "pageInfo": map[string]any{}}}}
 	case strings.Contains(q, "repositories(first"):
 		var nodes []any
 		for _, r := range f.Repos {

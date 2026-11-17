@@ -602,6 +602,42 @@ func (c *Client) ResolveThread(threadID string, resolved bool) error {
 	return c.gql.Do(q, map[string]any{"id": threadID}, nil)
 }
 
+// Person is a GitHub user as their profile shows them.
+type Person struct {
+	Login string `json:"login"`
+	Name  string `json:"name"`
+	Email string `json:"email"` // public email, often empty
+}
+
+// OrgMembers lists an org's members.
+func (c *Client) OrgMembers(org string) ([]Person, error) {
+	var out []Person
+	var after *string
+	for range 10 {
+		var resp struct {
+			Organization *struct {
+				MembersWithRole page[Person] `json:"membersWithRole"`
+			} `json:"organization"`
+		}
+		err := c.gql.Do(`query($org: String!, $after: String) { organization(login: $org) {
+  membersWithRole(first: 100, after: $after) { nodes { login name email } pageInfo { hasNextPage endCursor } } } }`,
+			map[string]any{"org": org, "after": after}, &resp)
+		if err != nil {
+			return nil, fmt.Errorf("members of %s: %w", org, err)
+		}
+		if resp.Organization == nil {
+			return nil, fmt.Errorf("org %s not found", org)
+		}
+		out = append(out, resp.Organization.MembersWithRole.Nodes...)
+		pi := resp.Organization.MembersWithRole.PageInfo
+		if !pi.HasNextPage {
+			break
+		}
+		after = &pi.EndCursor
+	}
+	return out, nil
+}
+
 // OrgRepos lists an org's repos that aren't archived, as owner/name.
 func (c *Client) OrgRepos(org string) ([]string, error) {
 	var out []string

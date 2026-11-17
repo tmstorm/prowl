@@ -325,6 +325,10 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 	if !m.synced && m.core.AskNerdFont() {
 		m.askIcons()
 	}
+	var offerNames tea.Cmd
+	if !m.synced && m.core.OfferNames() {
+		offerNames = m.matchSlackNames(namesProposedMsg{tip: true})
+	}
 	m.synced = true
 	selKey := m.selectionKey()
 	m.setInbox(m.core.Inbox())
@@ -341,7 +345,7 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 	if d := m.current(); d != nil {
 		reload = d.ensureLoaded(m.core)
 	}
-	return tea.Batch(m.schedulePreview(), reload, m.setTitle())
+	return tea.Batch(m.schedulePreview(), reload, m.setTitle(), offerNames)
 
 }
 
@@ -688,9 +692,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.fail(msg.err.Error())
 		} else {
-			m.info("posted in the " + msg.where + " thread")
+			m.info(msg.done)
 		}
 		return m, nil
+
+	case namesProposedMsg:
+		return m, m.namesProposed(msg)
 
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress {
@@ -1317,6 +1324,7 @@ var leaderKeys = []leaderKey{
 	{cat: "Inbox", key: "w", desc: "watch / unwatch repo"},
 	{cat: "Inbox", key: "r", desc: "refresh"},
 	{cat: "Share", key: "y", desc: "post / copy slack line"},
+	{cat: "Share", key: "Y", desc: "DM the author"},
 	{cat: "Share", key: "o", desc: "open in browser"},
 	{cat: "prowl", key: ",", desc: "options"},
 	{cat: "prowl", key: "U", desc: "update prowl"},
@@ -1405,6 +1413,10 @@ func (m *Model) leader(key string) tea.Cmd {
 	case "y":
 		if onGitHub() {
 			return m.postSlack(*it)
+		}
+	case "Y":
+		if onGitHub() {
+			return m.dmAuthor(*it)
 		}
 	case "o":
 		if onGitHub() {
@@ -1717,7 +1729,7 @@ func (m *Model) searchLines() []string {
 // ---- actions
 
 func (m *Model) copySlack(it inbox.Item) tea.Cmd {
-	line := slack.Line(it, m.cfg.SlackNames)
+	line := m.core.SlackLine(it, false)
 	if err := slack.Copy(line); err != nil {
 		m.fail(err.Error())
 		return nil
@@ -1733,21 +1745,48 @@ func (m *Model) postSlack(it inbox.Item) tea.Cmd {
 	if where == "" {
 		return m.copySlack(it)
 	}
-	line := slack.Line(it, m.cfg.SlackNames)
+	line := m.core.SlackLine(it, true)
 	co, key := m.core, it.PR.Key()
 	m.mode = modeConfirm
 	m.confirm = &confirm{prompt: "post in the " + where + " thread: " + ansi.Strip(line) + " [y/N]", yes: func() tea.Cmd {
 		return func() tea.Msg {
 			where, err := co.PostInThread(key, line)
-			return slackPostedMsg{where: where, err: err}
+			return slackPostedMsg{done: "posted in the " + where + " thread", err: err}
+		}
+	}}
+	return nil
+}
+
+// dmAuthor sends the PR's author its Slack line in a DM, once you confirm.
+// An author with no Slack user yet opens the Slack names to pick one.
+func (m *Model) dmAuthor(it inbox.Item) tea.Cmd {
+	login := it.PR.AuthorLogin()
+	if !slack.IsUserID(m.cfg.SlackNames[login]) {
+		key := it.PR.Key()
+		cmd := m.matchSlackNames(namesProposedMsg{focus: login, then: func(m *Model) tea.Cmd {
+			i := slices.IndexFunc(m.items, func(it inbox.Item) bool { return it.PR.Key() == key })
+			if i < 0 || !slack.IsUserID(m.cfg.SlackNames[login]) {
+				return nil
+			}
+			return m.dmAuthor(m.items[i])
+		}})
+		m.info("no Slack user for " + login + " yet: matching names…")
+		return cmd
+	}
+	line := m.core.SlackLine(it, false)
+	co := m.core
+	m.mode = modeConfirm
+	m.confirm = &confirm{prompt: "DM " + login + ": " + ansi.Strip(line) + " [y/N]", yes: func() tea.Cmd {
+		return func() tea.Msg {
+			return slackPostedMsg{done: "sent " + login + " a DM", err: co.DMAuthor(it)}
 		}
 	}}
 	return nil
 }
 
 type slackPostedMsg struct {
-	where string
-	err   error
+	done string
+	err  error
 }
 
 func (m *Model) askApprove(it inbox.Item) tea.Cmd {
@@ -1806,7 +1845,7 @@ func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 		cp.MyLastReview = &gh.Review{State: map[string]string{
 			"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED",
 		}[msg.event]}
-		if err := slack.Copy(slack.Line(cp, m.cfg.SlackNames)); err == nil {
+		if err := slack.Copy(m.core.SlackLine(cp, false)); err == nil {
 			note += " · slack line yanked"
 		}
 	}
