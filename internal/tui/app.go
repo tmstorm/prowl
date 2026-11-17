@@ -1467,6 +1467,9 @@ func (m *Model) leader(key string) tea.Cmd {
 			return openURL(it.PR.URL)
 		}
 	case "O":
+		if !need() {
+			return nil
+		}
 		if it.SlackLink == "" {
 			m.info("nobody shared this PR in a Slack channel you watch")
 			return nil

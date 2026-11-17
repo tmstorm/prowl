@@ -361,6 +361,13 @@ func TestLeaderKey(t *testing.T) {
 	a.want("Options")
 }
 
+// <leader>O with nothing selected says so instead of crashing.
+func TestOpenSlackShareWithoutPR(t *testing.T) {
+	a := newApp(t, &fakeGitHub{})
+	a.keys("space", "O")
+	a.want("no PR selected")
+}
+
 // Repo names show in full unless repo_prefix strips one; a name too long
 // for the column is cut in the middle so repos sharing a prefix still
 // differ.
