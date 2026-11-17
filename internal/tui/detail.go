@@ -51,6 +51,7 @@ type brow struct {
 	agent   string // AI review tab: the agent whose section the row is in
 	reply   string // AI review tab: the thread a draft reply answers
 	pair    int    // split diff: the added line shown beside a removed one, -1 none
+	doc     string // the docs topic of the part the row is in, when it has its own
 }
 
 // splitDiff shows the diff side by side: old on the left, new on the right.
@@ -500,11 +501,12 @@ type rowAdder struct {
 	folded bool
 	thread string
 	file   string
+	doc    string
 }
 
 func (a *rowAdder) add(s string) {
 	r := plainRow(s)
-	r.block, r.thread, r.file = a.block, a.thread, a.file
+	r.block, r.thread, r.file, r.doc = a.block, a.thread, a.file, a.doc
 	if a.block != "" {
 		r.off = a.off
 		a.off++
@@ -598,6 +600,7 @@ func (d *detail) buildOverview() []brow {
 	theme := themeName
 	d.summaryRows(a, w, theme)
 	if len(d.pending) > 0 {
+		a.doc = "Inline comments and suggestions"
 		section(fmt.Sprintf("Pending comments (%d) · sent with your next review", len(d.pending)))
 		for _, p := range d.pending {
 			loc := fmt.Sprintf("%s:%d", p.Path, p.Line)
@@ -609,6 +612,7 @@ func (d *detail) buildOverview() []brow {
 				a.add("    " + l)
 			}
 		}
+		a.doc = ""
 	}
 
 	a.end()
@@ -1036,6 +1040,7 @@ func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
 		}
 		if run.Action != "" {
 			a.add("")
+			a.doc = "Closing or drafting"
 			what, key := "Suggests closing this PR", leader+"X"
 			if run.Action == "draft" {
 				what, key = "Suggests making this PR a draft", leader+"D"
@@ -1044,6 +1049,7 @@ func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
 			for _, l := range renderMarkdown(run.ActionReason, d.w-6, themeName) {
 				a.add("    " + l)
 			}
+			a.doc = ""
 		}
 		if log := d.logs[name]; len(log) > 0 {
 			a.add("")
@@ -1684,12 +1690,22 @@ func (d *detail) removePending(l diffLine) bool {
 	return false
 }
 
-// docsTopic is the docs topic for the row under the cursor: its finding,
-// draft reply, thread or check, or else its tab.
+// docsTopic is the docs topic for the row under the cursor: the part it is
+// in when that has its own section (the AI summary, points raised, history,
+// a pending comment), its finding, draft reply, thread or check, or else its
+// tab.
 func (d *detail) docsTopic() string {
 	rows := d.rows[d.tab]
 	if v := d.nav(); v.cur < len(rows) {
 		switch r := rows[v.cur]; {
+		case r.doc != "":
+			return r.doc
+		case r.block == "summary":
+			return "AI summary"
+		case strings.HasPrefix(r.block, "hist:") || strings.HasPrefix(r.block, "run:"):
+			return "History"
+		case d.tab == tabDiff && r.diff >= 0 && d.pendingIdx(commentLine(r, d.diffs[d.sinceReview])) >= 0:
+			return "Inline comments and suggestions"
 		case r.finding >= 0:
 			return "Severities"
 		case r.reply != "":
@@ -2063,6 +2079,7 @@ func (d *detail) pointRows(a *rowAdder, run *store.Run) {
 		return
 	}
 	a.add("")
+	a.doc = "Re-reviews and points raised"
 	a.add("  " + sSection.Render("Points raised") + sDim.Render(" · what others raised, checked against the code; never posted"))
 	style := map[string]lipgloss.Style{"open": sYellow, "unclear": sDim, "wrong": sRed, "addressed": sGreen}
 	for _, v := range pointVerdicts {
@@ -2087,6 +2104,7 @@ func (d *detail) pointRows(a *rowAdder, run *store.Run) {
 			}
 		}
 	}
+	a.doc = ""
 }
 
 // ranText is when a review started and how long it took.
