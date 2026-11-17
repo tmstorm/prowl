@@ -96,3 +96,22 @@ func TestWheelScrollsPR(t *testing.T) {
 		}
 	}
 }
+
+// In the docs a click on a page's name opens it, the wheel scrolls, and a
+// click on a line selects it and a second follows its link.
+func TestClickDocs(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}})
+	a.keys("?", "d")
+	a.clickFirst("slack · running")
+	a.want("prowl docs · Slack")
+	a.clickFirst("inbox · reviewing")
+	a.want("prowl docs · The inbox", "close   1/")
+	for range 4 {
+		a.send(tea.MouseMsg{X: a.w / 2, Y: a.h / 2, Button: tea.MouseButtonWheelDown})
+	}
+	a.wantNot("close   1/")
+	a.keys("/", "review them; see", "enter", "k")
+	a.click("review them; see")
+	a.click("review them; see")
+	a.want("prowl docs · Slack", "Setting it up")
+}

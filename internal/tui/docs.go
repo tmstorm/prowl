@@ -171,6 +171,68 @@ func (p *docsPopup) search(m *Model) {
 	}
 }
 
+// bodyTop is the popup line, from the top border, of the first page or
+// search-result line: below the title, the page names and their rule, and
+// in a search the input.
+func (p *docsPopup) bodyTop() int {
+	if p.searching {
+		return 6
+	}
+	return 5
+}
+
+// click opens the page whose name is clicked, selects a line, or follows the
+// selected line's link when it is clicked again (as enter does). In a search
+// it does the same for a result. x and y count from the popup's border.
+func (p *docsPopup) click(m *Model, x, y int) tea.Cmd {
+	if y == 3 {
+		at := 3
+		for i, d := range p.pages {
+			if x >= at && x < at+len(d.Name) {
+				p.searching = false
+				p.input.Blur()
+				p.show(i, 0)
+				return nil
+			}
+			at += len(d.Name) + 3
+		}
+		return nil
+	}
+	if p.searching {
+		i := max(p.hit-p.height(m)+2, 0) + y - p.bodyTop()
+		if i < 0 || i >= len(p.hits) {
+			return nil
+		}
+		if i == p.hit {
+			return p.updateSearch(m, tea.KeyMsg{Type: tea.KeyEnter})
+		}
+		p.hit = i
+		return nil
+	}
+	i := p.top + y - p.bodyTop()
+	if i < p.top || i >= min(p.top+p.height(m), len(p.lines(m, p.page))) {
+		return nil
+	}
+	if i == p.cur {
+		p.follow(m)
+		return nil
+	}
+	p.cur = i
+	return nil
+}
+
+// wheel scrolls the page three lines at a time, taking the cursor along
+// only when it would leave the window. In a search it moves the selection.
+func (p *docsPopup) wheel(m *Model, d int) {
+	if p.searching {
+		p.hit = min(max(p.hit+d, 0), max(len(p.hits)-1, 0))
+		return
+	}
+	h, n := p.height(m), len(p.lines(m, p.page))
+	p.top = min(max(p.top+3*d, 0), max(n-h, 0))
+	p.cur = min(max(p.cur, p.top), p.top+h-1, n-1)
+}
+
 func (p *docsPopup) view(m *Model) string {
 	w, h := p.width(m), p.height(m)
 	var tabs []string
