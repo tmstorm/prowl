@@ -28,6 +28,17 @@ func (co *Core) UseSlack(c *slack.Client) {
 	co.slack, co.slackApp = c, app
 }
 
+// LoadSlack reads the PR links shared in Slack with the token you saved, when
+// you're signed in.
+func (co *Core) LoadSlack() error {
+	token, err := slack.LoadToken(co.st.SlackSignedIn())
+	if err != nil || token.Access == "" {
+		return err
+	}
+	co.UseSlack(slack.New(token))
+	return nil
+}
+
 // slackLink opens a share's message: in the Slack app when it's installed,
 // which goes straight there, else its permalink, which goes through the
 // browser. A reply in a thread opens the thread's first message.
@@ -311,12 +322,16 @@ func (co *Core) setReaction(sl *slack.Client, s store.SlackShare, want string) e
 func (co *Core) afterReview(key, event string) (string, error) {
 	co.mu.Lock()
 	sl, cfg := co.slack, co.cfg
+	loggedOut := co.authErr("slack")
 	s, shared := co.slackShares[key]
 	it, _ := co.item(key)
 	co.mu.Unlock()
 	state := map[string]string{"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED"}[event]
-	if sl == nil || !shared || state == "" {
+	if sl == nil || !shared || state == "" || cfg.SlackAfterReview == "off" {
 		return "", nil
+	}
+	if loggedOut != nil {
+		return "", loggedOut
 	}
 	where := place(s)
 	switch cfg.SlackAfterReview {
@@ -358,11 +373,14 @@ func place(s store.SlackShare) string {
 // says where.
 func (co *Core) PostInThread(key, text string) (string, error) {
 	co.mu.Lock()
-	sl := co.slack
+	sl, err := co.slackFor()
 	s, ok := co.slackShares[key]
 	co.mu.Unlock()
-	if sl == nil || !ok {
+	if !ok {
 		return "", fmt.Errorf("%s has no Slack share to post in", key)
+	}
+	if err != nil {
+		return "", err
 	}
 	if err := sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), text); err != nil {
 		return "", fmt.Errorf("post in %s: %w", place(s), err)
@@ -467,10 +485,11 @@ const (
 // Slack once per session.
 func (co *Core) SlackActivity() ([]ChannelActivity, int, error) {
 	co.mu.Lock()
-	sl, cfg, cached, dms := co.slack, co.cfg, co.activity, co.dmLinks
+	sl, err := co.slackFor()
+	cfg, cached, dms := co.cfg, co.activity, co.dmLinks
 	co.mu.Unlock()
-	if sl == nil {
-		return nil, 0, errors.New("not signed in to Slack: run `prowl slack`")
+	if err != nil {
+		return nil, 0, err
 	}
 	if cached != nil {
 		return cached, dms, nil

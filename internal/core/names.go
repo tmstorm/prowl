@@ -32,11 +32,12 @@ type NameMatch struct {
 // proposed for one login at most.
 func (co *Core) ProposeNames() ([]NameMatch, []slack.User, error) {
 	co.mu.Lock()
-	sl, cfg, viewer, me := co.slack, co.cfg, co.inbox.Viewer, co.slackMe
+	sl, err := co.slackFor()
+	cfg, viewer, me := co.cfg, co.inbox.Viewer, co.slackMe
 	items := slices.Clone(co.inbox.Items)
 	co.mu.Unlock()
-	if sl == nil {
-		return nil, nil, errors.New("not signed in to Slack: run `prowl slack`")
+	if err != nil {
+		return nil, nil, err
 	}
 	users, err := co.loadSlackUsers(sl)
 	if err != nil {
@@ -242,10 +243,11 @@ var ErrNoSlackUser = errors.New("no Slack user for the author")
 // DMAuthor sends the PR's author its Slack line in a direct message.
 func (co *Core) DMAuthor(it inbox.Item) error {
 	co.mu.Lock()
-	sl, id := co.slack, co.cfg.SlackNames[it.PR.AuthorLogin()]
+	sl, err := co.slackFor()
+	id := co.cfg.SlackNames[it.PR.AuthorLogin()]
 	co.mu.Unlock()
-	if sl == nil {
-		return errors.New("not signed in to Slack: run `prowl slack`")
+	if err != nil {
+		return err
 	}
 	if !slack.IsUserID(id) {
 		return ErrNoSlackUser

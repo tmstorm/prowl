@@ -341,13 +341,22 @@ func TestRenewTakesSaved(t *testing.T) {
 	}
 }
 
-// A token without a refresh token, e.g. from PROWL_SLACK_TOKEN, can't renew,
-// so the error says to sign in again.
+// A token without a refresh token, e.g. one saved before prowl renewed
+// tokens, can't renew, so the error says to sign in again. Once `prowl slack`
+// saves a new token, the client uses it.
 func TestExpiredWithoutRefresh(t *testing.T) {
+	keyring.MockInit()
 	var renewals atomic.Int32
 	srv := rotatingSlack(t, &renewals)
-	_, err := slack.NewWith(slack.Token{Access: "xoxe.xoxp-old"}, srv.URL+"/").Reactions(context.Background(), "C1", "1.0")
-	if err == nil || !strings.Contains(err.Error(), "prowl slack") || renewals.Load() != 0 {
+	c := slack.NewWith(slack.Token{Access: "xoxe.xoxp-old"}, srv.URL+"/")
+	_, err := c.Reactions(context.Background(), "C1", "1.0")
+	if se, ok := errors.AsType[*slack.Error](err); !ok || se.Code != "token_expired" || !strings.Contains(err.Error(), "prowl slack") || renewals.Load() != 0 {
 		t.Fatalf("err = %v, renewals %d", err, renewals.Load())
+	}
+	if err := slack.SaveToken(slack.Token{Access: "xoxe.xoxp-new", Refresh: "xoxe-1-new", ClientID: "123.456"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Reactions(context.Background(), "C1", "1.0"); err != nil || renewals.Load() != 0 {
+		t.Fatalf("after signing in again: %v, renewals %d", err, renewals.Load())
 	}
 }
