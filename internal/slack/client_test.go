@@ -219,3 +219,34 @@ func TestChannels(t *testing.T) {
 		t.Fatalf("Channels = %v, %v", got, err)
 	}
 }
+
+// Results come newest first, so Shares stops paging once a page reaches
+// messages from before since.
+func TestSharesStopsPaging(t *testing.T) {
+	var pages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		pages = append(pages, r.Form.Get("page"))
+		fmt.Fprint(w, `{"ok":true,"messages":{"paging":{"pages":3},"matches":[
+{"ts":"1794869000.000100","text":"https://github.com/o/api/pull/1","permalink":"https://x.slack.com/archives/C1/p1","channel":{"id":"C1","name":"reviews"}},
+{"ts":"1794700000.000000","text":"https://github.com/o/api/pull/2","permalink":"https://x.slack.com/archives/C1/p2","channel":{"id":"C1","name":"reviews"}}]}}`)
+	}))
+	defer srv.Close()
+	shares, err := slack.NewWith("xoxp-1", srv.URL+"/").Shares(context.Background(), time.Unix(1794800000, 0))
+	if err != nil || len(shares) != 1 || fmt.Sprint(pages) != "[1]" {
+		t.Fatalf("shares %v, pages %v, %v", shares, pages, err)
+	}
+}
+
+// Without a sign-in, Token doesn't go to the keyring at all;
+// PROWL_SLACK_TOKEN works either way.
+func TestToken(t *testing.T) {
+	t.Setenv("PROWL_SLACK_TOKEN", "")
+	if token, err := slack.Token(false); token != "" || err != nil {
+		t.Fatalf("Token(false) = %q, %v", token, err)
+	}
+	t.Setenv("PROWL_SLACK_TOKEN", "xoxp-env")
+	if token, err := slack.Token(false); token != "xoxp-env" || err != nil {
+		t.Fatalf("with PROWL_SLACK_TOKEN: %q, %v", token, err)
+	}
+}

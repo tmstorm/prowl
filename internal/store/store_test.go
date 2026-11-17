@@ -106,3 +106,24 @@ func TestSlackShares(t *testing.T) {
 		t.Fatalf("searched = %v", st.SlackSearched())
 	}
 }
+
+// prowl remembers that a Slack token is in the keyring until you sign out.
+func TestSlackSignedIn(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if st.SlackSignedIn() {
+		t.Fatal("signed in before signing in")
+	}
+	_ = st.SetSlackSignedIn(true)
+	_ = st.SetSlackSignedIn(true)
+	if !st.SlackSignedIn() {
+		t.Fatal("not signed in after signing in")
+	}
+	_ = st.SetSlackSignedIn(false)
+	if st.SlackSignedIn() {
+		t.Fatal("still signed in after signing out")
+	}
+}

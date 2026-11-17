@@ -156,7 +156,7 @@ func run(args []string) error {
 	case "service":
 		return service(args[1:])
 	case "slack":
-		return connectSlack(cfg, args[1:])
+		return connectSlack(cfg, st, args[1:])
 	case "uninstall":
 		return uninstall(cfg, st, args[1:])
 	case "edits":
@@ -218,7 +218,7 @@ func run(args []string) error {
 	case "":
 		ctx, stop := context.WithCancel(context.Background())
 		defer stop()
-		co := withSlack(core.New(cfg, c, st))
+		co := withSlack(core.New(cfg, c, st), st)
 		go co.Run(ctx)
 		final, err := tea.NewProgram(tui.New(co), progOpts(cfg)...).Run()
 		if m, ok := final.(*tui.Model); ok && err == nil && m.Restart() {
@@ -229,7 +229,7 @@ func run(args []string) error {
 	case "watch":
 		return watch(cfg, c, st)
 	case "list":
-		co := withSlack(core.New(cfg, c, st))
+		co := withSlack(core.New(cfg, c, st), st)
 		co.Quiet()
 		if _, err := co.Refresh(); err != nil {
 			return err
@@ -256,7 +256,7 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 	if interval < 30*time.Second {
 		interval = 30 * time.Second
 	}
-	co := withSlack(core.New(cfg, c, st))
+	co := withSlack(core.New(cfg, c, st), st)
 	if err := co.Watching(); errors.Is(err, core.ErrWatching) {
 		fmt.Println(err)
 		return nil
@@ -751,11 +751,12 @@ func uninstall(cfg config.Config, st *store.Store, args []string) error {
 			return nil
 		}
 	}
+	slackToken := st.SlackSignedIn()
 	_ = st.Close()
 	if err := core.Uninstall(f); err != nil {
 		return err
 	}
-	if purge {
+	if purge && slackToken {
 		if err := slack.DeleteToken(); err != nil {
 			fmt.Fprintln(os.Stderr, "prowl:", err)
 		}
@@ -767,8 +768,8 @@ func uninstall(cfg config.Config, st *store.Store, args []string) error {
 var clientID = regexp.MustCompile(`^\d+\.\d+$`)
 
 // withSlack has co read the PR links shared in Slack, when you're signed in.
-func withSlack(co *core.Core) *core.Core {
-	if token, err := slack.Token(); err == nil && token != "" {
+func withSlack(co *core.Core, st *store.Store) *core.Core {
+	if token, err := slack.Token(st.SlackSignedIn()); err == nil && token != "" {
 		co.UseSlack(slack.New(token))
 	}
 	return co
@@ -776,10 +777,13 @@ func withSlack(co *core.Core) *core.Core {
 
 // connectSlack signs in to the team's Slack app, or shows how to make one,
 // and keeps the user token in the keyring.
-func connectSlack(cfg config.Config, args []string) error {
+func connectSlack(cfg config.Config, st *store.Store, args []string) error {
 	switch {
 	case slices.Contains(args, "--off"):
 		if err := slack.DeleteToken(); err != nil {
+			return err
+		}
+		if err := st.SetSlackSignedIn(false); err != nil {
 			return err
 		}
 		fmt.Println("signed out of Slack")
@@ -830,6 +834,9 @@ func connectSlack(cfg config.Config, args []string) error {
 		return err
 	}
 	if err := slack.SaveToken(token); err != nil {
+		return err
+	}
+	if err := st.SetSlackSignedIn(true); err != nil {
 		return err
 	}
 	fmt.Printf("signed in to Slack as %s in %s\n", id.User, id.Team)

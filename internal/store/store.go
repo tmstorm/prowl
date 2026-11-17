@@ -128,6 +128,9 @@ CREATE TABLE IF NOT EXISTS slack_shares (
   my_reaction TEXT NOT NULL DEFAULT '', -- the emoji prowl last set, on others' PRs
   PRIMARY KEY (channel, ts, pr_key)
 );
+CREATE TABLE IF NOT EXISTS slack_signin (
+  id INTEGER PRIMARY KEY CHECK (id = 1) -- a row: a Slack token is in the keyring
+);
 CREATE TABLE IF NOT EXISTS slack_search (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   at INTEGER NOT NULL      -- the last search for shares that succeeded
@@ -932,4 +935,21 @@ func (s *Store) SlackSearched() time.Time {
 func (s *Store) SetSlackSearched(at time.Time) error {
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO slack_search (id, at) VALUES (1, ?)`, at.Unix())
 	return wrap("set slack searched", err)
+}
+
+// SlackSignedIn reports whether `prowl slack` saved a token in the keyring.
+func (s *Store) SlackSignedIn() bool {
+	var n int
+	_ = s.db.QueryRow(`SELECT count(*) FROM slack_signin`).Scan(&n)
+	return n > 0
+}
+
+// SetSlackSignedIn records that a token is in the keyring, or no longer is.
+func (s *Store) SetSlackSignedIn(on bool) error {
+	q := `DELETE FROM slack_signin`
+	if on {
+		q = `INSERT OR REPLACE INTO slack_signin (id) VALUES (1)`
+	}
+	_, err := s.db.Exec(q)
+	return wrap("set slack signed in", err)
 }

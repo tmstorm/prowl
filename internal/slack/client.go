@@ -370,8 +370,8 @@ var prLink = regexp.MustCompile(`https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+
 const maxSearchPages = 5
 
 // Shares finds the PR links posted since since, newest first, in every
-// channel and DM you can read. Search works by day, so it reaches a little
-// further back.
+// channel and DM you can read. Search works by day, so it asks for a little
+// further back, and stops paging once it reaches messages from before since.
 func (c *Client) Shares(ctx context.Context, since time.Time) ([]Share, error) {
 	var out []Share
 	for page := 1; page <= maxSearchPages; page++ {
@@ -402,9 +402,11 @@ func (c *Client) Shares(ctx context.Context, since time.Time) ([]Share, error) {
 		if err != nil {
 			return nil, err
 		}
+		older := false
 		for _, m := range res.Messages.Matches {
 			at, err := strconv.ParseFloat(m.TS, 64)
 			if err != nil || time.Unix(int64(at), 0).Before(since) {
+				older = older || err == nil
 				continue
 			}
 			s := Share{Channel: m.Channel.ID, DM: m.Channel.IsIM || m.Channel.IsMPIM, TS: m.TS,
@@ -425,7 +427,7 @@ func (c *Client) Shares(ctx context.Context, since time.Time) ([]Share, error) {
 				}
 			}
 		}
-		if page >= res.Messages.Paging.Pages {
+		if older || page >= res.Messages.Paging.Pages {
 			break
 		}
 	}
@@ -440,11 +442,16 @@ func randomString() string {
 
 const keyringService, keyringUser = "prowl", "slack"
 
-// Token is the saved user token; PROWL_SLACK_TOKEN overrides the keyring,
-// for machines without one. Empty means not connected.
-func Token() (string, error) {
+// Token is the user token: PROWL_SLACK_TOKEN, for machines without a
+// keyring, else the one saved in the keyring when saved says there is one.
+// Reading the keyring can wait on a prompt to unlock it, so prowl doesn't
+// for people who never signed in. Empty means not connected.
+func Token(saved bool) (string, error) {
 	if t := os.Getenv("PROWL_SLACK_TOKEN"); t != "" {
 		return t, nil
+	}
+	if !saved {
+		return "", nil
 	}
 	t, err := keyring.Get(keyringService, keyringUser)
 	if errors.Is(err, keyring.ErrNotFound) {
