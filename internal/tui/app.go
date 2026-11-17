@@ -610,6 +610,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if p, ok := m.popup.(*accountsPopup); ok {
 			p.loading = false
 		}
+		if msg.err != nil {
+			m.fail(msg.err.Error())
+		}
 		return m, nil
 
 	case loginDoneMsg:
@@ -621,7 +624,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if p, ok := m.popup.(*accountsPopup); ok {
 			p.loading = true
 		}
-		return m, tea.Batch(m.checkAuth(), m.mouseBack())
+		check := m.checkAuth()
+		if msg.key == "slack" && msg.err == nil {
+			check = m.slackSignedIn()
+		}
+		return m, tea.Batch(check, m.mouseBack())
 
 	case previewMsg:
 		if msg.seq != m.previewSeq {

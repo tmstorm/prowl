@@ -28,6 +28,17 @@ func (co *Core) UseSlack(c *slack.Client) {
 	co.slack, co.slackApp = c, app
 }
 
+// LoadSlack reads the PR links shared in Slack with the token you saved, when
+// you're signed in.
+func (co *Core) LoadSlack() error {
+	token, err := slack.LoadToken(co.st.SlackSignedIn())
+	if err != nil || token.Access == "" {
+		return err
+	}
+	co.UseSlack(slack.New(token))
+	return nil
+}
+
 // slackLink opens a share's message: in the Slack app when it's installed,
 // which goes straight there, else its permalink, which goes through the
 // browser. A reply in a thread opens the thread's first message.

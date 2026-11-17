@@ -232,3 +232,19 @@ func TestJoinedErrorsOneLine(t *testing.T) {
 		t.Fatalf("want the error once, on the bottom row of %d:\n%s", a.h, a.screen())
 	}
 }
+
+// When Slack refuses the token, Accounts lists Slack as logged out, to sign
+// in again from there.
+func TestSlackLoggedOut(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"ok":false,"error":"token_revoked"}`)
+	}))
+	t.Cleanup(srv.Close)
+	a := newSlackApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, slack.NewWith(slack.Token{Access: "xoxp-test"}, srv.URL+"/"))
+	a.waitFor("slack auth.test: token_revoked")
+	a.keys("space", "l")
+	a.want("Accounts")
+	if !slices.ContainsFunc(a.lines(), func(l string) bool { return strings.Contains(l, " Slack ") && strings.Contains(l, "logged out") }) {
+		t.Fatalf("no logged-out Slack row:\n%s", a.screen())
+	}
+}

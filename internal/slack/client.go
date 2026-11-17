@@ -85,7 +85,7 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 	if se, ok := errors.AsType[*Error](err); !ok || se.Code != "token_expired" {
 		return err
 	}
-	if err := c.renew(ctx, access); err != nil {
+	if err := c.renew(ctx, access, err); err != nil {
 		return err
 	}
 	return c.send(ctx, method, c.access(), params, out)
@@ -98,19 +98,16 @@ func (c *Client) access() string {
 }
 
 // renew replaces the expired access token with the one another prowl process
-// already saved, else with a new one from Slack. Calls that find the same
-// token expired renew it once.
-func (c *Client) renew(ctx context.Context, expired string) error {
+// saved, such as `prowl slack` signing in again, else with a new one from
+// Slack. Calls that find the same token expired renew it once.
+func (c *Client) renew(ctx context.Context, expired string, expiredErr error) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.token.Access != expired {
+	if c.token.Access != expired || c.adoptSaved(expired) {
 		return nil
 	}
 	if c.token.Refresh == "" {
-		return errors.New("the Slack token expired: sign in again with `prowl slack`")
-	}
-	if c.adoptSaved(expired) {
-		return nil
+		return fmt.Errorf("%w; sign in again with `prowl slack`", expiredErr)
 	}
 	var g grant
 	err := c.send(ctx, "oauth.v2.access", "", url.Values{

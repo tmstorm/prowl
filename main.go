@@ -218,7 +218,7 @@ func run(args []string) error {
 	case "":
 		ctx, stop := context.WithCancel(context.Background())
 		defer stop()
-		co := withSlack(core.New(cfg, c, st), st)
+		co := withSlack(core.New(cfg, c, st))
 		go co.Run(ctx)
 		final, err := tea.NewProgram(tui.New(co), progOpts(cfg)...).Run()
 		if m, ok := final.(*tui.Model); ok && err == nil && m.Restart() {
@@ -229,7 +229,7 @@ func run(args []string) error {
 	case "watch":
 		return watch(cfg, c, st)
 	case "list":
-		co := withSlack(core.New(cfg, c, st), st)
+		co := withSlack(core.New(cfg, c, st))
 		co.Quiet()
 		if _, err := co.Refresh(); err != nil {
 			return err
@@ -256,7 +256,7 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 	if interval < 30*time.Second {
 		interval = 30 * time.Second
 	}
-	co := withSlack(core.New(cfg, c, st), st)
+	co := withSlack(core.New(cfg, c, st))
 	if err := co.Watching(); errors.Is(err, core.ErrWatching) {
 		fmt.Println(err)
 		return nil
@@ -316,13 +316,15 @@ func updated(exe string, built os.FileInfo) bool {
 }
 
 // remindLogin sends a desktop notification when the review agent is logged
-// out or its login runs out within a day. last is the state notified before;
+// out or its login runs out within a day, or Slack refused the token you
+// signed in with. last is the state notified before;
 // the new one is returned.
 func remindLogin(co *core.Core, last string) string {
 	cfg := co.Config()
 	var states, msgs []string
 	for _, acct := range co.Accounts() {
-		if !slices.Contains(cfg.Agent.Reviewers, acct.Key) || acct.Missing != nil {
+		watched := slices.Contains(cfg.Agent.Reviewers, acct.Key) || acct.Key == "slack" && co.SlackConnected()
+		if !watched || acct.Missing != nil {
 			continue
 		}
 		switch a := acct.Auth; {
@@ -768,10 +770,8 @@ func uninstall(cfg config.Config, st *store.Store, args []string) error {
 var clientID = regexp.MustCompile(`^\d+\.\d+$`)
 
 // withSlack has co read the PR links shared in Slack, when you're signed in.
-func withSlack(co *core.Core, st *store.Store) *core.Core {
-	if token, err := slack.LoadToken(st.SlackSignedIn()); err == nil && token.Access != "" {
-		co.UseSlack(slack.New(token))
-	}
+func withSlack(co *core.Core) *core.Core {
+	_ = co.LoadSlack()
 	return co
 }
 

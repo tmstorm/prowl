@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +14,7 @@ import (
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/platform"
+	"github.com/tmstorm/prowl/internal/slack"
 )
 
 // authEvery is how often Run checks the logins.
@@ -25,21 +28,23 @@ type Account struct {
 	Auth       agent.Auth // as of the last check; Known is false before one
 }
 
-// Accounts are GitHub and every agent prowl can log in to, as of the last
-// CheckAuth.
+// Accounts are GitHub, every agent prowl can log in to, and Slack, as of the
+// last CheckAuth.
 func (co *Core) Accounts() []Account {
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	return append([]Account(nil), co.accounts...)
 }
 
-// CheckAuth asks GitHub and every installed agent whether you're logged in.
-// It runs their status commands, so it takes a moment.
+// CheckAuth asks GitHub, every installed agent and Slack whether you're
+// logged in. It runs their status commands, so it takes a moment.
 func (co *Core) CheckAuth() {
 	accts := accountList(co.Config())
 	for i, a := range accts {
 		switch {
 		case a.Missing != nil:
+		case a.Key == "slack":
+			accts[i].Auth = co.checkSlack()
 		case a.Key == "github":
 			out, err := exec.Command("gh", "auth", "status", "--active").CombinedOutput()
 			accts[i].Auth = agent.Auth{Known: true, LoggedIn: err == nil}
@@ -57,10 +62,32 @@ func (co *Core) CheckAuth() {
 	co.mu.Unlock()
 }
 
+// checkSlack asks Slack whose token prowl has. No token, or Slack refusing
+// it, means you're signed out; failing to reach Slack says nothing.
+func (co *Core) checkSlack() agent.Auth {
+	co.mu.Lock()
+	sl := co.slack
+	co.mu.Unlock()
+	if sl == nil {
+		return agent.Auth{Known: true}
+	}
+	id, err := sl.AuthTest(context.Background())
+	if _, ok := errors.AsType[*slack.Error](err); ok {
+		return agent.Auth{Known: true}
+	}
+	if err != nil {
+		return agent.Auth{}
+	}
+	return agent.Auth{Known: true, LoggedIn: true, Account: id.User + " in " + id.Team}
+}
+
 // Login is the interactive command that logs an account in.
 func (co *Core) Login(key string) (Command, error) {
-	if key == "github" {
+	switch key {
+	case "github":
 		return Command{Args: []string{"gh", "auth", "login"}}, nil
+	case "slack":
+		return Command{Args: []string{Executable(), "slack"}}, nil
 	}
 	be, err := agent.For(co.Config(), key)
 	if err == nil {
@@ -106,7 +133,7 @@ func accountList(cfg config.Config) []Account {
 		}
 		out = append(out, Account{Key: n, Title: be.Title(), Missing: be.Check()})
 	}
-	return out
+	return append(out, Account{Key: "slack", Title: "Slack"})
 }
 
 // Update changes the config, saves it and applies it.

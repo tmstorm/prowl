@@ -13,11 +13,11 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 )
 
-type authCheckedMsg struct{}
+type authCheckedMsg struct{ err error }
 
 type loginDoneMsg struct {
-	name string
-	err  error
+	key, name string
+	err       error
 }
 
 // checkAuth has core check every login.
@@ -26,6 +26,17 @@ func (m *Model) checkAuth() tea.Cmd {
 	return func() tea.Msg {
 		co.CheckAuth()
 		return authCheckedMsg{}
+	}
+}
+
+// slackSignedIn has core use the token `prowl slack` saved, then checks
+// every login.
+func (m *Model) slackSignedIn() tea.Cmd {
+	co := m.core
+	return func() tea.Msg {
+		err := co.LoadSlack()
+		co.CheckAuth()
+		return authCheckedMsg{err}
 	}
 }
 
@@ -40,7 +51,8 @@ func (m *Model) account(key string) (core.Account, bool) {
 }
 
 // authWarning is the statusline note for the configured agent: logged out,
-// or a login that runs out within three days.
+// or a login that runs out within three days. Then Slack, when it refused
+// the token you signed in with.
 func (m *Model) authWarning() string {
 	for _, name := range m.cfg.Agent.Reviewers {
 		acct, ok := m.account(name)
@@ -52,6 +64,9 @@ func (m *Model) authWarning() string {
 		case a.ExpiresSoon(agent.RenewWithin):
 			return sYellow.Render(acct.Title+" relogin in "+until(a.Expires)) + sDim.Render(" "+leader+"l")
 		}
+	}
+	if acct, ok := m.account("slack"); ok && acct.Auth.Known && !acct.Auth.LoggedIn && m.core.SlackConnected() {
+		return sRed.Render("Slack logged out") + sDim.Render(" "+leader+"l")
 	}
 	return ""
 }
@@ -101,7 +116,7 @@ func (p *accountsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		}
 		cmd := exec.Command(login.Args[0], login.Args[1:]...)
 		cmd.Dir, cmd.Env = login.Dir, login.Env
-		return tea.ExecProcess(cmd, func(err error) tea.Msg { return loginDoneMsg{a.Title, err} })
+		return tea.ExecProcess(cmd, func(err error) tea.Msg { return loginDoneMsg{a.Key, a.Title, err} })
 	}
 	return nil
 }

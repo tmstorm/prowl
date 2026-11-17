@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
@@ -28,6 +30,7 @@ type fakeSlack struct {
 	users   string // users.list members, as JSON
 	emoji   string // reactions.get reactions, as JSON
 	rooms   string // users.conversations channels, as JSON
+	authErr string // what auth.test fails with, if set
 	calls   []string
 }
 
@@ -58,6 +61,10 @@ func (f *fakeSlack) client(t *testing.T) *slack.Client {
 		defer f.mu.Unlock()
 		switch r.URL.Path {
 		case "/auth.test":
+			if f.authErr != "" {
+				fmt.Fprintf(w, `{"ok":false,"error":%q}`, f.authErr)
+				return
+			}
 			fmt.Fprint(w, `{"ok":true,"user":"me","user_id":"U1","team":"Acme","team_id":"T1"}`)
 		case "/search.messages":
 			fmt.Fprintf(w, `{"ok":true,"messages":{"paging":{"pages":1},"matches":[%s]}}`, f.matches)
@@ -341,5 +348,38 @@ func TestShareOfRequestedPRDoesNotNotify(t *testing.T) {
 	}
 	if it, _ := find(co.Inbox(), "o/api#7"); it.Reason != "review requested · shared in #reviews by bob" {
 		t.Fatalf("reason = %q", it.Reason)
+	}
+}
+
+// Slack is an account: logged out before you sign in, logged in as you
+// after, and logged out once Slack refuses the token. Login signs in with
+// `prowl slack`.
+func TestSlackAccount(t *testing.T) {
+	co, _ := newCore(t, &ghtest.GitHub{})
+	slackAuth := func() agent.Auth {
+		co.CheckAuth()
+		accts := co.Accounts()
+		i := slices.IndexFunc(accts, func(a core.Account) bool { return a.Key == "slack" })
+		if i < 0 {
+			t.Fatalf("no Slack account: %+v", accts)
+		}
+		return accts[i].Auth
+	}
+	if a := slackAuth(); !a.Known || a.LoggedIn {
+		t.Fatalf("before signing in: %+v", a)
+	}
+	sl := &fakeSlack{}
+	co.UseSlack(sl.client(t))
+	if a := slackAuth(); !a.Known || !a.LoggedIn || a.Account != "me in Acme" {
+		t.Fatalf("signed in: %+v", a)
+	}
+	sl.mu.Lock()
+	sl.authErr = "token_revoked"
+	sl.mu.Unlock()
+	if a := slackAuth(); !a.Known || a.LoggedIn {
+		t.Fatalf("revoked: %+v", a)
+	}
+	if login, err := co.Login("slack"); err != nil || len(login.Args) != 2 || login.Args[1] != "slack" {
+		t.Fatalf("login: %v %+v", err, login)
 	}
 }

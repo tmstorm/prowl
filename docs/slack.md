@@ -12,13 +12,13 @@ Slack needs an app to sign in to. Your team needs one; whoever sets prowl up for
 
 The manifest asks for user scopes only, so the app has no bot to invite and reads only what you can already read. PKCE is on, which lets prowl sign in with the client ID alone, without the app's secret.
 
-Then everyone signs in:
+Then everyone signs in, with `enter` on Slack in prowl's accounts (`<leader>l`) or from a shell:
 
 ```sh
 prowl slack
 ```
 
-Enter the client ID when asked; prowl saves it as `slack_client_id`. prowl opens Slack in your browser, you approve, and prowl keeps your token in the OS keyring (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows). On a machine without a keyring, set `PROWL_SLACK_TOKEN` instead. `prowl slack --off` signs out, and `prowl uninstall --purge` deletes the token too. Slack's token expires after 12 hours, and prowl renews it as it runs. If prowl doesn't run for 30 days, the renewal expires as well and you sign in again with `prowl slack`.
+Enter the client ID when asked; prowl saves it as `slack_client_id`. prowl opens Slack in your browser, you approve, and prowl keeps your token in the OS keyring (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows). On a machine without a keyring, set `PROWL_SLACK_TOKEN` instead. `prowl slack --off` signs out, and `prowl uninstall --purge` deletes the token too. Slack's token expires after 12 hours, and prowl renews it as it runs. If prowl doesn't run for 30 days, the renewal expires as well and you sign in again the same way.
 
 Prefer your own app? Create it from the same manifest, install it, and paste its user token (`xoxp-...`) at the prompt instead of a client ID.
 
