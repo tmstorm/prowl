@@ -178,3 +178,20 @@ func TestUsers(t *testing.T) {
 		t.Error("IsUserID")
 	}
 }
+
+// Reactions lists who added each emoji.
+func TestReactions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.URL.Path != "/reactions.get" || r.Form.Get("channel") != "C1" || r.Form.Get("timestamp") != "1.0" || r.Form.Get("full") != "true" {
+			fmt.Fprint(w, `{"ok":false,"error":"bad_request"}`)
+			return
+		}
+		fmt.Fprint(w, `{"ok":true,"type":"message","message":{"reactions":[{"name":"eyes","users":["U1","U2"],"count":2},{"name":"x","users":["U3"],"count":1}]}}`)
+	}))
+	defer srv.Close()
+	got, err := slack.NewWith("xoxp-1", srv.URL+"/").Reactions(context.Background(), "C1", "1.0")
+	if err != nil || fmt.Sprint(got) != "map[eyes:[U1 U2] x:[U3]]" {
+		t.Fatalf("Reactions = %v, %v", got, err)
+	}
+}

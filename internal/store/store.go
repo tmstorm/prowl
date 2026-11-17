@@ -124,8 +124,7 @@ CREATE TABLE IF NOT EXISTS slack_shares (
   user TEXT NOT NULL,      -- who posted it (Slack ID)
   user_name TEXT NOT NULL,
   at INTEGER NOT NULL,
-  my_reaction TEXT NOT NULL DEFAULT '',     -- the emoji prowl last set, on others' PRs
-  seen_reactions TEXT NOT NULL DEFAULT '{}', -- Slack user -> emoji last seen, on your PRs
+  my_reaction TEXT NOT NULL DEFAULT '', -- the emoji prowl last set, on others' PRs
   PRIMARY KEY (channel, ts, pr_key)
 );
 CREATE TABLE IF NOT EXISTS slack_search (

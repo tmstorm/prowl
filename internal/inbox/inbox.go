@@ -70,8 +70,10 @@ type Item struct {
 	LastReviewedOid string
 	MyLastReview    *gh.Review
 	UnresolvedCount int
-	ThreadCount     int    // review threads, resolved or not
-	ReviewStatus    string // approved | changes requested | needs review | needs rebase | draft
+	ThreadCount     int // review threads, resolved or not
+	// On your PR: who reacted on its Slack share, e.g. "#reviews: Bob ✅".
+	SlackReactions string
+	ReviewStatus   string // approved | changes requested | needs review | needs rebase | draft
 }
 
 func Classify(in *gh.Inbox) []Item {
@@ -85,6 +87,10 @@ func Classify(in *gh.Inbox) []Item {
 		it := classify(pr, in.Viewer, teams, in.Bots, in.Watched[pr.Repository.NameWithOwner], in.RecheckAfterPush)
 		if shared {
 			it = withShare(it, share)
+		}
+		if r := in.Reactions[pr.Key()]; r != "" && it.Bucket == Mine {
+			it.Reason += " · " + r
+			it.SlackReactions = r
 		}
 		items = append(items, it)
 	}

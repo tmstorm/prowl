@@ -215,13 +215,11 @@ func (co *Core) SlackLine(it inbox.Item, post bool) string {
 	login := it.PR.AuthorLogin()
 	co.mu.Lock()
 	name := co.cfg.SlackNames[login]
-	i := slices.IndexFunc(co.slackUsers, func(u slack.User) bool { return u.ID == name })
-	shown := login
-	if i >= 0 {
-		u := co.slackUsers[i]
-		shown = cmp.Or(u.Display, u.RealName, u.Handle)
-	}
+	shown := slackName(co.slackUsers, name)
 	co.mu.Unlock()
+	if shown == name {
+		shown = login
+	}
 	switch {
 	case slack.IsUserID(name) && post:
 		return slack.Line(it, "<@"+name+">")

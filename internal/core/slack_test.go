@@ -23,6 +23,7 @@ type fakeSlack struct {
 	mu      sync.Mutex
 	matches string
 	users   string // users.list members, as JSON
+	emoji   string // reactions.get reactions, as JSON
 	calls   []string
 }
 
@@ -41,6 +42,12 @@ func (f *fakeSlack) set(matches string) {
 	f.matches = matches
 }
 
+func (f *fakeSlack) react(emoji string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.emoji = emoji
+}
+
 func (f *fakeSlack) client(t *testing.T) *slack.Client {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -54,6 +61,8 @@ func (f *fakeSlack) client(t *testing.T) *slack.Client {
 			fmt.Fprintf(w, `{"ok":true,"members":[%s]}`, f.users)
 		case "/conversations.open":
 			fmt.Fprint(w, `{"ok":true,"channel":{"id":"D9"}}`)
+		case "/reactions.get":
+			fmt.Fprintf(w, `{"ok":true,"message":{"reactions":[%s]}}`, f.emoji)
 		default:
 			_ = r.ParseForm()
 			f.calls = append(f.calls, strings.TrimSpace(r.URL.Path[1:]+" "+r.Form.Get("channel")+" "+r.Form.Get("timestamp")+
@@ -208,5 +217,41 @@ func TestSlackReply(t *testing.T) {
 	refresh(t, co)
 	if calls := sl.took(); len(calls) != 0 {
 		t.Fatalf("a sync posted: %q", calls)
+	}
+}
+
+// Reactions on the share of your PR, yours aside, show in its reason as
+// each person's strongest emoji, and a change notifies. A share posted by
+// you counts.
+func TestReactionsOnYours(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.PR("api", 3, "feat: mine", "me")}}
+	co, _ := newCore(t, fake)
+	cfg := config.Default()
+	cfg.SlackChannels = []string{"C1"}
+	co.SetConfig(cfg)
+	sl := &fakeSlack{users: slackUser("U2", "bob", "Bob Ames", "Bob", "") + "," + slackUser("U3", "carol", "Carol Diaz", "", "")}
+	co.UseSlack(sl.client(t))
+	sl.set(match(ts, "U1", "me", "C1", "reviews", "o/api/pull/3"))
+	sl.react(`{"name":"eyes","users":["U3","U1","U2"]},{"name":"white_check_mark","users":["U2"]},{"name":"tada","users":["U3"]}`)
+
+	changes, err := co.Refresh()
+	if err != nil || co.SlackErr() != nil {
+		t.Fatal(err, co.SlackErr())
+	}
+	it, _ := find(co.Inbox(), "o/api#3")
+	if it.Reason != "awaiting reviewers · #reviews: Bob ✅, Carol Diaz 👀" {
+		t.Fatalf("reason = %q", it.Reason)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("changes = %v", changes)
+	}
+	if changes, _ := co.Refresh(); len(changes) != 0 {
+		t.Fatalf("nothing new, but changes = %v", changes)
+	}
+	sl.react(`{"name":"x","users":["U3"]},{"name":"white_check_mark","users":["U2"]}`)
+	changes, _ = co.Refresh()
+	if it, _ := find(co.Inbox(), "o/api#3"); len(changes) != 1 || it.Reason != "awaiting reviewers · #reviews: Carol Diaz ❌, Bob ✅" {
+		t.Fatalf("after carol's change: %q, %v", it.Reason, changes)
 	}
 }

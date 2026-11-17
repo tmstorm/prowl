@@ -326,3 +326,16 @@ func TestShared(t *testing.T) {
 		t.Error("Shared doesn't count as needing you")
 	}
 }
+
+// Reactions on the Slack share of your PR join its reason; on someone
+// else's PR they don't.
+func TestSlackReactionsReason(t *testing.T) {
+	in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr("me")}, Reactions: map[string]string{"org/repo#1": "#reviews: Bob ✅"}}
+	if got := inbox.Classify(in)[0]; got.Reason != "awaiting reviewers · #reviews: Bob ✅" || got.SlackReactions != "#reviews: Bob ✅" {
+		t.Errorf("yours: %q, %q", got.Reason, got.SlackReactions)
+	}
+	in.PRs = []gh.PR{pr("alice")}
+	if got := inbox.Classify(in)[0]; got.SlackReactions != "" || got.Reason != "mentioned / commented" {
+		t.Errorf("someone else's: %q, %q", got.Reason, got.SlackReactions)
+	}
+}

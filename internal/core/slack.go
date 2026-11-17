@@ -344,3 +344,78 @@ func (co *Core) PostInThread(key, text string) (string, error) {
 	}
 	return place(s), nil
 }
+
+// reactionsOnYours reads the emoji on the newest share of each of your open
+// PRs, whoever posted it, and sums up each one, e.g. "#reviews: Bob ✅,
+// Carol 👀". Only the emoji in slack_reactions count, and not yours; someone
+// with several counts by the one that says most. One call per shared PR.
+func (co *Core) reactionsOnYours(sl *slack.Client, cfg config.Config, in *gh.Inbox) (map[string]string, error) {
+	yours := map[string]string{}
+	for _, pr := range in.PRs {
+		if pr.AuthorLogin() == in.Viewer {
+			yours[strings.ToLower(pr.Key())] = pr.Key()
+		}
+	}
+	all, err := co.st.SlackShares()
+	if err != nil {
+		return nil, err
+	}
+	newest := map[string]store.SlackShare{}
+	for _, s := range all {
+		key, ok := yours[strings.ToLower(s.PRKey)]
+		if _, seen := newest[key]; ok && !seen && watchedShare(cfg, s.Channel, s.ChannelName == "") {
+			newest[key] = s
+		}
+	}
+	e := cfg.SlackReactions
+	rank := map[string]int{e.Reviewing: 1, e.Commented: 2, e.Approved: 3, e.ChangesRequested: 4}
+	symbol := []string{1: "👀", 2: "💬", 3: "✅", 4: "❌"}
+	co.mu.Lock()
+	users := co.slackUsers
+	co.mu.Unlock()
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var errs []error
+	out := map[string]string{}
+	for key, s := range newest {
+		wg.Go(func() {
+			reactions, err := sl.Reactions(context.Background(), s.Channel, s.TS)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+			best := map[string]int{}
+			for emoji, who := range reactions {
+				for _, u := range who {
+					if u != co.slackMe && rank[emoji] > best[u] {
+						best[u] = rank[emoji]
+					}
+				}
+			}
+			ids := slices.SortedFunc(maps.Keys(best), func(a, b string) int {
+				return cmp.Or(cmp.Compare(best[b], best[a]), cmp.Compare(slackName(users, a), slackName(users, b)))
+			})
+			var names []string
+			for _, u := range ids {
+				names = append(names, slackName(users, u)+" "+symbol[best[u]])
+			}
+			if len(names) > 0 {
+				out[key] = place(s) + ": " + strings.Join(names, ", ")
+			}
+		})
+	}
+	wg.Wait()
+	return out, errors.Join(errs...)
+}
+
+// slackName is how Slack shows a person: their display name, else their
+// full name or handle.
+func slackName(users []slack.User, id string) string {
+	i := slices.IndexFunc(users, func(u slack.User) bool { return u.ID == id })
+	if i < 0 {
+		return id
+	}
+	return cmp.Or(users[i].Display, users[i].RealName, users[i].Handle)
+}

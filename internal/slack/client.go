@@ -215,6 +215,27 @@ func (c *Client) Unreact(ctx context.Context, channel, ts, emoji string) error {
 	return err
 }
 
+// Reactions are the emoji on a message and who added each, by Slack user ID.
+func (c *Client) Reactions(ctx context.Context, channel, ts string) (map[string][]string, error) {
+	var res struct {
+		Message struct {
+			Reactions []struct {
+				Name  string   `json:"name"`
+				Users []string `json:"users"`
+			} `json:"reactions"`
+		} `json:"message"`
+	}
+	err := c.call(ctx, "reactions.get", url.Values{"channel": {channel}, "timestamp": {ts}, "full": {"true"}}, &res)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, r := range res.Message.Reactions {
+		out[r.Name] = r.Users
+	}
+	return out, nil
+}
+
 // Post sends text to a channel as you, in the thread threadTS when set.
 func (c *Client) Post(ctx context.Context, channel, threadTS, text string) error {
 	v := url.Values{"channel": {channel}, "text": {text}, "unfurl_links": {"false"}}

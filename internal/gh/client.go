@@ -143,6 +143,8 @@ type Inbox struct {
 	Teams            []string // team slugs the viewer belongs to
 	PRs              []PR
 	Shared           map[string]Share // PR key -> its newest share in Slack, by someone else
+	// PR key -> who reacted on the Slack share of your PR, e.g. "#reviews: Bob ✅".
+	Reactions map[string]string
 }
 
 // Share is a PR link someone posted in Slack.
