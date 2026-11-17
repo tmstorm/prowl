@@ -48,17 +48,15 @@ type Comment struct {
 }
 
 type Thread struct {
-	ID                 string `json:"id"`
-	IsResolved         bool   `json:"isResolved"`
-	IsOutdated         bool   `json:"isOutdated"`
-	Path               string `json:"path"`
-	Line               int    `json:"line"`
-	StartLine          int    `json:"startLine"`
-	OriginalLine       int    `json:"originalLine"`
-	DiffSide           string `json:"diffSide"`
-	ViewerCanResolve   bool   `json:"viewerCanResolve"`
-	ViewerCanUnresolve bool   `json:"viewerCanUnresolve"`
-	Comments           struct {
+	ID           string `json:"id"`
+	IsResolved   bool   `json:"isResolved"`
+	IsOutdated   bool   `json:"isOutdated"`
+	Path         string `json:"path"`
+	Line         int    `json:"line"`
+	StartLine    int    `json:"startLine"`
+	OriginalLine int    `json:"originalLine"`
+	DiffSide     string `json:"diffSide"`
+	Comments     struct {
 		Nodes []Comment `json:"nodes"`
 	} `json:"comments"`
 	// Opener is the thread's first comment, in the inbox query: whose

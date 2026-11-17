@@ -101,6 +101,7 @@ type Model struct {
 	items    []inbox.Item
 	snoozed  map[string]time.Time
 	review   map[string][]*store.AgentReview // every PR's review runs, newest first
+	running  int                             // agents reviewing right now, across PRs
 	viewer   string
 	lastSync time.Time
 	loading  bool
@@ -233,6 +234,16 @@ func (m *Model) refresh() tea.Cmd {
 		changes, err := co.Refresh()
 		return refreshMsg{changes, err}
 	}, m.startAnim())
+}
+
+// reload syncs the inbox and fetches the open PR's page again.
+func (m *Model) reload() tea.Cmd {
+	var page tea.Cmd
+	if d := m.current(); d != nil {
+		d.stale = true
+		page = d.ensureLoaded(m.core)
+	}
+	return tea.Batch(m.refresh(), page)
 }
 
 // setItems replaces the inbox list, refiltering an open finder, whose
@@ -373,7 +384,7 @@ func (m *Model) needsAnim() bool {
 	if m.loading {
 		return true
 	}
-	if m.runningReviews() > 0 || len(m.core.Summarizing()) > 0 || m.core.Updating() != "" {
+	if m.running > 0 || len(m.core.Summarizing()) > 0 || m.core.Updating() != "" {
 		return true
 	}
 	if d := m.current(); d != nil && (d.loadingDet || d.diffLoading) {
@@ -520,6 +531,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.listen(), m.applySync(msg.Changes, msg.Err))
 		case core.RunsChanged:
 			m.loadReviews()
+		case core.LocalsChanged:
+			m.applyPR(prRefreshedMsg{})
 		case core.SummaryChanged:
 			m.summaryDone(msg.Key, msg.Err)
 		case core.AuthChanged:
@@ -536,7 +549,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.info("reloaded " + config.Path())
 			return m, tea.Batch(m.listen(), m.configChanged())
 		}
-		return m, tea.Batch(m.listen(), m.animIfNeeded())
+		return m, tea.Batch(m.listen(), m.startAnim())
 
 	case orgReposMsg:
 		m.orgRepos = msg.repos
@@ -552,8 +565,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.info("you're a requested reviewer on " + msg.key + " now")
-		m.applyPR(prRefreshedMsg{key: msg.key})
-		return m, m.schedulePreview()
+		return m, m.refreshPR(msg.key)
 
 	case summaryMsg:
 		m.summaryDone(msg.key, msg.err)
@@ -690,13 +702,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
-}
-
-func (m *Model) animIfNeeded() tea.Cmd {
-	if m.animInterval() > 0 {
-		return m.startAnim()
-	}
-	return nil
 }
 
 // ---- list
@@ -1207,12 +1212,7 @@ func (m *Model) normal(key string) tea.Cmd {
 			return d.setTab((d.tab+step+len(tabNames))%len(tabNames), m.core)
 		}
 	case "R":
-		var reload tea.Cmd
-		if d != nil {
-			d.stale = true
-			reload = d.ensureLoaded(m.core)
-		}
-		return tea.Batch(m.refresh(), reload)
+		return m.reload()
 	case "o":
 		if d := m.current(); d != nil && m.focus == fDetail && d.tab == tabOverview {
 			if c := d.checkAtCursor(); c != nil && c.URL != "" {
@@ -1361,12 +1361,7 @@ func (m *Model) leader(key string) tea.Cmd {
 		m.info("grouped by " + next.GroupBy)
 		return m.schedulePreview()
 	case "r":
-		var reload tea.Cmd
-		if d := m.current(); d != nil {
-			d.stale = true
-			reload = d.ensureLoaded(m.core)
-		}
-		return tea.Batch(m.refresh(), reload)
+		return m.reload()
 	case "l":
 		m.popup = &accountsPopup{loading: true}
 		return m.checkAuth()
@@ -1446,7 +1441,7 @@ func (m *Model) leader(key string) tea.Cmd {
 				co, key := m.core, it.PR.Key()
 				m.mode = modeConfirm
 				m.confirm = &confirm{prompt: "mark " + prName(it.PR) + " ready for review? [y/N]", yes: func() tea.Cmd {
-					return func() tea.Msg { return threadDoneMsg{key, "marked ready for review", co.SetDraft(key, false, "")} }
+					return func() tea.Msg { return threadDoneMsg{key, "marked ready for review", co.MarkReady(key)} }
 				}}
 				return nil
 			}
@@ -1520,7 +1515,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 	case "h":
 		var done []*store.AgentReview
 		for _, r := range store.Current(m.review[k]) {
-			if r.Status == "done" || r.Status == "posted" {
+			if r.Finished() {
 				done = append(done, r)
 			}
 		}
@@ -1782,7 +1777,7 @@ func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 	if msg.err != nil {
 		m.fail(msg.err.Error())
 	}
-	return tea.Batch(reload, m.schedulePreview())
+	return tea.Batch(reload, m.refreshPR(msg.key), m.schedulePreview())
 }
 
 type summaryMsg struct {
@@ -1942,25 +1937,20 @@ func (m *Model) launchReview(it inbox.Item, refine string, sync bool, reviewer s
 // loadReviews takes every review run, and the open PR's notes, from core.
 func (m *Model) loadReviews() {
 	m.review = m.core.Reviews()
+	m.running = 0
+	for _, runs := range m.review {
+		for _, r := range store.Current(runs) {
+			if r.Status == "running" {
+				m.running++
+			}
+		}
+	}
 	for k, d := range m.details {
 		d.setReview(m.review[k])
 	}
 	if d := m.current(); d != nil {
 		d.setLogs(m.core.Notes(d.item.PR.Key()))
 	}
-}
-
-// runningReviews counts the agents reviewing right now, across PRs.
-func (m *Model) runningReviews() int {
-	n := 0
-	for _, runs := range m.review {
-		for _, r := range store.Current(runs) {
-			if r.Status == "running" {
-				n++
-			}
-		}
-	}
-	return n
 }
 
 // targetRun is the review an agent action applies to: the agent whose

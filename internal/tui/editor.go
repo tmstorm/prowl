@@ -212,7 +212,7 @@ func spansCommits(d core.Draft) bool {
 // ("close", "draft" or "") and why.
 func (m *Model) suggestedAction(key string) (string, string) {
 	for _, r := range store.Current(m.review[key]) {
-		if r.Action != "" && (r.Status == "done" || r.Status == "posted") {
+		if r.Action != "" && r.Finished() {
 			return r.Action, r.ActionReason
 		}
 	}

@@ -3,7 +3,9 @@ package gh_test
 import (
 	"io"
 	"net/http"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/tmstorm/prowl/internal/gh"
@@ -55,12 +57,68 @@ func TestFetchInboxPages(t *testing.T) {
 		}
 		return reply(200, `{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}`)
 	})
-	in, err := c.FetchInbox([]string{"o"}, nil)
+	in, err := c.FetchInbox([]string{"o"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(in.PRs) != 2 || calls != 2 {
 		t.Fatalf("got %d PRs from %d pages, want 2 from 2", len(in.PRs), calls)
+	}
+}
+
+// The PRs known from the last sync load once, in their own query,
+// and only a new one loads after them. A known PR the searches no longer find
+// is left out, and when the known PRs fail to load (one was deleted, say)
+// every PR found loads after the searches.
+func TestFetchInboxKnown(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		knownFail bool
+		loads     string
+	}{
+		{"known PRs load once", false, `["A","GONE"] ["B"]`},
+		{"known PRs fail to load", true, `["A","B"] ["A","GONE"]`},
+	} {
+		var mu sync.Mutex
+		var loads []string
+		cl := fake(t, func(r *http.Request) *http.Response {
+			b, _ := io.ReadAll(r.Body)
+			q := string(b)
+			switch {
+			case strings.Contains(q, "{ viewer {"):
+				return reply(200, `{"data":{"viewer":{"login":"me"}}}`)
+			case strings.Contains(q, "nodes(ids:"):
+				_, ids, _ := strings.Cut(q, `"ids":`)
+				ids, _, _ = strings.Cut(ids, "]")
+				mu.Lock()
+				loads = append(loads, ids+"]")
+				mu.Unlock()
+				if c.knownFail && strings.Contains(ids, "GONE") {
+					return reply(200, `{"errors":[{"message":"Could not resolve to a node"}]}`)
+				}
+				var nodes []string
+				for _, id := range []string{"A", "B"} {
+					if strings.Contains(ids, id) {
+						nodes = append(nodes, `{"id":"`+id+`","number":1}`)
+					}
+				}
+				return reply(200, `{"data":{"nodes":[`+strings.Join(nodes, ",")+`,null]}}`)
+			case strings.Contains(q, "involves"):
+				return reply(200, `{"data":{"search":{"nodes":[{"id":"A"},{"id":"B"}],"pageInfo":{"hasNextPage":false}}}}`)
+			}
+			return reply(200, `{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}`)
+		})
+		in, err := cl.FetchInbox(nil, nil, []string{"A", "GONE"})
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if len(in.PRs) != 2 || in.PRs[0].ID != "A" || in.PRs[1].ID != "B" {
+			t.Errorf("%s: got %+v, want A and B", c.name, in.PRs)
+		}
+		slices.Sort(loads)
+		if got := strings.Join(loads, " "); got != c.loads {
+			t.Errorf("%s: loaded %s, want %s", c.name, got, c.loads)
+		}
 	}
 }
 

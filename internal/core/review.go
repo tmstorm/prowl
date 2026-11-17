@@ -36,6 +36,7 @@ const (
 	AuthChanged                     // the periodic login check finished
 	ConfigChanged                   // the config file was edited outside prowl
 	ReleaseChanged                  // the hourly update check ran, or an update moved on a step
+	LocalsChanged                   // a local review started by another prowl joined the inbox
 )
 
 // Events delivers events to one reader. An event that finds the buffer full
@@ -54,10 +55,12 @@ func (co *Core) emit(e Event) {
 // picks up edits to the config file and checks for updates (installing them
 // when no prowl watch runs to do it), until ctx ends. Each is reported as
 // events. The first sync is the caller's. It also prunes orphaned review
-// worktrees and refs once.
+// worktrees and refs once, and what is kept for closed PRs at the start and
+// after each sync.
 func (co *Core) Run(ctx context.Context) {
 	var tasks sync.WaitGroup
 	tasks.Go(co.PruneOrphans)
+	tasks.Go(co.PruneClosed)
 	tasks.Go(func() {
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
@@ -67,6 +70,9 @@ func (co *Core) Run(ctx context.Context) {
 				return
 			case <-tick.C:
 				if co.loadRuns() {
+					if co.showLocals() {
+						co.emit(Event{Kind: LocalsChanged})
+					}
 					co.emit(Event{Kind: RunsChanged})
 				}
 				if changed, err := co.reloadConfig(); changed {
@@ -85,6 +91,7 @@ func (co *Core) Run(ctx context.Context) {
 				co.emit(Event{Kind: Syncing})
 				changes, err := co.Refresh()
 				co.emit(Event{Kind: InboxChanged, Changes: changes, Err: err})
+				co.PruneClosed()
 			}
 		}
 	})
@@ -262,6 +269,9 @@ func (co *Core) Discard(runID int64) error {
 	run, err := co.st.Run(runID)
 	if err != nil {
 		return fmt.Errorf("discard: %w", err)
+	}
+	if run == nil {
+		return fmt.Errorf("discard: no review run %d", runID)
 	}
 	if err := co.st.DeleteRun(runID); err != nil {
 		return fmt.Errorf("discard: %w", err)

@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
@@ -96,7 +99,7 @@ func (co *Core) AgentDraft(key string) (Draft, error) {
 	co.mu.Lock()
 	var done []*store.AgentReview
 	for _, r := range store.Current(co.runs[key]) {
-		if r.Status == "done" || r.Status == "posted" {
+		if r.Finished() {
 			done = append(done, r)
 		}
 	}
@@ -161,8 +164,9 @@ func (co *Core) AgentDraft(key string) (Draft, error) {
 // push that you approve sends its inline comments first, on their commit. A comment with
 // no body and no inline comments (replies only) sends no review. When
 // something fails, Submitted says whether your review went out.
-// Your pending comments are cleared, and the PR is fetched again so it moves
-// to its new section at once. For an agent draft that posted a review, the
+// Your pending comments are cleared, and an approval or change request moves
+// the PR to its new section at once; RefreshPR then gets what GitHub made of
+// it. For an agent draft that posted a review, the
 // findings that went out are marked posted, and the draft and what you
 // posted are kept so `prowl edits` and later reviews can learn from your
 // changes.
@@ -193,7 +197,6 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 			return out, fmt.Errorf("comment on %s: %w", key, err)
 		}
 		out.Review = true
-		_ = co.RefreshPR(key)
 		return out, nil
 	}
 	event, then := d.Event, ""
@@ -231,6 +234,7 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 			return out, fmt.Errorf("submit %s: %w", key, err)
 		}
 		out.URL = u
+		co.reviewed(key, event, main.commit)
 	}
 	out.Review = true
 	co.mu.Lock()
@@ -253,10 +257,15 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 		}
 		co.loadRuns()
 	}
-	var failed []error
-	for _, r := range d.Replies {
-		if err := co.PostReply(r.RunID, r.ThreadID, r.Body); err != nil {
-			failed = append(failed, err)
+	failed := make([]error, len(d.Replies))
+	var sending sync.WaitGroup
+	for i, r := range d.Replies {
+		sending.Go(func() { failed[i] = co.sendReply(r.RunID, r.ThreadID, r.Body) })
+	}
+	sending.Wait()
+	for i, r := range d.Replies {
+		if failed[i] == nil {
+			failed[i] = co.markReplied(r.RunID, r.ThreadID, r.Body)
 		}
 	}
 	switch then {
@@ -269,31 +278,46 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 			failed = append(failed, fmt.Errorf("convert to draft: %w", err))
 		}
 	}
-	_ = co.RefreshPR(key)
-	if len(failed) > 0 {
-		return out, fmt.Errorf("the review went out, but: %w", errors.Join(failed...))
+	if err := errors.Join(failed...); err != nil {
+		return out, fmt.Errorf("the review went out, but: %w", err)
 	}
 	return out, nil
 }
 
-// SetDraft marks a PR ready for review, or converts it to a draft after
-// posting comment on it, when there is one.
-func (co *Core) SetDraft(key string, draft bool, comment string) error {
+// reviewed puts the approval or change request you just posted on the PR as
+// prowl holds it, so it changes section before RefreshPR confirms it. A
+// comment review waits for RefreshPR: where it lands depends on its threads.
+func (co *Core) reviewed(key, event, commit string) {
+	state := map[string]string{"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED"}[event]
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	i := slices.IndexFunc(co.inbox.Items, func(it inbox.Item) bool { return it.PR.Key() == key })
+	if state == "" || i < 0 {
+		return
+	}
+	pr, me := co.inbox.Items[i].PR, co.inbox.Viewer
+	review := gh.Review{Author: &gh.Actor{Login: me}, State: state, SubmittedAt: time.Now()}
+	review.Commit = &struct {
+		Oid string `json:"oid"`
+	}{commit}
+	pr.Reviews.Nodes = append(slices.Clone(pr.Reviews.Nodes), review)
+	pr.ReviewRequests.Nodes = slices.DeleteFunc(slices.Clone(pr.ReviewRequests.Nodes), func(r gh.ReviewRequest) bool {
+		return r.RequestedReviewer.Login == me
+	})
+	co.inbox.Items[i] = co.reclassify(pr)
+}
+
+// MarkReady marks a draft PR ready for review.
+func (co *Core) MarkReady(key string) error {
 	co.mu.Lock()
 	it, ok := co.item(key)
 	co.mu.Unlock()
 	if !ok || it.PR.Local() {
 		return fmt.Errorf("%s is not a pull request in the inbox", key)
 	}
-	if comment = strings.TrimSpace(comment); comment != "" {
-		if err := co.gh.Comment(it.PR.ID, comment); err != nil {
-			return fmt.Errorf("comment on %s: %w", key, err)
-		}
-	}
-	if err := co.gh.SetDraft(it.PR.ID, draft); err != nil {
+	if err := co.gh.SetDraft(it.PR.ID, false); err != nil {
 		return fmt.Errorf("%s: %w", key, err)
 	}
-	_ = co.RefreshPR(key)
 	return nil
 }
 
@@ -308,13 +332,9 @@ type Submitted struct {
 // SetReplyExcluded leaves a drafted thread reply out of what gets sent, or
 // puts it back.
 func (co *Core) SetReplyExcluded(runID int64, threadID string, excluded bool) error {
-	run, err := co.st.Run(runID)
+	run, i, err := co.draftedReply(runID, threadID)
 	if err != nil {
-		return fmt.Errorf("reply: %w", err)
-	}
-	i := slices.IndexFunc(run.Replies, func(r store.ThreadReply) bool { return r.ThreadID == threadID })
-	if i < 0 {
-		return fmt.Errorf("reply: no drafted reply to thread %s", threadID)
+		return err
 	}
 	run.Replies[i].Excluded = excluded
 	if err := co.st.SaveReplies(runID, run.Replies); err != nil {
@@ -355,16 +375,46 @@ func stripVerdict(s string) string {
 // you edited it. The draft is marked sent, and kept beside what you sent so
 // `prowl edits` and later reviews learn from your edits.
 func (co *Core) PostReply(runID int64, threadID, body string) error {
+	if err := co.sendReply(runID, threadID, body); err != nil {
+		return err
+	}
+	return co.markReplied(runID, threadID, body)
+}
+
+// draftedReply is the run that drafted a reply to a thread, and the reply's
+// index in it.
+func (co *Core) draftedReply(runID int64, threadID string) (*store.AgentReview, int, error) {
 	run, err := co.st.Run(runID)
 	if err != nil {
-		return fmt.Errorf("reply: %w", err)
+		return nil, 0, fmt.Errorf("reply: %w", err)
+	}
+	if run == nil {
+		return nil, 0, fmt.Errorf("reply: no review run %d", runID)
 	}
 	i := slices.IndexFunc(run.Replies, func(r store.ThreadReply) bool { return r.ThreadID == threadID })
 	if i < 0 {
-		return fmt.Errorf("reply: no drafted reply to thread %s", threadID)
+		return nil, 0, fmt.Errorf("reply: no drafted reply to thread %s", threadID)
+	}
+	return run, i, nil
+}
+
+func (co *Core) sendReply(runID int64, threadID, body string) error {
+	if _, _, err := co.draftedReply(runID, threadID); err != nil {
+		return err
 	}
 	if err := co.gh.ReplyToThread(threadID, body); err != nil {
 		return fmt.Errorf("reply: %w", err)
+	}
+	return nil
+}
+
+// markReplied records that a drafted reply went out as body. Submit sends
+// replies at once and marks them one at a time: each rewrites its run's
+// replies.
+func (co *Core) markReplied(runID int64, threadID, body string) error {
+	run, i, err := co.draftedReply(runID, threadID)
+	if err != nil {
+		return err
 	}
 	r := run.Replies[i]
 	run.Replies[i].Posted = true

@@ -107,7 +107,7 @@ func TestPeek(t *testing.T) {
 // fetched into your checkout. Refs and worktrees of a PR prowl has no review
 // of go too, whatever case the remote spells the repo in, and a checkout of
 // a repo that isn't on GitHub keeps its refs.
-func TestRefreshPrunesOnlyClosedPRs(t *testing.T) {
+func TestPruneClosedKeepsOpenPRs(t *testing.T) {
 	path := os.Getenv("PATH")
 	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("r", 1, "a", "bob"), ghtest.PR("r", 2, "b", "bob")},
 		Closed: map[string]bool{"o/r#2": true}}
@@ -139,6 +139,7 @@ func TestRefreshPrunesOnlyClosedPRs(t *testing.T) {
 		t.Fatal(err)
 	}
 	refresh(t, co)
+	co.PruneClosed()
 	if runs, _ := st.Runs("o/r#1"); len(runs) != 1 {
 		t.Error("an open PR outside the inbox lost its review history")
 	}
@@ -336,6 +337,29 @@ func TestRunReportsReviews(t *testing.T) {
 	waitEvent(t, co, core.RunsChanged)
 	if runs := co.Reviews()["o/api#1"]; len(runs) != 1 || runs[0].Status != "done" {
 		t.Fatalf("reviews: %+v", runs)
+	}
+}
+
+// A local review started by another prowl (`prowl review` in a checkout)
+// joins the inbox when its run shows up, without waiting for a sync.
+func TestRunShowsLocalReviewStartedElsewhere(t *testing.T) {
+	dir := localRepo(t)
+	path := os.Getenv("PATH")
+	co, st := newCore(t, &ghtest.GitHub{})
+	t.Setenv("PATH", path)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	go co.Run(ctx)
+	key := store.LocalKey("o/api", "feat/x")
+	if err := st.SaveLocal(store.Local{Key: key, Repo: "o/api", Branch: "feat/x", Dir: dir, Base: "main", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.StartRun(key, "abc", "claude", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	waitEvent(t, co, core.LocalsChanged)
+	if it, ok := find(co.Inbox(), key); !ok || it.Bucket != inbox.Local {
+		t.Fatalf("the local review isn't in the inbox: %+v", co.Inbox().Items)
 	}
 }
 
@@ -1173,7 +1197,7 @@ func TestCloseAndDraft(t *testing.T) {
 	if rv := fake.Reviews(); len(rv) != 1 || rv[0]["event"] != "COMMENT" || !fake.Wrote("mutation convertPullRequestToDraft") {
 		t.Fatalf("draft with comments: %v", rv)
 	}
-	if err := co.SetDraft("o/api#8", false, ""); err != nil || !fake.Wrote("mutation markPullRequestReadyForReview") {
+	if err := co.MarkReady("o/api#8"); err != nil || !fake.Wrote("mutation markPullRequestReadyForReview") {
 		t.Fatalf("ready for review: %v", err)
 	}
 }

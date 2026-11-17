@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -109,15 +110,9 @@ func (c *Client) search(q string, limit int) ([]string, error) {
 	var after *string
 	for len(out) < limit {
 		var resp struct {
-			Search struct {
-				Nodes []struct {
-					ID string `json:"id"`
-				} `json:"nodes"`
-				PageInfo struct {
-					HasNextPage bool   `json:"hasNextPage"`
-					EndCursor   string `json:"endCursor"`
-				} `json:"pageInfo"`
-			} `json:"search"`
+			Search page[struct {
+				ID string `json:"id"`
+			}] `json:"search"`
 		}
 		err := c.gql.Do(`query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: 100, after: $after) {
   nodes { ... on PullRequest { id } } pageInfo { hasNextPage endCursor } } }`, map[string]any{"q": q, "after": after}, &resp)
@@ -160,10 +155,11 @@ const maxBatches = 10
 
 // FetchInbox gets the open PRs that involve you in orgs (all of GitHub when
 // empty), plus every open PR in the watched repos (owner/name). The searches
-// return only IDs and run at once; then each PR found is loaded once, in
-// batches run at once. Searching with the full PR data is several times
-// slower, and the searches overlap.
-func (c *Client) FetchInbox(orgs, watch []string) (*Inbox, error) {
+// return only IDs and run at once; searching with the full PR data is several
+// times slower, and the searches overlap. The PRs in known (node IDs, from
+// the last sync) are loaded while the searches run, so only the PRs that are
+// new wait for them. A known PR that no search finds any more is left out.
+func (c *Client) FetchInbox(orgs, watch, known []string) (*Inbox, error) {
 	inbox := &Inbox{Watched: map[string]bool{}}
 	for _, r := range watch {
 		inbox.Watched[r] = true
@@ -193,36 +189,61 @@ func (c *Client) FetchInbox(orgs, watch []string) (*Inbox, error) {
 		wg.Go(func() { ids[i], errs[i] = c.search(q, searchLimit) })
 	}
 	wg.Go(func() { inbox.Viewer, inbox.Teams, errs[len(queries)] = c.viewerTeams(orgs) })
+	var loaded []PR
+	var loadErr error
+	wg.Go(func() { loaded, loadErr = c.loadPRs(known) })
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("fetch inbox: %w", err)
 	}
 
-	var unique []string
+	byID := map[string]PR{}
+	if loadErr == nil {
+		for _, pr := range loaded {
+			byID[pr.ID] = pr
+		}
+	}
+	var unique, missing []string
 	seen := map[string]bool{}
 	for _, list := range ids {
 		for _, id := range list {
-			if !seen[id] {
-				seen[id] = true
-				unique = append(unique, id)
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			unique = append(unique, id)
+			if _, ok := byID[id]; !ok {
+				missing = append(missing, id)
 			}
 		}
 	}
-	size := max(2, (len(unique)+maxBatches-1)/maxBatches)
-	batches := make([][]PR, (len(unique)+size-1)/size)
-	errs = make([]error, len(batches))
+	more, err := c.loadPRs(missing)
+	if err != nil {
+		return nil, fmt.Errorf("fetch inbox: %w", err)
+	}
+	for _, pr := range more {
+		byID[pr.ID] = pr
+	}
+	for _, id := range unique {
+		if pr, ok := byID[id]; ok {
+			inbox.PRs = append(inbox.PRs, pr)
+		}
+	}
+	return inbox, nil
+}
+
+// loadPRs loads full PR data for the given node IDs, in batches run at once.
+func (c *Client) loadPRs(ids []string) ([]PR, error) {
+	size := max(2, (len(ids)+maxBatches-1)/maxBatches)
+	batches := make([][]PR, (len(ids)+size-1)/size)
+	errs := make([]error, len(batches))
+	var wg sync.WaitGroup
 	for i := range batches {
-		chunk := unique[i*size : min((i+1)*size, len(unique))]
+		chunk := ids[i*size : min((i+1)*size, len(ids))]
 		wg.Go(func() { batches[i], errs[i] = c.prsByID(chunk) })
 	}
 	wg.Wait()
-	if err := errors.Join(errs...); err != nil {
-		return nil, fmt.Errorf("fetch inbox: %w", err)
-	}
-	for _, b := range batches {
-		inbox.PRs = append(inbox.PRs, b...)
-	}
-	return inbox, nil
+	return slices.Concat(batches...), errors.Join(errs...)
 }
 
 // viewerTeams is your login and the teams you're on in orgs.
@@ -338,13 +359,8 @@ type File struct {
 	ViewerViewedState string `json:"viewerViewedState"`
 }
 
-func splitRepo(nwo string) (string, string) {
-	owner, name, _ := strings.Cut(nwo, "/")
-	return owner, name
-}
-
 func (c *Client) FetchDetail(nwo string, number int) (*Detail, error) {
-	owner, name := splitRepo(nwo)
+	owner, name, _ := strings.Cut(nwo, "/")
 	q := `query($owner: String!, $name: String!, $n: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $n) {
     body
@@ -375,36 +391,25 @@ func (c *Client) FetchDetail(nwo string, number int) (*Detail, error) {
 				Comments struct {
 					Nodes []Comment `json:"nodes"`
 				} `json:"comments"`
-				ReviewThreads page[Thread] `json:"reviewThreads"`
-				Files         page[File]   `json:"files"`
-				Commits       struct {
-					Nodes []struct {
-						Commit struct {
-							StatusCheckRollup *struct {
-								Contexts page[checkNode] `json:"contexts"`
-							} `json:"statusCheckRollup"`
-						} `json:"commit"`
-					} `json:"nodes"`
-				} `json:"commits"`
+				prPage
 				TimelineItems struct {
 					Nodes []Event `json:"nodes"`
 				} `json:"timelineItems"`
 			} `json:"pullRequest"`
 		} `json:"repository"`
 	}
-	err := c.gql.Do(q, map[string]any{"owner": owner, "name": name, "n": number}, &resp)
-	if err != nil {
+	vars := map[string]any{"owner": owner, "name": name, "n": number}
+	if err := c.gql.Do(q, vars, &resp); err != nil {
 		return nil, fmt.Errorf("fetch detail: %w", err)
 	}
 	p := resp.Repository.PullRequest
-	vars := map[string]any{"owner": owner, "name": name, "n": number}
 	threads, err := allPages(c, p.ReviewThreads, vars, `reviewThreads(first: 100, after: $after) { `+threadFields+` }`,
-		func(pr prPage[Thread]) page[Thread] { return pr.ReviewThreads })
+		func(pr prPage) page[Thread] { return pr.ReviewThreads })
 	if err != nil {
 		return nil, err
 	}
 	files, err := allPages(c, p.Files, vars, `files(first: 100, after: $after) { `+fileFields+` }`,
-		func(pr prPage[File]) page[File] { return pr.Files })
+		func(pr prPage) page[File] { return pr.Files })
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +428,7 @@ func (c *Client) FetchDetail(nwo string, number int) (*Detail, error) {
 		}
 		checks, err := allPages(c, cm.Commit.StatusCheckRollup.Contexts, vars,
 			`commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { `+checkFields+` } } } } }`,
-			func(pr prPage[checkNode]) page[checkNode] {
+			func(pr prPage) page[checkNode] {
 				if len(pr.Commits.Nodes) == 0 || pr.Commits.Nodes[0].Commit.StatusCheckRollup == nil {
 					return page[checkNode]{}
 				}
@@ -441,7 +446,6 @@ func (c *Client) FetchDetail(nwo string, number int) (*Detail, error) {
 // the queries for the pages after the first.
 const (
 	threadFields = `nodes { id isResolved isOutdated path line startLine originalLine diffSide
-      viewerCanResolve viewerCanUnresolve
       comments(first: 50) { nodes { id author { login __typename } createdAt body url diffHunk } } }
     pageInfo { hasNextPage endCursor }`
 	fileFields  = `nodes { path additions deletions viewerViewedState } pageInfo { hasNextPage endCursor }`
@@ -468,8 +472,9 @@ type page[T any] struct {
 	} `json:"pageInfo"`
 }
 
-// prPage is a PR as the query for a later page of one connection returns it.
-type prPage[T any] struct {
+// prPage is the paged connections of a PR: what FetchDetail's query and the
+// queries for a later page of one of them return.
+type prPage struct {
 	ReviewThreads page[Thread] `json:"reviewThreads"`
 	Files         page[File]   `json:"files"`
 	Commits       struct {
@@ -485,13 +490,13 @@ type prPage[T any] struct {
 
 // allPages returns the nodes of first and of the pages after it, which it loads
 // with field, a connection taking $after, picked out of the answer by get.
-func allPages[T any](c *Client, first page[T], vars map[string]any, field string, get func(prPage[T]) page[T]) ([]T, error) {
+func allPages[T any](c *Client, first page[T], vars map[string]any, field string, get func(prPage) page[T]) ([]T, error) {
 	nodes := first.Nodes
 	cur := first
 	for i := 0; i < maxPages && cur.PageInfo.HasNextPage; i++ {
 		var resp struct {
 			Repository struct {
-				PullRequest prPage[T] `json:"pullRequest"`
+				PullRequest prPage `json:"pullRequest"`
 			} `json:"repository"`
 		}
 		v := maps.Clone(vars)
@@ -576,13 +581,12 @@ func (c *Client) ReplyToThread(threadID, body string) error {
 	return c.gql.Do(q, map[string]any{"id": threadID, "body": body}, nil)
 }
 
-func (c *Client) ResolveThread(threadID string) error {
-	q := `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }`
-	return c.gql.Do(q, map[string]any{"id": threadID}, nil)
-}
-
-func (c *Client) UnresolveThread(threadID string) error {
+// ResolveThread resolves a review thread, or reopens it.
+func (c *Client) ResolveThread(threadID string, resolved bool) error {
 	q := `mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }`
+	if resolved {
+		q = `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }`
+	}
 	return c.gql.Do(q, map[string]any{"id": threadID}, nil)
 }
 
@@ -590,19 +594,13 @@ func (c *Client) UnresolveThread(threadID string) error {
 func (c *Client) OrgRepos(org string) ([]string, error) {
 	var out []string
 	var after *string
-	for page := 0; page < 10; page++ {
+	for range 10 {
 		var resp struct {
 			Organization *struct {
-				Repositories struct {
-					Nodes []struct {
-						NameWithOwner string `json:"nameWithOwner"`
-						IsArchived    bool   `json:"isArchived"`
-					} `json:"nodes"`
-					PageInfo struct {
-						HasNextPage bool   `json:"hasNextPage"`
-						EndCursor   string `json:"endCursor"`
-					} `json:"pageInfo"`
-				} `json:"repositories"`
+				Repositories page[struct {
+					NameWithOwner string `json:"nameWithOwner"`
+					IsArchived    bool   `json:"isArchived"`
+				}] `json:"repositories"`
 			} `json:"organization"`
 		}
 		err := c.gql.Do(`query($org: String!, $after: String) { organization(login: $org) {
