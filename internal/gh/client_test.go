@@ -1,6 +1,7 @@
 package gh_test
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -337,5 +338,42 @@ func TestTokenStaysOnGitHub(t *testing.T) {
 	}
 	if storage != "" {
 		t.Fatalf("the storage host got %q", storage)
+	}
+}
+
+// Review candidates are the repo's assignable people, then its org's teams
+// as org/slug. A repo owned by a person has no teams, and that's no error.
+func TestReviewCandidates(t *testing.T) {
+	for _, c := range []struct {
+		name, teams, want string
+	}{
+		{"org repo", `{"data":{"organization":{"teams":{"nodes":[{"slug":"backend","name":"Backend"}]}}}}`,
+			"[{bob Bob false} {acme/backend Backend true}]"},
+		{"personal repo", `{"errors":[{"message":"Could not resolve to an Organization with the login of 'acme'."}]}`,
+			"[{bob Bob false}]"},
+	} {
+		cl := fake(t, func(r *http.Request) *http.Response {
+			b, _ := io.ReadAll(r.Body)
+			if strings.Contains(string(b), "assignableUsers") {
+				return reply(200, `{"data":{"repository":{"assignableUsers":{"nodes":[{"login":"bob","name":"Bob"}],"pageInfo":{"hasNextPage":false}}}}}`)
+			}
+			return reply(200, c.teams)
+		})
+		got, err := cl.ReviewCandidates("acme/api")
+		if err != nil || fmt.Sprint(got) != c.want {
+			t.Errorf("%s: %v, %v; want %s", c.name, got, err, c.want)
+		}
+	}
+}
+
+// GitHub's suggested reviewers leave out the PR's author.
+func TestSuggestedReviewers(t *testing.T) {
+	cl := fake(t, func(r *http.Request) *http.Response {
+		return reply(200, `{"data":{"repository":{"pullRequest":{"suggestedReviewers":[
+{"isAuthor":true,"reviewer":{"login":"alice","name":"Alice"}},{"isAuthor":false,"reviewer":{"login":"bob","name":"Bob"}}]}}}}`)
+	})
+	got, err := cl.SuggestedReviewers("acme/api", 7)
+	if err != nil || fmt.Sprint(got) != "[{bob Bob false}]" {
+		t.Fatalf("suggested = %v, %v", got, err)
 	}
 }

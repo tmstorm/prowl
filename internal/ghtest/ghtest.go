@@ -42,6 +42,9 @@ type GitHub struct {
 	RejectReview map[int]bool      // review submissions (1 is the first) that fail with a server error
 	Repos        []string
 	Members      []gh.Person // the org's members
+	Assignable   []string    // logins who can be asked to review, in any repo
+	Teams        []string    // the org's team slugs
+	Suggested    []string    // logins GitHub suggests as reviewers, on any PR
 	Closed       map[string]bool
 	Release      *gh.Release      // the latest release of any repo; nil: none
 	Assets       map[int64][]byte // release asset -> its bytes
@@ -145,10 +148,28 @@ func (f *GitHub) graphql(q string, v map[string]any) any {
 		return map[string]any{}
 	case strings.HasPrefix(strings.TrimSpace(q), "{ viewer"):
 		return map[string]any{"viewer": map[string]any{"login": f.Viewer}}
-	case strings.Contains(q, "teams(first"):
+	case strings.Contains(q, "teams(first") && strings.Contains(q, "userLogins"):
 		return map[string]any{"organization": map[string]any{"teams": map[string]any{"nodes": []any{}}}}
 	case strings.Contains(q, "membersWithRole(first"):
 		return map[string]any{"organization": map[string]any{"membersWithRole": map[string]any{"nodes": f.Members, "pageInfo": map[string]any{}}}}
+	case strings.Contains(q, "teams(first"):
+		var nodes []any
+		for _, t := range f.Teams {
+			nodes = append(nodes, map[string]any{"slug": t, "name": t + " team"})
+		}
+		return map[string]any{"organization": map[string]any{"teams": map[string]any{"nodes": nodes, "pageInfo": map[string]any{}}}}
+	case strings.Contains(q, "suggestedReviewers"):
+		var nodes []any
+		for _, login := range f.Suggested {
+			nodes = append(nodes, map[string]any{"isAuthor": false, "reviewer": map[string]any{"login": login, "name": strings.ToUpper(login[:1]) + login[1:] + " Example"}})
+		}
+		return map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"suggestedReviewers": nodes}}}
+	case strings.Contains(q, "assignableUsers(first"):
+		var nodes []any
+		for _, login := range f.Assignable {
+			nodes = append(nodes, map[string]any{"login": login, "name": strings.ToUpper(login[:1]) + login[1:] + " Example"})
+		}
+		return map[string]any{"repository": map[string]any{"assignableUsers": map[string]any{"nodes": nodes, "pageInfo": map[string]any{}}}}
 	case strings.Contains(q, "repositories(first"):
 		var nodes []any
 		for _, r := range f.Repos {

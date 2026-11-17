@@ -438,7 +438,7 @@ func TestSuggestsClosing(t *testing.T) {
 }
 
 // S on a diff line starts a suggested change holding that line; <leader>A
-// asks someone for a review.
+// asks someone for a review, by a name nobody in the list matches too.
 func TestSuggestAndAskForReview(t *testing.T) {
 	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,1 +1,2 @@\n ctx line\n+return nil\n"
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Diffs: map[int]string{7: diff}})
@@ -450,9 +450,83 @@ func TestSuggestAndAskForReview(t *testing.T) {
 	a.want("pending comment saved")
 	a.keys("space", "A")
 	a.want("Ask for reviews on api#7")
-	a.paste("bob")
-	a.keys("ctrl+s")
+	a.keys("newcomer", "enter")
+	a.want("asked newcomer to review")
 	if !a.wrote("POST /repos/o/api/pulls/7/requested_reviewers") {
 		t.Fatal("no review request sent")
 	}
+}
+
+// <leader>A lists who can review: someone asked already and someone who
+// reviewed first, with where they stand, then whom GitHub suggests, then the
+// repo's people and its org's teams. You filter as you type and check several. The PR's author
+// and you aren't listed, and someone who reviewed starts checked.
+func TestAskForReviewsPicker(t *testing.T) {
+	p := ghtest.Requested(needsReview("api", 7, "fix: crash"), "carol")
+	p.Reviews.Nodes = []gh.Review{{Author: &gh.Actor{Login: "dave"}, State: "APPROVED", SubmittedAt: time.Now()}}
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{p}, Assignable: []string{"alice", "bob", "carol", "dave", "erin", "me"}, Teams: []string{"backend"},
+		Suggested: []string{"erin"}})
+	a.keys("space", "A")
+	a.want("Ask for reviews on api#7", "carol", "Carol Example · asked", "[x] dave", "Dave Example · approved",
+		"[ ] erin", "Erin Example · suggested", "bob", "Bob Example", "@o/backend", "backend team")
+	a.before("carol", "dave", "erin", "bob", "@o/backend")
+	a.wantNot("Alice Example", "Me Example")
+	a.keys("bac", " ")
+	a.want("[x] @o/backend")
+	a.wantNot("Bob Example")
+	a.keys("enter")
+	a.want("asked dave, o/backend to review")
+	if !a.wrote("POST /repos/o/api/pulls/7/requested_reviewers") {
+		t.Fatal("no review request sent")
+	}
+}
+
+// A click below the rows on screen checks nobody, and a filter that leaves
+// fewer rows than the picker had scrolled past keeps it drawing, with the
+// cursor on a row that's left.
+func TestReviewerPickerScrollThenFilter(t *testing.T) {
+	var people []string
+	for i := range 32 {
+		people = append(people, fmt.Sprintf("kay%02d", i))
+	}
+	for i := range 8 {
+		people = append(people, fmt.Sprintf("wes%02d", i))
+	}
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Assignable: people})
+	a.keys("space", "A")
+	a.want("kay00")
+	a.clickFirst("space or click check")
+	a.wantNot("[x]")
+	for range 39 {
+		a.keys("down")
+	}
+	a.want("wes07")
+	a.keys("k")
+	a.want("kay31")
+	a.wantNot("wes07")
+}
+
+// Enter with nobody checked asks the row under the cursor once you've typed
+// a filter, and nobody before; a typed name that matches nobody is asked
+// along with whoever is checked; a click checks a row.
+func TestReviewerPickerEnterAndClick(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Assignable: []string{"bob", "carol"}})
+	a.keys("space", "A", "enter")
+	if a.wrote("POST /repos/o/api/pulls/7/requested_reviewers") {
+		t.Fatal("enter on an untouched list asked someone")
+	}
+	a.keys("space", "A", "bob", "enter")
+	a.want("asked bob to review")
+
+	p := needsReview("api", 7, "fix: crash")
+	p.Reviews.Nodes = []gh.Review{{Author: &gh.Actor{Login: "dave"}, State: "APPROVED", SubmittedAt: time.Now()}}
+	b := newApp(t, &fakeGitHub{PRs: []gh.PR{p}, Assignable: []string{"bob", "dave"}})
+	b.keys("space", "A", "newcomer", "enter")
+	b.want("asked dave, newcomer to review")
+
+	c := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Assignable: []string{"bob", "carol"}})
+	c.keys("space", "A")
+	c.clickFirst("Carol Example")
+	c.want("[x] carol")
+	c.wantNot("[x] bob")
 }

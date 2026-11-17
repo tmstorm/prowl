@@ -714,6 +714,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.channelsRead(msg)
 		return m, nil
 
+	case candidatesMsg:
+		if msg.err != nil {
+			m.fail(msg.err.Error())
+			return m, nil
+		}
+		p := newReviewerPicker(m, msg.item, msg.candidates, msg.suggested)
+		m.popup = p
+		return m, p.input.Focus()
+
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress {
 			m.waking = false
@@ -1458,17 +1467,7 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 	case "A":
 		if onGitHub() {
-			reviewed, requested := reviewersOf(m, *it)
-			var again []string
-			for _, n := range reviewed {
-				if !slices.Contains(requested, n) {
-					again = append(again, n)
-				}
-			}
-			p := newTextPopup(m, popRequest, *it, nil, strings.Join(again, ", "))
-			p.ta.SetHeight(2)
-			m.popup = p
-			return p.ta.Focus()
+			return m.askForReviews(*it)
 		}
 	case "X":
 		if onGitHub() {

@@ -49,6 +49,7 @@ type Core struct {
 	reactions   map[string]string            // Slack reactions on your PRs, as of the last sync
 	slackLinks  map[string]string            // the Slack message that shared each PR, as of the last sync
 	slackShares map[string]store.SlackShare  // each shared PR's newest share by someone else
+	candidates  map[string][]gh.Candidate    // who can review, by repo, for the session
 
 	slack      *slack.Client     // nil when you aren't signed in to Slack
 	slackErr   error             // why the last sync couldn't read Slack
@@ -618,6 +619,43 @@ func (co *Core) RequestReviews(key string, names []string) error {
 		return fmt.Errorf("request reviews on %s: %w", key, err)
 	}
 	return nil
+}
+
+// ReviewCandidates lists who can be asked to review the PR: people who can
+// be assigned in its repo, then its org's teams. It asks GitHub once per repo
+// per session.
+func (co *Core) ReviewCandidates(key string) ([]gh.Candidate, error) {
+	repo, _, err := parseKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("reviewers: %w", err)
+	}
+	co.mu.Lock()
+	cached, ok := co.candidates[repo]
+	co.mu.Unlock()
+	if ok {
+		return cached, nil
+	}
+	out, err := co.gh.ReviewCandidates(repo)
+	if err != nil {
+		return nil, err
+	}
+	co.mu.Lock()
+	if co.candidates == nil {
+		co.candidates = map[string][]gh.Candidate{}
+	}
+	co.candidates[repo] = out
+	co.mu.Unlock()
+	return out, nil
+}
+
+// SuggestedReviewers are the people GitHub suggests for the PR, from the code
+// owners and recent authors of the files it changes.
+func (co *Core) SuggestedReviewers(key string) ([]gh.Candidate, error) {
+	repo, n, err := parseKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("suggested reviewers: %w", err)
+	}
+	return co.gh.SuggestedReviewers(repo, n)
 }
 
 // Claim requests you as a reviewer on GitHub, for a PR shared without
