@@ -81,11 +81,13 @@ A few things worth doing next:
 
 prowl is pre-1.0: the `0.x` releases may still change how things work. The engine (`internal/core`) has no terminal code in it, so other interfaces can sit on top. The roadmap:
 
-- **A stable core, then 1.0.** Settle the engine's API so other interfaces can rely on it.
-- **A VS Code extension**, built on that core, for reviewing without leaving the editor.
+- **Review extensions.** Your own review steps, in any language: a command prowl runs on every review of the repos you choose, whose output goes to the reviewer and into the findings.
+- **Findings for the author.** `prowl findings` on your own PR shows what reviewers asked for on GitHub, so you or your agent can work through it like a local AI review.
+- **Performance review**, the first extension. prowl runs a repo's benchmarks on the base and the head, reports significant regressions as findings, and has the reviewer propose fixes where no benchmark covers the code.
 - **Re-review on push.** An option to start a re-review when an author pushes after your review, so it's ready before you open the PR.
 - **Any model for summaries.** An OpenAI-compatible endpoint setting (OpenAI, Anthropic, xAI, or your own Ollama or llama.cpp server), so summaries work without Claude Code or Codex.
-- **Packages:** AUR (`prowl-bin`) first, then Homebrew and Scoop, so installing is one package-manager command on every system.
+- **A VS Code extension** for reviewing without leaving the editor, out before 1.0 so what it needs from the engine shapes the core and you can try it first.
+- **A stable core and packages, then 1.0.** Settle the engine's API and the extension protocol so other interfaces and extensions can rely on them, then publish to AUR (`prowl-bin`), Homebrew and Scoop.
 
 Being considered: merging from prowl. For now prowl stays review-only, and merging happens on GitHub where the repo's merge rules live.
 
