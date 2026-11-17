@@ -769,7 +769,7 @@ var clientID = regexp.MustCompile(`^\d+\.\d+$`)
 
 // withSlack has co read the PR links shared in Slack, when you're signed in.
 func withSlack(co *core.Core, st *store.Store) *core.Core {
-	if token, err := slack.Token(st.SlackSignedIn()); err == nil && token != "" {
+	if token, err := slack.LoadToken(st.SlackSignedIn()); err == nil && token.Access != "" {
 		co.UseSlack(slack.New(token))
 	}
 	return co
@@ -792,7 +792,7 @@ func connectSlack(cfg config.Config, st *store.Store, args []string) error {
 		return fmt.Errorf("usage: prowl slack [--off]")
 	}
 	ctx := context.Background()
-	token := ""
+	var token slack.Token
 	if cfg.SlackClientID == "" {
 		fmt.Print("prowl needs a Slack app to sign in to. Your team needs only one: if someone\n" +
 			"already made it, enter its client ID. Otherwise create it at\n" +
@@ -806,7 +806,7 @@ func connectSlack(cfg config.Config, st *store.Store, args []string) error {
 		answer = strings.TrimSpace(answer)
 		switch {
 		case strings.HasPrefix(answer, "xoxp-"):
-			token = answer
+			token = slack.Token{Access: answer}
 		case !clientID.MatchString(answer):
 			return fmt.Errorf("%q isn't a client ID: it's two numbers joined by a dot, under Basic Information, App Credentials", answer)
 		default:
@@ -816,11 +816,11 @@ func connectSlack(cfg config.Config, st *store.Store, args []string) error {
 			}
 		}
 	}
-	if token == "" {
+	if token.Access == "" {
 		login, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		var err error
-		token, err = slack.New("").Login(login, cfg.SlackClientID, func(url string) error {
+		token, err = slack.New(slack.Token{}).Login(login, cfg.SlackClientID, func(url string) error {
 			fmt.Println("Opening Slack in your browser to sign in. If it doesn't open, go to:\n" + url)
 			_ = platform.Open(url)
 			return nil
