@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tmstorm/prowl/internal/platform"
 )
@@ -42,4 +44,45 @@ func TestServiceOnLinux(t *testing.T) {
 			t.Errorf("systemctl was not asked to %q:\n%s", want, got)
 		}
 	}
+}
+
+// A link opener exits on its own; prowl reaps it, so none stays behind as a
+// zombie while prowl runs.
+func TestOpenLeavesNoZombie(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc")
+	}
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	_ = os.WriteFile(filepath.Join(bin, "xdg-open"), []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	for range 3 {
+		if err := platform.Open("https://github.com/acme/api/pull/1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 100 {
+		if zombies() == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%d openers left as zombies", zombies())
+}
+
+// zombies counts this process's children that exited and weren't reaped.
+func zombies() int {
+	stats, _ := filepath.Glob("/proc/[0-9]*/stat")
+	n := 0
+	for _, path := range stats {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		_, rest, _ := strings.Cut(string(b), ") ")
+		f := strings.Fields(rest)
+		if len(f) > 1 && f[0] == "Z" && f[1] == strconv.Itoa(os.Getpid()) {
+			n++
+		}
+	}
+	return n
 }

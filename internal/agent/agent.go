@@ -110,12 +110,12 @@ func Launch(st *store.Store, j Job) error {
 	cmd := exec.Command(exe, "agent-run", jobFile)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	platform.Detach(cmd)
-	if err := cmd.Start(); err != nil {
+	if err := platform.Spawn(cmd); err != nil {
 		_ = st.FailRun(j.RunID, err.Error())
 		return fmt.Errorf("start review job: %w", err)
 	}
 	_ = st.SetRunPID(j.RunID, cmd.Process.Pid)
-	return cmd.Process.Release()
+	return nil
 }
 
 // Schema is the JSON Schema a review with the given severities must match.
