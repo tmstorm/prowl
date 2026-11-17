@@ -328,7 +328,6 @@ func quoteList(xs []string) string {
 	return strings.Join(q, ", ")
 }
 
-// mapOpt edits a string-to-string table in your editor.
 // emojiOpt is the Slack emoji prowl reacts with for one review state.
 func emojiOpt(title, key, help string, field func(r *config.SlackReactions) *string) option {
 	return option{section: "Slack", title: title + " emoji", label: "slack_reactions." + key, help: help + " A Slack emoji name, without colons.", kind: optText,
@@ -343,6 +342,7 @@ func emojiOpt(title, key, help string, field func(r *config.SlackReactions) *str
 		}}
 }
 
+// mapOpt edits a string-to-string table in your editor.
 func mapOpt(section, title, label, header string, field func(c *config.Config) *map[string]string) option {
 	return option{section: section, title: title, label: label, help: "Opens your editor.", kind: optEditor,
 		get: func(c *config.Config) string {
