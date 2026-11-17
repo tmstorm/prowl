@@ -1236,6 +1236,7 @@ func (m *Model) normal(key string) tea.Cmd {
 		m.searchBack = false
 		m.searchInput.Prompt = key
 		m.searchInput.SetValue("")
+		m.searchInput.SetSuggestions(nil)
 		m.searchInput.Width = m.w - 4
 		return m.searchInput.Focus()
 	case "n":

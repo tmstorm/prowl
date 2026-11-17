@@ -665,10 +665,12 @@ func TestDocsViewer(t *testing.T) {
 }
 
 // :help opens the docs at a tag's heading or table row, completing the tag
-// with tab. A tag with several places lists them, and a topic with no tag is
-// searched for.
+// with tab, and / doesn't complete tags. A tag with several places lists
+// them, and a topic with no tag is searched for.
 func TestHelpCommand(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.keys(":", "h st", "esc", "/", "h", "tab", "enter")
+	a.wantNot("h inbox", "pattern not found")
 	a.resize(160, 16)
 	a.keys(":", "help stale_a", "tab", "enter")
 	a.want("prowl docs · Config", "▌  stale_after")
