@@ -11,6 +11,7 @@ import (
 
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/core"
+	"github.com/tmstorm/prowl/internal/platform"
 )
 
 type authCheckedMsg struct{ err error }
@@ -116,7 +117,7 @@ func (p *accountsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		}
 		cmd := exec.Command(login.Args[0], login.Args[1:]...)
 		cmd.Dir, cmd.Env = login.Dir, login.Env
-		return tea.ExecProcess(cmd, func(err error) tea.Msg { return loginDoneMsg{a.Key, a.Title, err} })
+		return tea.Exec(platform.TerminalCmd{Cmd: cmd}, func(err error) tea.Msg { return loginDoneMsg{a.Key, a.Title, err} })
 	}
 	return nil
 }

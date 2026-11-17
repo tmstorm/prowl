@@ -15,6 +15,7 @@ import (
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/inbox"
+	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
@@ -48,7 +49,7 @@ func (m *Model) openEditor(name, content string, onDone func(m *Model, text stri
 		cmd = exec.Command("powershell", "-NoProfile", "-Command",
 			"& { "+m.cfg.EditorCmd()+" '"+strings.ReplaceAll(path, "'", "''")+"' | Out-Null }")
 	}
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+	return tea.Exec(platform.TerminalCmd{Cmd: cmd}, func(err error) tea.Msg {
 		return editorDoneMsg{path: path, mtime: mtime, err: err, onDone: onDone}
 	})
 }
