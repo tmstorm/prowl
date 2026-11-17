@@ -48,8 +48,9 @@ func localChanges(dir, base string) []string {
 	return files
 }
 
-// localHeader opens the prompt of a local review.
-func localHeader(j Job, reader string, h history) string {
+// localHeader opens the prompt of a local review. On a re-review, an agent
+// that can run commands tests only what changed, as on a PR.
+func localHeader(j Job, reader string, h history, canRun bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `You are reviewing local changes on branch %s in %s for %s, before a pull request exists. Nothing you write is posted: it goes back to %s, or to the coding agent working in this checkout.
 
@@ -60,9 +61,11 @@ The checkout is the current directory, and some of the work may not be committed
 
 `, j.Branch, j.Repo, reader, reader, gh.Short(h.base), j.Base, gh.Short(h.base))
 	if h.lastOid != "" {
-		fmt.Fprintf(&b, `You reviewed this branch before, at commit %s. Start from what changed since then (git diff %s), and only raise problems in code you already reviewed when they are must-fix.
-
-`, gh.Short(h.lastOid), gh.Short(h.lastOid))
+		fmt.Fprintf(&b, "You reviewed this branch before, at commit %s. Start from what changed since then (git diff %s), and only raise problems in code you already reviewed when they are must-fix.", gh.Short(h.lastOid), gh.Short(h.lastOid))
+		if canRun {
+			b.WriteString(" " + testWhatChanged)
+		}
+		b.WriteString("\n\n")
 	}
 	return b.String()
 }
