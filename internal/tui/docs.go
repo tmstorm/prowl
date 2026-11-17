@@ -16,6 +16,7 @@ import (
 // docsPopup reads prowl's built-in docs: one page at a time with a cursor
 // line, links to follow, and a search over every page.
 type docsPopup struct {
+	prev           popup // what esc goes back to
 	pages          []core.DocPage
 	page, cur, top int
 	back           []docsSpot // where links were followed from, for backspace
@@ -53,7 +54,7 @@ func newDocsPopup() *docsPopup {
 // them to pick from, and a topic with no tag is searched for.
 func (m *Model) openDocs(topic string) tea.Cmd {
 	p := newDocsPopup()
-	m.popup = p
+	p.prev, m.popup = m.popup, p
 	if topic == "" {
 		return nil
 	}
@@ -165,7 +166,7 @@ func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		p.input.SetValue("")
 		return p.input.Focus()
 	case "esc", "q":
-		m.popup = nil
+		m.popup = p.prev
 	}
 	return nil
 }

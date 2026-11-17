@@ -479,6 +479,7 @@ func (p *helpPopup) view(m *Model) string {
 		k("zz zt zb", "center / top / bottom"),
 		k("/ n N", "search, next, previous"),
 		k("?", "this help"),
+		k("K", "docs for what's under the cursor"),
 		k("← → ↑ ↓", "panes and rows, like h l k j"),
 		"",
 		sSection.Render("Panes"),

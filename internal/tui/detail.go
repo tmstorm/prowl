@@ -1684,6 +1684,25 @@ func (d *detail) removePending(l diffLine) bool {
 	return false
 }
 
+// docsTopic is the docs topic for the row under the cursor: its finding,
+// draft reply, thread or check, or else its tab.
+func (d *detail) docsTopic() string {
+	rows := d.rows[d.tab]
+	if v := d.nav(); v.cur < len(rows) {
+		switch r := rows[v.cur]; {
+		case r.finding >= 0:
+			return "Severities"
+		case r.reply != "":
+			return "Draft replies"
+		case r.thread != "":
+			return "Threads"
+		case strings.HasPrefix(r.block, "check"):
+			return "Checks"
+		}
+	}
+	return []string{"Overview", "The diff", "The review tab"}[d.tab]
+}
+
 // threadAtCursor returns the review thread under the cursor, if any.
 func (d *detail) threadAtCursor() *gh.Thread {
 	if d.det == nil || d.tab == tabReview {

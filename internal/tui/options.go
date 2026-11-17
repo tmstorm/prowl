@@ -280,6 +280,18 @@ var options = []option{
 		set: func(c *config.Config, v string) error { c.AutoUpdate = v == "true"; return nil }},
 }
 
+// optionTopic is the docs topic for an option: its config key as the config
+// docs write it, e.g. [agent.models] for models.claude.
+func optionTopic(label string) string {
+	key, _, _ := strings.Cut(label, ".")
+	for _, t := range []string{key, "[" + key + "]", "[agent." + key + "]", "[[agent." + key + "]]"} {
+		if tags := core.FindDocTag(t); len(tags) > 0 && tags[0].Tag == t {
+			return t
+		}
+	}
+	return label
+}
+
 // modelOption is the model setting for one reviewer, listed per agent.
 func modelOption(name string) option {
 	return option{section: "Review agent", title: agent.Title(name) + " model", label: "models." + name, kind: optChoice,
@@ -479,6 +491,8 @@ func (p *optionsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch key {
 	case "esc", "q":
 		m.popup = nil
+	case "K":
+		return m.openDocs(optionTopic(o.label))
 	case "j", "down":
 		p.cur = min(p.cur+1, len(vis)-1)
 		p.err = ""

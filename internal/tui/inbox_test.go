@@ -687,6 +687,27 @@ func TestHelpCommand(t *testing.T) {
 	a.want("prowl docs", "nothing found")
 }
 
+// K opens the docs at what the cursor is on: a PR's bucket, the PR pane's
+// tab or check, an option. esc goes back to where K was pressed.
+func TestDocsUnderCursor(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.resize(160, 16)
+	a.keys("K")
+	a.want("prowl docs · The inbox", "▌ needs review")
+	a.keys("esc", "l", "K")
+	a.want("prowl docs · Reading and reviewing a PR", "▌Overview")
+	a.keys("esc", "space", ",", "K")
+	a.want("prowl docs · Config", "▌  group_by")
+	a.keys("esc")
+	a.want("Options", "Group by")
+	for range 60 {
+		a.keys("K")
+		a.want("prowl docs")
+		a.wantNot("nothing found")
+		a.keys("esc", "j")
+	}
+}
+
 // Links in the docs show as [label] and follow from prose, from a table, and
 // within a page. Of two links with the same label, each goes to its own
 // target: reviewing.md links [Slack] to slack.md#keys in a table first. A

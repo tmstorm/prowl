@@ -1229,6 +1229,8 @@ func (m *Model) normal(key string) tea.Cmd {
 	case "?":
 		m.popup = &helpPopup{}
 		return nil
+	case "K":
+		return m.openDocs(m.docsTopic())
 	case "/":
 		m.mode = modeSearch
 		m.searchBack = false
@@ -1731,6 +1733,29 @@ func helpSuggestions(q string) []string {
 		}
 	}
 	return out
+}
+
+// docsTopic is the docs topic for what the cursor is on: a PR's bucket, or in
+// the PR pane its finding, thread, check or tab.
+func (m *Model) docsTopic() string {
+	if m.focus == fDetail {
+		if d := m.current(); d != nil {
+			return d.docsTopic()
+		}
+		return ""
+	}
+	c := m.list.cur
+	if c < 0 || c >= len(m.rows) {
+		return ""
+	}
+	switch r := m.rows[c]; {
+	case r.repo != "":
+		return "Grouping and focusing"
+	case r.header:
+		return r.bucket.String()
+	default:
+		return m.items[r.item].Bucket.String()
+	}
 }
 
 // exCommand runs a vim-style : command.
