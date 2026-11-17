@@ -439,6 +439,22 @@ func TestReReviewTestsWhatChanged(t *testing.T) {
 	}
 }
 
+// A re-review of a local branch tests only what changed too.
+func TestLocalReReviewTestsWhatChanged(t *testing.T) {
+	st, roots, bin, head := setupRun(t)
+	dir := filepath.Join(roots, "api")
+	prev, _ := st.StartRun(store.LocalKey("o/api", "main"), head, "claude", "", 0)
+	_ = st.FinishRun(prev, "s0", "earlier", "", nil)
+	cfg := config.Default()
+	cfg.Agent.RunImages = map[string]string{"*": "golang:1.27"}
+	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Dir: dir, Branch: "main", Base: "main", Viewer: "me", Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := read(filepath.Join(bin, "prompts")); !strings.Contains(p, "You reviewed this branch before") || !strings.Contains(p, "Run only the tests for the code that changed since then") {
+		t.Errorf("the local re-review should test only what changed:\n%s", p)
+	}
+}
+
 // A review GitHub dismissed after a push still counts as the reader's last
 // review: the re-review starts from what they approved, not from an older
 // request for changes.

@@ -247,7 +247,7 @@ func prompt(j Job, cfg config.Config, be Backend, guidelines []string, h history
 	}
 	var b strings.Builder
 	if j.Dir != "" {
-		b.WriteString(localHeader(j, reader, h))
+		b.WriteString(localHeader(j, reader, h, canRun))
 	} else {
 		fmt.Fprintf(&b, `You are reviewing pull request #%d in %s for %s, who will read your review before anything is posted.
 
