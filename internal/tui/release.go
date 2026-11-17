@@ -25,22 +25,34 @@ const onTip = "you're on prowl "
 // red where the rest is pink.
 const breakingTip = "⚠ breaking changes"
 
+// featuresTip is how the tip counts a release's new features, in green where
+// the rest is pink. releaseTip writes it with no-break spaces, so that it
+// wraps as one word.
+var featuresTip = regexp.MustCompile(`\d+ new features?`)
+
 // releaseTip puts news about prowl's own updates under the legend: a
 // release installed and waiting for a restart, one to install, or what's new
-// in the release now running.
+// in the release now running, with how many features it adds.
 func (m *Model) releaseTip() {
 	r := m.core.Release(m.exe)
+	news := "<leader>N what's new"
+	switch {
+	case r.Features == 1:
+		news = "1\u00a0new\u00a0feature · " + news
+	case r.Features > 1:
+		news = fmt.Sprintf("%d\u00a0new\u00a0features · %s", r.Features, news)
+	}
 	tip := ""
 	switch {
 	case r.Installed:
-		tip = fmt.Sprintf("prowl %s is installed · <leader>U restarts into it · <leader>N what's new", r.Latest)
+		tip = fmt.Sprintf("prowl %s is installed · <leader>U restarts into it · %s", r.Latest, news)
 	case r.Newer() && r.Command != "" && m.core.FirstNews(r.Latest):
-		tip = fmt.Sprintf("prowl %s is out: %s · <leader>N what's new", r.Latest, r.Command)
+		tip = fmt.Sprintf("prowl %s is out: %s · %s", r.Latest, r.Command, news)
 	case r.Newer() && r.Command == "" && !m.cfg.AutoUpdate && m.core.FirstNews(r.Latest):
-		tip = fmt.Sprintf("prowl %s is out · <leader>U installs it · <leader>N what's new", r.Latest)
+		tip = fmt.Sprintf("prowl %s is out · <leader>U installs it · %s", r.Latest, news)
 	default:
 		if v, _ := m.core.WhatsNew(); v != "" {
-			tip = fmt.Sprintf(onTip+"%s · <leader>N what's new", v)
+			tip = fmt.Sprintf(onTip+"%s · %s", v, news)
 		}
 	}
 	if tip != "" {

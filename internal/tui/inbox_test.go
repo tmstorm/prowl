@@ -446,7 +446,7 @@ func TestUpdateInstalled(t *testing.T) {
 	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.2.0", Notes: notes, URL: "https://github.com/tmstorm/prowl/releases/tag/v0.2.0"})
 	_ = a.st.SetInstalled("v0.2.0")
 	a = reopen(a)
-	a.want("prowl v0.2.0 is installed · <space>U restarts into it")
+	a.want("prowl v0.2.0 is installed · <space>U restarts into it", "1 new feature · <space>N what's new")
 	a.keys("?")
 	a.want("prowl 0.1.0 · any key to close")
 	a.keys("esc", "space", "N")
@@ -459,6 +459,28 @@ func TestUpdateInstalled(t *testing.T) {
 	if !a.m.(*tui.Model).Restart() {
 		t.Fatal("<leader>U should quit to restart into the installed release")
 	}
+}
+
+// The tip counts the features a release adds, and leaves the count out of a
+// release that adds none.
+func TestFeaturesTip(t *testing.T) {
+	old := core.Version
+	core.Version = "0.2.0"
+	t.Cleanup(func() { core.Version = old })
+	notes := "## [0.2.0](https://github.com/tmstorm/prowl/compare/v0.1.0...v0.2.0) (2026-11-20)\n\n\n### Features\n\n" +
+		"* **update:** retry failed installs an hour later ([#9](https://github.com/tmstorm/prowl/issues/9))\n" +
+		"* count a release's features in the tip ([#10](https://github.com/tmstorm/prowl/issues/10))\n\n" +
+		"### Bug Fixes\n\n* show the reviewer's note ([4f1c2aa](https://github.com/tmstorm/prowl/commit/4f1c2aa))\n"
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.2.0", Notes: notes, URL: "https://github.com/tmstorm/prowl/releases/tag/v0.2.0"})
+	a = reopen(a)
+	a.want("you're on prowl v0.2.0 · 2 new features · <space>N what's new")
+
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.2.1", Notes: "### Bug Fixes\n\n* show the reviewer's note\n", URL: "https://github.com/tmstorm/prowl/releases/tag/v0.2.1"})
+	_ = a.st.SetInstalled("v0.2.1")
+	a = reopen(a)
+	a.want("prowl v0.2.1 is installed · <space>U restarts into it")
+	a.wantNot("new feature")
 }
 
 // A release whose notes list breaking changes says so first: in the tip
