@@ -920,25 +920,8 @@ func (m *Model) detailPane(l layout, x int) string {
 	if d.tab == tabReview {
 		bodyY += 2
 	}
-	m.hits.items = append(m.hits.items, hit{x: x + 1, y: bodyY, w: w - 2, h: v.h, click: func(m *Model, y int) tea.Cmd {
-		m.focus = fDetail
-		prev, at := v.cur, v.top+y-bodyY
-		v.jump(at)
-		rows := d.rows[d.tab]
-		if v.cur != at || at >= len(rows) {
-			return nil
-		}
-
-		switch r := rows[at]; {
-		case r.head:
-			d.foldAt("za")
-		case prev != at:
-		case d.tab == tabReview && r.finding >= 0:
-			d.toggleIncluded(m)
-		case d.tab == tabDiff && r.diff >= 0:
-			return m.commentOnSelection(d, false)
-		}
-		return nil
+	m.hits.items = append(m.hits.items, hit{x: x + 1, y: bodyY, w: w - 2, h: v.h, drag: func(m *Model, msg tea.MouseMsg) tea.Cmd {
+		return m.bodyMouse(d, bodyY, msg)
 	}})
 	m.hits.addScroll(x, 0, w, h, v)
 	hint := " + full width "
@@ -1117,8 +1100,6 @@ func (m *Model) cmdline() string {
 		} else {
 			left = m.msg
 		}
-	case m.mode == modeVisual:
-		left = sBold.Render("-- VISUAL LINE --") + sDim.Render("  c comment on selection · esc cancel")
 	}
 	if left == "" {
 		return ""
@@ -1429,6 +1410,7 @@ type hit struct {
 	x, y, w, h int
 	modal      bool // a confirm button: the only clicks taken while one is open
 	click      func(m *Model, y int) tea.Cmd
+	drag       func(m *Model, msg tea.MouseMsg) tea.Cmd // takes the left button's press, motion and release
 	scroll     *nav
 }
 
@@ -1464,17 +1446,25 @@ func (m *Model) mouse(msg tea.MouseMsg) tea.Cmd {
 				return nil
 			}
 		}
-	case tea.MouseButtonLeft:
-		if msg.Action != tea.MouseActionPress {
-			return nil
+	case tea.MouseButtonLeft, tea.MouseButtonNone:
+		switch msg.Action {
+		case tea.MouseActionPress:
+			m.press = press{}
+		case tea.MouseActionRelease:
+			defer func() { m.press = press{} }()
 		}
 		for i := len(m.hits.items) - 1; i >= 0; i-- {
 			h := m.hits.items[i]
-			if m.confirm != nil && !h.modal {
+			if m.confirm != nil && !h.modal || !inside(h, msg.X, msg.Y) {
 				continue
 			}
-			if h.click != nil && inside(h, msg.X, msg.Y) {
+			switch {
+			case h.drag != nil:
+				return h.drag(m, msg)
+			case h.click != nil && msg.Action == tea.MouseActionPress:
 				return h.click(m, msg.Y)
+			case h.click != nil:
+				return nil
 			}
 		}
 	}

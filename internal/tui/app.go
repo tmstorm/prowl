@@ -124,6 +124,7 @@ type Model struct {
 	mode         mode
 	pending      string
 	visualAnchor int
+	press        press
 	search       string
 	searchBack   bool
 	searchInput  textinput.Model
@@ -746,7 +747,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Action == tea.MouseActionPress {
 			m.waking = false
 		}
-		return m, m.mouse(msg)
+		selecting := m.activeNav()
+		cmd := m.mouse(msg)
+		m.endVisual(selecting)
+		return m, cmd
 
 	case tea.KeyMsg:
 		return m, m.key(msg)
@@ -1066,6 +1070,14 @@ func (m *Model) activeNav() *nav {
 	return &m.list
 }
 
+// endVisual leaves visual mode once the tab or pane it selected in, whose
+// nav was selecting, is no longer the one in use.
+func (m *Model) endVisual(selecting *nav) {
+	if m.mode == modeVisual && m.activeNav() != selecting {
+		m.mode = modeNormal
+	}
+}
+
 // ---- keys
 
 func (m *Model) key(k tea.KeyMsg) tea.Cmd {
@@ -1122,11 +1134,13 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 	if m.pending != "" {
 		key = m.pending + key
 		m.pending = ""
-	} else if strings.Contains("g]z[dy", key) && len(key) == 1 {
+	} else if strings.Contains("g]z[dy", key) && len(key) == 1 && !(key == "y" && m.mode == modeVisual) {
 		m.pending = key
 		return nil
 	}
+	selecting := m.activeNav()
 	cmd := m.normal(key)
+	m.endVisual(selecting)
 	if m.focus == fList {
 		return tea.Batch(cmd, m.schedulePreview())
 	}
@@ -1286,6 +1300,10 @@ func (m *Model) normal(key string) tea.Cmd {
 			return openURL(it.PR.URL)
 		}
 	case "yy":
+		if m.focus == fDetail && d != nil {
+			m.yank(d)
+		}
+	case "ys":
 		if it := m.selectedItem(); it != nil {
 			return m.copySlack(*it)
 		}
