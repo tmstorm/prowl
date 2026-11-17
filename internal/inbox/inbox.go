@@ -74,6 +74,9 @@ type Item struct {
 	// On your PR: who reacted on its Slack share, e.g. "#reviews: Bob ✅".
 	SlackReactions string
 	SlackLink      string // the Slack message that shared it
+	// On a PR you were asked to review: where it was shared too, as its reason
+	// ends, e.g. "shared in #reviews by bob".
+	SharedToo string
 
 	ReviewStatus string // approved | changes requested | needs review | needs rebase | draft
 }
@@ -386,6 +389,7 @@ func withShare(it Item, share gh.Share) Item {
 	switch {
 	case it.Bucket == NeedsReview:
 		it.Reason += " · " + where
+		it.SharedToo = where
 	case it.MyLastReview == nil && !it.PR.IsDraft && slices.Contains([]Bucket{TeamRequest, Involved, Unclaimed, Watching}, it.Bucket):
 		it.Bucket, it.Since, it.Reason = Shared, share.At, where
 	}

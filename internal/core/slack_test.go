@@ -320,3 +320,26 @@ func TestSlackAppLink(t *testing.T) {
 		t.Fatalf("link = %q, want %q", it.SlackLink, want)
 	}
 }
+
+// A PR you were asked to review notifies once; a share of it in Slack later
+// joins its reason without notifying again.
+func TestShareOfRequestedPRDoesNotNotify(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
+	co, _ := newCore(t, &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}})
+	cfg := config.Default()
+	cfg.SlackChannels = []string{"C1"}
+	co.SetConfig(cfg)
+	sl := &fakeSlack{}
+	co.UseSlack(sl.client(t))
+	if changes, _ := co.Refresh(); len(changes) != 1 {
+		t.Fatalf("first sync: %v", changes)
+	}
+	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
+	changes, err := co.Refresh()
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("after the share: %v, %v", changes, err)
+	}
+	if it, _ := find(co.Inbox(), "o/api#7"); it.Reason != "review requested · shared in #reviews by bob" {
+		t.Fatalf("reason = %q", it.Reason)
+	}
+}

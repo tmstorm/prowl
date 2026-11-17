@@ -315,7 +315,7 @@ func changed(items []inbox.Item, prev map[string]store.PRState) []inbox.Item {
 			continue
 		}
 		p, seen := prev[it.PR.Key()]
-		if !seen || p.Bucket != int(it.Bucket) || p.Reason != it.Reason ||
+		if !seen || p.Bucket != int(it.Bucket) || p.Reason != lastingReason(it) ||
 			(it.Bucket == inbox.Addressed && p.HeadOid != it.PR.HeadRefOid) {
 			out = append(out, it)
 		}
@@ -323,11 +323,17 @@ func changed(items []inbox.Item, prev map[string]store.PRState) []inbox.Item {
 	return out
 }
 
+// lastingReason is the reason that decides whether a PR changed: without
+// where it was shared too, since Slack told you about that already.
+func lastingReason(it inbox.Item) string {
+	return strings.TrimSuffix(it.Reason, " · "+it.SharedToo)
+}
+
 func states(items []inbox.Item) []store.PRState {
 	out := make([]store.PRState, 0, len(items))
 	for _, it := range items {
 		out = append(out, store.PRState{
-			Key: it.PR.Key(), Bucket: int(it.Bucket), Reason: it.Reason,
+			Key: it.PR.Key(), Bucket: int(it.Bucket), Reason: lastingReason(it),
 			HeadOid: it.PR.HeadRefOid, Title: it.PR.Title, URL: it.PR.URL,
 		})
 	}
