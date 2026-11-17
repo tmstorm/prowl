@@ -688,7 +688,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fail(msg.err.Error())
 			return m, nil
 		}
-		p := newReviewerPicker(m, msg.item, msg.candidates)
+		p := newReviewerPicker(m, msg.item, msg.candidates, msg.suggested)
 		m.popup = p
 		return m, p.input.Focus()
 

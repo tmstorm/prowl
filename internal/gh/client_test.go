@@ -343,3 +343,15 @@ func TestReviewCandidates(t *testing.T) {
 		}
 	}
 }
+
+// GitHub's suggested reviewers leave out the PR's author.
+func TestSuggestedReviewers(t *testing.T) {
+	cl := fake(t, func(r *http.Request) *http.Response {
+		return reply(200, `{"data":{"repository":{"pullRequest":{"suggestedReviewers":[
+{"isAuthor":true,"reviewer":{"login":"alice","name":"Alice"}},{"isAuthor":false,"reviewer":{"login":"bob","name":"Bob"}}]}}}}`)
+	})
+	got, err := cl.SuggestedReviewers("acme/api", 7)
+	if err != nil || fmt.Sprint(got) != "[{bob Bob false}]" {
+		t.Fatalf("suggested = %v, %v", got, err)
+	}
+}

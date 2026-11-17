@@ -595,6 +595,16 @@ func (co *Core) ReviewCandidates(key string) ([]gh.Candidate, error) {
 	return out, nil
 }
 
+// SuggestedReviewers are the people GitHub suggests for the PR, from the code
+// owners and recent authors of the files it changes.
+func (co *Core) SuggestedReviewers(key string) ([]gh.Candidate, error) {
+	repo, n, err := parseKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("suggested reviewers: %w", err)
+	}
+	return co.gh.SuggestedReviewers(repo, n)
+}
+
 // Claim requests you as a reviewer on GitHub, for a PR shared without
 // asking you (a link in Slack, say).
 func (co *Core) Claim(key string) error {

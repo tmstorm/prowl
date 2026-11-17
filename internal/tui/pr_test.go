@@ -458,17 +458,18 @@ func TestSuggestAndAskForReview(t *testing.T) {
 }
 
 // <leader>A lists who can review: someone asked already and someone who
-// reviewed first, with where they stand, then the repo's people and its
-// org's teams. You filter as you type and check several. The PR's author
+// reviewed first, with where they stand, then whom GitHub suggests, then the
+// repo's people and its org's teams. You filter as you type and check several. The PR's author
 // and you aren't listed, and someone who reviewed starts checked.
 func TestAskForReviewsPicker(t *testing.T) {
 	p := ghtest.Requested(needsReview("api", 7, "fix: crash"), "carol")
 	p.Reviews.Nodes = []gh.Review{{Author: &gh.Actor{Login: "dave"}, State: "APPROVED", SubmittedAt: time.Now()}}
-	a := newApp(t, &fakeGitHub{PRs: []gh.PR{p}, Assignable: []string{"alice", "bob", "carol", "dave", "me"}, Teams: []string{"backend"}})
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{p}, Assignable: []string{"alice", "bob", "carol", "dave", "erin", "me"}, Teams: []string{"backend"},
+		Suggested: []string{"erin"}})
 	a.keys("space", "A")
 	a.want("Ask for reviews on api#7", "carol", "Carol Example · asked", "[x] dave", "Dave Example · approved",
-		"bob", "Bob Example", "@o/backend", "backend team")
-	a.before("carol", "dave", "bob", "@o/backend")
+		"[ ] erin", "Erin Example · suggested", "bob", "Bob Example", "@o/backend", "backend team")
+	a.before("carol", "dave", "erin", "bob", "@o/backend")
 	a.wantNot("Alice Example", "Me Example")
 	a.keys("bac", " ")
 	a.want("[x] @o/backend")

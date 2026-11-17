@@ -887,9 +887,9 @@ type reviewerRow struct {
 }
 
 type candidatesMsg struct {
-	item       inbox.Item
-	candidates []gh.Candidate
-	err        error
+	item                  inbox.Item
+	candidates, suggested []gh.Candidate
+	err                   error
 }
 
 // askForReviews loads who can review the PR, then opens the picker.
@@ -898,15 +898,19 @@ func (m *Model) askForReviews(it inbox.Item) tea.Cmd {
 	m.info("loading who can review…")
 	return func() tea.Msg {
 		c, err := co.ReviewCandidates(it.PR.Key())
-		return candidatesMsg{item: it, candidates: c, err: err}
+		if err != nil {
+			return candidatesMsg{item: it, err: err}
+		}
+		s, err := co.SuggestedReviewers(it.PR.Key())
+		return candidatesMsg{item: it, candidates: c, suggested: s, err: err}
 	}
 }
 
 // newReviewerPicker lists the people and teams asked already and the people
-// who reviewed (not you, the author or a bot), then everyone else who can
-// review. Someone who reviewed and isn't asked now starts checked, to ask
-// them again.
-func newReviewerPicker(m *Model, it inbox.Item, candidates []gh.Candidate) *reviewerPicker {
+// who reviewed (not you, the author or a bot), then the people GitHub
+// suggests, then everyone else who can review. Someone who reviewed and
+// isn't asked now starts checked, to ask them again.
+func newReviewerPicker(m *Model, it inbox.Item, candidates, suggested []gh.Candidate) *reviewerPicker {
 	p := &reviewerPicker{item: it}
 	seen := map[string]bool{}
 	add := func(r reviewerRow) {
@@ -932,6 +936,11 @@ func newReviewerPicker(m *Model, it inbox.Item, candidates []gh.Candidate) *revi
 			continue
 		}
 		add(reviewerRow{login: n, state: states[r.State], on: true})
+	}
+	for _, c := range suggested {
+		if c.Login != m.viewer && c.Login != it.PR.AuthorLogin() {
+			add(reviewerRow{login: c.Login, name: c.Name, state: "suggested"})
+		}
 	}
 	for _, c := range candidates {
 		if c.Login != m.viewer && c.Login != it.PR.AuthorLogin() {

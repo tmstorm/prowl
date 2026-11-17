@@ -648,6 +648,41 @@ func (c *Client) ReviewCandidates(repo string) ([]Candidate, error) {
 	return out, nil
 }
 
+// SuggestedReviewers are the people GitHub suggests for a PR, from the code
+// owners and recent authors of the files it changes.
+func (c *Client) SuggestedReviewers(repo string, number int) ([]Candidate, error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		return nil, fmt.Errorf("repo %q is not owner/name", repo)
+	}
+	var resp struct {
+		Repository *struct {
+			PullRequest *struct {
+				SuggestedReviewers []struct {
+					IsAuthor bool      `json:"isAuthor"`
+					Reviewer Candidate `json:"reviewer"`
+				} `json:"suggestedReviewers"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	}
+	err := c.gql.Do(`query($owner: String!, $name: String!, $n: Int!) { repository(owner: $owner, name: $name) {
+  pullRequest(number: $n) { suggestedReviewers { isAuthor reviewer { login name } } } } }`,
+		map[string]any{"owner": owner, "name": name, "n": number}, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("suggested reviewers for %s#%d: %w", repo, number, err)
+	}
+	if resp.Repository == nil || resp.Repository.PullRequest == nil {
+		return nil, nil
+	}
+	var out []Candidate
+	for _, s := range resp.Repository.PullRequest.SuggestedReviewers {
+		if !s.IsAuthor {
+			out = append(out, s.Reviewer)
+		}
+	}
+	return out, nil
+}
+
 // OrgRepos lists an org's repos that aren't archived, as owner/name.
 func (c *Client) OrgRepos(org string) ([]string, error) {
 	var out []string
