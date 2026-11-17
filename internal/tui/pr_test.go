@@ -438,7 +438,7 @@ func TestSuggestsClosing(t *testing.T) {
 }
 
 // S on a diff line starts a suggested change holding that line; <leader>A
-// asks someone for a review.
+// asks someone for a review, by a name nobody in the list matches too.
 func TestSuggestAndAskForReview(t *testing.T) {
 	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,1 +1,2 @@\n ctx line\n+return nil\n"
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Diffs: map[int]string{7: diff}})
@@ -450,8 +450,31 @@ func TestSuggestAndAskForReview(t *testing.T) {
 	a.want("pending comment saved")
 	a.keys("space", "A")
 	a.want("Ask for reviews on api#7")
-	a.paste("bob")
-	a.keys("ctrl+s")
+	a.keys("newcomer", "enter")
+	a.want("asked newcomer to review")
+	if !a.wrote("POST /repos/o/api/pulls/7/requested_reviewers") {
+		t.Fatal("no review request sent")
+	}
+}
+
+// <leader>A lists who can review: someone asked already and someone who
+// reviewed first, with where they stand, then the repo's people and its
+// org's teams. You filter as you type and check several. The PR's author
+// and you aren't listed, and someone who reviewed starts checked.
+func TestAskForReviewsPicker(t *testing.T) {
+	p := ghtest.Requested(needsReview("api", 7, "fix: crash"), "carol")
+	p.Reviews.Nodes = []gh.Review{{Author: &gh.Actor{Login: "dave"}, State: "APPROVED", SubmittedAt: time.Now()}}
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{p}, Assignable: []string{"alice", "bob", "carol", "dave", "me"}, Teams: []string{"backend"}})
+	a.keys("space", "A")
+	a.want("Ask for reviews on api#7", "carol", "Carol Example · asked", "[x] dave", "Dave Example · approved",
+		"bob", "Bob Example", "@o/backend", "backend team")
+	a.before("carol", "dave", "bob", "@o/backend")
+	a.wantNot("Alice Example", "Me Example")
+	a.keys("bac", " ")
+	a.want("[x] @o/backend")
+	a.wantNot("Bob Example")
+	a.keys("enter")
+	a.want("asked dave, o/backend to review")
 	if !a.wrote("POST /repos/o/api/pulls/7/requested_reviewers") {
 		t.Fatal("no review request sent")
 	}

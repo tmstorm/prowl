@@ -37,7 +37,6 @@ const (
 	popInline popKind = iota
 	popRefine
 	popReply
-	popRequest
 )
 
 type textPopup struct {
@@ -65,8 +64,6 @@ func newTextPopup(m *Model, kind popKind, it inbox.Item, sel []diffLine, value s
 		ta.Placeholder = `e.g. "drop the second finding, it's intentional" or "dig into the migration"`
 	case popReply:
 		ta.Placeholder = "reply…"
-	case popRequest:
-		ta.Placeholder = "logins or org/team, comma separated"
 	}
 	ta.Focus()
 	return &textPopup{kind: kind, item: it, sel: sel, ta: ta}
@@ -135,15 +132,6 @@ func (p *textPopup) commit(m *Model) tea.Cmd {
 			}
 			return threadDoneMsg{key, "replied", co.Reply(id, body)}
 		}
-	case popRequest:
-		if body == "" {
-			return nil
-		}
-		co, key := m.core, p.item.PR.Key()
-		m.info("asking for reviews…")
-		return func() tea.Msg {
-			return threadDoneMsg{key, "asked " + body + " to review", co.RequestReviews(key, strings.Split(body, ","))}
-		}
 	}
 	return nil
 }
@@ -188,16 +176,6 @@ func (p *textPopup) view(m *Model) string {
 			}
 		}
 		help = "ctrl+s post reply · ctrl+e edit in " + m.cfg.EditorCmd() + " · esc cancel"
-	case popRequest:
-		title = "Ask for reviews on " + prName(p.item.PR)
-		reviewed, requested := reviewersOf(m, p.item)
-		if len(reviewed) > 0 {
-			ctx = append(ctx, sDim.Render("reviewed: "+strings.Join(reviewed, ", ")))
-		}
-		if len(requested) > 0 {
-			ctx = append(ctx, sDim.Render("asked already: "+strings.Join(requested, ", ")))
-		}
-		help = "ctrl+s ask · esc cancel · someone who reviewed is asked again"
 	}
 	body := ""
 	if len(ctx) > 0 {
@@ -891,26 +869,188 @@ func (p *profilePicker) view(m *Model) string {
 func (p *profilePicker) rows(*Model) (int, int, int) { return 3, 0, len(p.profiles) }
 func (p *profilePicker) cursor() *int                { return &p.cur }
 
-// reviewersOf are the people who reviewed a PR (not you, its author or a
-// bot) and the people and teams asked to review it now.
-func reviewersOf(m *Model, it inbox.Item) (reviewed, requested []string) {
-	for _, rr := range it.PR.ReviewRequests.Nodes {
-		if n := rr.RequestedReviewer.Login; n != "" {
-			requested = append(requested, n)
-		} else if rr.RequestedReviewer.Slug != "" {
-			requested = append(requested, "@"+rr.RequestedReviewer.Slug)
+// reviewerPicker asks people and teams to review a PR: everyone who can
+// review it, filtered as you type, with the ones it's with already first.
+type reviewerPicker struct {
+	item    inbox.Item
+	all     []reviewerRow
+	input   textinput.Model
+	results []int // indexes into all
+	cur     int
+	top     int
+}
+
+type reviewerRow struct {
+	login, name string
+	state       string // where they stand on the PR: asked, approved, …; "" for none
+	on          bool
+}
+
+type candidatesMsg struct {
+	item       inbox.Item
+	candidates []gh.Candidate
+	err        error
+}
+
+// askForReviews loads who can review the PR, then opens the picker.
+func (m *Model) askForReviews(it inbox.Item) tea.Cmd {
+	co := m.core
+	m.info("loading who can review…")
+	return func() tea.Msg {
+		c, err := co.ReviewCandidates(it.PR.Key())
+		return candidatesMsg{item: it, candidates: c, err: err}
+	}
+}
+
+// newReviewerPicker lists the people and teams asked already and the people
+// who reviewed (not you, the author or a bot), then everyone else who can
+// review. Someone who reviewed and isn't asked now starts checked, to ask
+// them again.
+func newReviewerPicker(m *Model, it inbox.Item, candidates []gh.Candidate) *reviewerPicker {
+	p := &reviewerPicker{item: it}
+	seen := map[string]bool{}
+	add := func(r reviewerRow) {
+		if !seen[strings.ToLower(r.login)] {
+			seen[strings.ToLower(r.login)] = true
+			p.all = append(p.all, r)
 		}
 	}
-	d := m.details[it.PR.Key()]
-	if d == nil || d.det == nil {
-		return nil, requested
+	for _, rr := range it.PR.ReviewRequests.Nodes {
+		if n := rr.RequestedReviewer.Login; n != "" && n != m.viewer {
+			add(reviewerRow{login: n, state: "asked"})
+		} else if slug := rr.RequestedReviewer.Slug; n == "" && slug != "" {
+			owner, _, _ := strings.Cut(it.PR.Repository.NameWithOwner, "/")
+			add(reviewerRow{login: owner + "/" + slug, name: rr.RequestedReviewer.Name, state: "asked"})
+		}
 	}
-	for _, r := range d.det.Reviews {
+	states := map[string]string{"APPROVED": "approved", "CHANGES_REQUESTED": "changes requested", "COMMENTED": "commented", "DISMISSED": "dismissed"}
+	reviews := slices.Clone(it.PR.Reviews.Nodes)
+	slices.SortStableFunc(reviews, func(a, b gh.Review) int { return b.SubmittedAt.Compare(a.SubmittedAt) })
+	for _, r := range reviews {
 		n := author(r.Author)
-		if r.Author.IsBot(botLogins) || n == m.viewer || n == it.PR.AuthorLogin() || slices.Contains(reviewed, n) {
+		if r.Author.IsBot(botLogins) || n == m.viewer || n == it.PR.AuthorLogin() || states[r.State] == "" {
 			continue
 		}
-		reviewed = append(reviewed, n)
+		add(reviewerRow{login: n, state: states[r.State], on: true})
 	}
-	return reviewed, requested
+	for _, c := range candidates {
+		if c.Login != m.viewer && c.Login != it.PR.AuthorLogin() {
+			add(reviewerRow{login: c.Login, name: c.Name})
+		}
+	}
+	for i := range p.all {
+		for _, c := range candidates {
+			if p.all[i].name == "" && strings.EqualFold(c.Login, p.all[i].login) {
+				p.all[i].name = c.Name
+			}
+		}
+	}
+	p.input = textinput.New()
+	p.input.Prompt = sTitle.Render(" ") + " "
+	p.input.Placeholder = "name, login or org/team"
+	p.input.Width = 40
+	p.input.Focus()
+	p.filter()
+	return p
+}
+
+func (p *reviewerPicker) mode() mode { return modeInsert }
+
+func (p *reviewerPicker) filter() {
+	q := strings.ToLower(p.input.Value())
+	p.results = p.results[:0]
+	for i, r := range p.all {
+		if _, ok := fuzzy(q, strings.ToLower(r.login+" "+r.name)); ok {
+			p.results = append(p.results, i)
+		}
+	}
+	p.cur = min(p.cur, max(len(p.results)-1, 0))
+}
+
+func (p *reviewerPicker) forward(_ *Model, msg tea.Msg) tea.Cmd {
+	before := p.input.Value()
+	var cmd tea.Cmd
+	p.input, cmd = p.input.Update(msg)
+	if p.input.Value() != before {
+		p.filter()
+	}
+	return cmd
+}
+
+func (p *reviewerPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
+	switch k.String() {
+	case "down", "ctrl+n", "ctrl+j":
+		p.cur = min(p.cur+1, max(len(p.results)-1, 0))
+	case "up", "ctrl+p", "ctrl+k":
+		p.cur = max(p.cur-1, 0)
+	case " ", "tab":
+		if p.cur < len(p.results) {
+			r := &p.all[p.results[p.cur]]
+			r.on = !r.on
+		}
+	case "enter":
+		return p.ask(m)
+	case "esc":
+		m.popup = nil
+	default:
+		return p.forward(m, k)
+	}
+	return nil
+}
+
+// ask requests everyone checked, or the name typed when it matches nobody.
+func (p *reviewerPicker) ask(m *Model) tea.Cmd {
+	var names []string
+	for _, r := range p.all {
+		if r.on {
+			names = append(names, r.login)
+		}
+	}
+	if typed := strings.TrimSpace(p.input.Value()); len(names) == 0 && len(p.results) == 0 && typed != "" {
+		names = strings.Split(typed, ",")
+	}
+	m.popup = nil
+	if len(names) == 0 {
+		return nil
+	}
+	co, key, who := m.core, p.item.PR.Key(), strings.Join(names, ", ")
+	m.info("asking " + who + " to review…")
+	return func() tea.Msg {
+		return threadDoneMsg{key, "asked " + who + " to review", co.RequestReviews(key, names)}
+	}
+}
+
+func (p *reviewerPicker) view(m *Model) string {
+	w := min(popWidth(m), 80)
+	var lines []string
+	for _, i := range p.results {
+		r := p.all[i]
+		box := sDim.Render("[ ]")
+		if r.on {
+			box = sGreen.Render("[x]")
+		}
+		login := r.login
+		if strings.Contains(login, "/") {
+			login = "@" + login
+		}
+		row := " " + box + " " + fit(sBold.Render(login), 24) + sDim.Render(r.name)
+		if r.state != "" {
+			row += sDim.Render(" · ") + sYellow.Render(r.state)
+		}
+		lines = append(lines, fit(row, w-4))
+	}
+	if len(lines) == 0 {
+		lines = append(lines, sDim.Render(" nobody matches: enter asks "+strings.TrimSpace(p.input.Value())))
+	} else {
+		lines[p.cur] = highlight(lines[p.cur], w-4, sTitle)
+	}
+	at := p.cur
+	if len(lines) > max(m.h-14, 6) {
+		p.top = min(p.top, at)
+		p.top = max(p.top, at-max(m.h-14, 6)+1)
+		lines = lines[p.top : p.top+max(m.h-14, 6)]
+	}
+	help := sDim.Render(" type to filter · ↑↓ move · space check · enter ask · esc cancel")
+	return popBox("Ask for reviews on "+prName(p.item.PR), p.input.View()+"\n"+sBorder.Render(strings.Repeat("─", w-4))+"\n"+
+		strings.Join(lines, "\n")+"\n\n"+help, w, pal.Accent)
 }

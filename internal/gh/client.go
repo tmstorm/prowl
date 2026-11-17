@@ -590,6 +590,64 @@ func (c *Client) ResolveThread(threadID string, resolved bool) error {
 	return c.gql.Do(q, map[string]any{"id": threadID}, nil)
 }
 
+// Candidate is someone who can be asked to review: a person, or a team as
+// org/slug with its name.
+type Candidate struct {
+	Login string `json:"login"`
+	Name  string `json:"name"`
+	Team  bool   `json:"-"`
+}
+
+// ReviewCandidates lists who can be asked to review a PR in repo: the people
+// who can be assigned in it, then the teams of the org that owns it. A repo
+// owned by a person has no teams.
+func (c *Client) ReviewCandidates(repo string) ([]Candidate, error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		return nil, fmt.Errorf("repo %q is not owner/name", repo)
+	}
+	var out []Candidate
+	var after *string
+	for range 10 {
+		var resp struct {
+			Repository *struct {
+				AssignableUsers page[Candidate] `json:"assignableUsers"`
+			} `json:"repository"`
+		}
+		err := c.gql.Do(`query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) {
+  assignableUsers(first: 100, after: $after) { nodes { login name } pageInfo { hasNextPage endCursor } } } }`,
+			map[string]any{"owner": owner, "name": name, "after": after}, &resp)
+		if err != nil {
+			return nil, fmt.Errorf("reviewers for %s: %w", repo, err)
+		}
+		if resp.Repository == nil {
+			return nil, fmt.Errorf("repo %s not found", repo)
+		}
+		out = append(out, resp.Repository.AssignableUsers.Nodes...)
+		pi := resp.Repository.AssignableUsers.PageInfo
+		if !pi.HasNextPage {
+			break
+		}
+		after = &pi.EndCursor
+	}
+	var teams struct {
+		Organization *struct {
+			Teams page[struct {
+				Slug string `json:"slug"`
+				Name string `json:"name"`
+			}] `json:"teams"`
+		} `json:"organization"`
+	}
+	err := c.gql.Do(`query($org: String!) { organization(login: $org) { teams(first: 100) { nodes { slug name } } } }`,
+		map[string]any{"org": owner}, &teams)
+	if err == nil && teams.Organization != nil {
+		for _, t := range teams.Organization.Teams.Nodes {
+			out = append(out, Candidate{Login: owner + "/" + t.Slug, Name: t.Name, Team: true})
+		}
+	}
+	return out, nil
+}
+
 // OrgRepos lists an org's repos that aren't archived, as owner/name.
 func (c *Client) OrgRepos(org string) ([]string, error) {
 	var out []string
