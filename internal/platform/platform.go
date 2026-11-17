@@ -49,13 +49,21 @@ func SlackApp() bool {
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
-// Open opens a URL in the default browser.
+// Open opens a URL in the default browser, or another app's link (such as
+// slack://) in that app. On Linux such a link goes through gio when it's
+// there: KDE's xdg-open turns slack://channel into slack:///channel, which
+// Slack doesn't follow.
 func Open(url string) error {
 	switch runtime.GOOS {
 	case "darwin":
 		return exec.Command("open", url).Start()
 	case "windows":
 		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	}
+	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+		if _, err := exec.LookPath("gio"); err == nil {
+			return exec.Command("gio", "open", url).Start()
+		}
 	}
 	return exec.Command("xdg-open", url).Start()
 }

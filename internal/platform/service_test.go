@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tmstorm/prowl/internal/platform"
 )
@@ -42,4 +44,34 @@ func TestServiceOnLinux(t *testing.T) {
 			t.Errorf("systemctl was not asked to %q:\n%s", want, got)
 		}
 	}
+}
+
+// On Linux, web links open with xdg-open and other apps' links with gio,
+// which hands them over unchanged.
+func TestOpenOnLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("xdg-open and gio are Linux only")
+	}
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	calls := filepath.Join(bin, "calls")
+	for _, name := range []string{"xdg-open", "gio"} {
+		_ = os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\necho "+name+" \"$@\" >> "+calls+"\n"), 0o755)
+	}
+	_ = platform.Open("https://github.com/acme/api/pull/1")
+	_ = platform.Open("slack://channel?team=T1&id=C1")
+	want := "gio open slack://channel?team=T1&id=C1\nxdg-open https://github.com/acme/api/pull/1"
+	ran := func() string {
+		b, _ := os.ReadFile(calls)
+		lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+		slices.Sort(lines)
+		return strings.Join(lines, "\n")
+	}
+	for range 100 {
+		if ran() == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("ran:\n%s\nwant:\n%s", ran(), want)
 }
