@@ -40,11 +40,21 @@ func Notify(title, body string, timeout time.Duration) {
 func Open(url string) error {
 	switch runtime.GOOS {
 	case "darwin":
-		return exec.Command("open", url).Start()
+		return Spawn(exec.Command("open", url))
 	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		return Spawn(exec.Command("rundll32", "url.dll,FileProtocolHandler", url))
 	}
-	return exec.Command("xdg-open", url).Start()
+	return Spawn(exec.Command("xdg-open", url))
+}
+
+// Spawn starts cmd without waiting for it, and reaps it once it exits, so
+// it doesn't stay behind as a zombie for as long as prowl runs.
+func Spawn(cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 // windowsToast shows a Windows toast with the built-in notification API,
