@@ -912,9 +912,7 @@ func (m *Model) detailPane(l layout, x int) string {
 		m.hits.add(x+2, 3, min(reasonW, w-4), 1, func(m *Model) tea.Cmd { return openURL(link) })
 	}
 	lines = append(lines, "")
-	for _, b := range d.body(m) {
-		lines = append(lines, " "+b)
-	}
+	lines = append(lines, d.body(m)...)
 	v := &d.navs[d.tab]
 	bodyY := 1 + detHeaderH
 	if d.tab == tabReview {
