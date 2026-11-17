@@ -334,6 +334,13 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 		offerNames = m.matchSlackNames(namesProposedMsg{tip: true})
 	}
 	m.synced = true
+	if err := m.core.SlackErr(); err != nil {
+		msg := err.Error()
+		if !strings.HasPrefix(msg, "slack") {
+			msg = "slack: " + msg
+		}
+		m.fail(msg)
+	}
 	selKey := m.selectionKey()
 	m.setInbox(m.core.Inbox())
 	m.loadRuns()

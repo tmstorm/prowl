@@ -13,6 +13,7 @@ import (
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/slack"
 )
 
 // openNames opens Options → Slack names, the setting before the two
@@ -191,4 +192,11 @@ func TestOpenShareInSlack(t *testing.T) {
 	wantOpened(1)
 	a.clickFirst("shared in #reviews by bob")
 	wantOpened(2)
+}
+
+// A sync that can't read Slack says why in the status line.
+func TestSlackSyncError(t *testing.T) {
+	a := newSlackApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, slack.NewWith("xoxp-test", "http://127.0.0.1:1/"))
+	a.waitFor("slack auth.test")
+	a.want("fix: crash")
 }
