@@ -27,9 +27,14 @@ type docsPopup struct {
 
 type docsSpot struct{ page, line int }
 
-// docLink is a link to another page as the renderer writes it, e.g.
-// "/slack.md" or "/ai-reviews.md#running-tests".
-var docLink = regexp.MustCompile(`/([a-z][\w-]*)\.md(?:#([\w-]+))?`)
+// docLink is a link within the docs in a page's Markdown, e.g.
+// [Running tests](ai-reviews.md#running-tests) or [Updating](#updating).
+var docLink = regexp.MustCompile(`\[([^\]]+)\]\(((?:[a-z][\w-]*\.md)?(?:#[\w-]+)?)\)`)
+
+// docLabel is a link as the viewer shows it: its label in brackets, like
+// vim help's |tag|. The renderer would drop the target of a link within a
+// page, move a table's links under the table, and wrap long targets.
+var docLabel = regexp.MustCompile(`\[([^\]]+)\]`)
 
 func newDocsPopup() *docsPopup {
 	p := &docsPopup{pages: core.Docs()}
@@ -44,7 +49,7 @@ func (p *docsPopup) width(m *Model) int  { return max(min(m.w-6, 110), 40) }
 func (p *docsPopup) height(m *Model) int { return max(m.h-11, 5) }
 
 func (p *docsPopup) lines(m *Model, page int) []string {
-	return renderMarkdown(p.pages[page].Markdown, p.width(m)-4, m.cfg.Theme)
+	return renderMarkdown(docLink.ReplaceAllString(p.pages[page].Markdown, "[$1]"), p.width(m)-4, m.cfg.Theme)
 }
 
 func (p *docsPopup) mode() mode {
@@ -98,7 +103,8 @@ func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 			p.show(s.page, s.line)
 		}
 	case "/":
-		p.searching = true
+		p.searching, p.hits, p.hit = true, nil, 0
+		p.input.SetValue("")
 		return p.input.Focus()
 	case "esc", "q":
 		m.popup = nil
@@ -106,24 +112,54 @@ func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// follow opens the page a link on the cursor line points to, at its
-// heading when it names one.
+// follow opens what the first link on the cursor line points to, at its
+// heading when it names one. A label wrapped onto the next line counts, so
+// the lines around the cursor are read with it.
 func (p *docsPopup) follow(m *Model) {
-	for _, l := range docLink.FindAllStringSubmatch(xansi.Strip(p.lines(m, p.page)[p.cur]), -1) {
-		page := slices.IndexFunc(p.pages, func(d core.DocPage) bool { return d.Name == l[1] })
-		if page < 0 {
+	lines := p.lines(m, p.page)
+	text := func(i int) string {
+		if i < 0 || i >= len(lines) {
+			return ""
+		}
+		return strings.Join(strings.Fields(xansi.Strip(lines[i])), " ")
+	}
+	before, line := text(p.cur-1)+" ", text(p.cur)
+	around := before + line + " " + text(p.cur+1)
+	for _, l := range docLabel.FindAllStringSubmatchIndex(around, -1) {
+		if l[1] <= len(before) || l[0] >= len(before)+len(line) {
 			continue
 		}
-		line := 0
-		if section, err := core.DocSection(l[1], l[2]); l[2] != "" && err == nil {
+		name, anchor, ok := p.target(around[l[2]:l[3]])
+		page := slices.IndexFunc(p.pages, func(d core.DocPage) bool { return d.Name == name })
+		if !ok || page < 0 {
+			continue
+		}
+		at := 0
+		if section, err := core.DocSection(name, anchor); anchor != "" && err == nil {
 			first, _, _ := strings.Cut(section, "\n")
-			heading := strings.TrimSpace(strings.TrimLeft(first, "#"))
-			line = max(slices.IndexFunc(p.lines(m, page), func(r string) bool { return strings.TrimSpace(xansi.Strip(r)) == heading }), 0)
+			heading := strings.TrimLeft(first, "# ")
+			at = max(slices.IndexFunc(p.lines(m, page), func(r string) bool { return strings.TrimLeft(strings.TrimSpace(xansi.Strip(r)), "# ") == heading }), 0)
 		}
 		p.back = append(p.back, docsSpot{p.page, p.cur})
-		p.show(page, line)
+		p.show(page, at)
 		return
 	}
+}
+
+// target is the page and anchor a link on the current page labelled label
+// points to.
+func (p *docsPopup) target(label string) (page, anchor string, ok bool) {
+	for _, l := range docLink.FindAllStringSubmatch(p.pages[p.page].Markdown, -1) {
+		if strings.Join(strings.Fields(strings.ReplaceAll(l[1], "`", "")), " ") != label {
+			continue
+		}
+		page, anchor, _ = strings.Cut(l[2], "#")
+		if page == "" {
+			return p.pages[p.page].Name, anchor, true
+		}
+		return strings.TrimSuffix(page, ".md"), anchor, true
+	}
+	return "", "", false
 }
 
 func (p *docsPopup) updateSearch(m *Model, k tea.KeyMsg) tea.Cmd {
