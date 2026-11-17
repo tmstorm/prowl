@@ -481,7 +481,6 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 	return nil
 }
 
-// printMarkdown prints md, rendered when stdout is a terminal.
 // showDocs lists the docs pages, or prints a page or one section of it.
 func showDocs(args []string) error {
 	switch len(args) {
@@ -507,6 +506,7 @@ func showDocs(args []string) error {
 	return nil
 }
 
+// printMarkdown prints md, rendered when stdout is a terminal.
 func printMarkdown(md string) {
 	if fd := int(os.Stdout.Fd()); term.IsTerminal(fd) {
 		w, _, _ := term.GetSize(fd)
