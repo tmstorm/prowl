@@ -2,9 +2,6 @@
 package slack
 
 import (
-	"fmt"
-	"os/exec"
-	"runtime"
 	"strings"
 
 	"github.com/tmstorm/prowl/internal/inbox"
@@ -34,23 +31,4 @@ func Line(it inbox.Item, who string) string {
 		status += ", needs rebase"
 	}
 	return strings.Join([]string{pr.URL + " " + status, who, pr.Title}, " · ")
-}
-
-// Copy puts text on the clipboard (Wayland, then X11, then macOS).
-func Copy(text string) error {
-	if runtime.GOOS == "windows" {
-		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-			"[Console]::InputEncoding = [Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())")
-		cmd.Stdin = strings.NewReader(text)
-		return cmd.Run()
-	}
-	for _, c := range [][]string{{"wl-copy"}, {"xclip", "-selection", "clipboard"}, {"xsel", "-ib"}, {"pbcopy"}} {
-		if _, err := exec.LookPath(c[0]); err != nil {
-			continue
-		}
-		cmd := exec.Command(c[0], c[1:]...)
-		cmd.Stdin = strings.NewReader(text)
-		return cmd.Run()
-	}
-	return fmt.Errorf("no clipboard tool found (install wl-clipboard or xclip)")
 }

@@ -1291,7 +1291,7 @@ func (m *Model) normal(key string) tea.Cmd {
 		}
 	case "yu":
 		if it := m.selectedItem(); it != nil && !it.PR.Local() {
-			if err := slack.Copy(it.PR.URL); err != nil {
+			if err := platform.Copy(it.PR.URL); err != nil {
 				m.fail(err.Error())
 			} else {
 				m.info("copied " + it.PR.URL)
@@ -1588,7 +1588,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 			return nil
 		}
 		prompt := agent.HandoffPrompt(agent.FindingsMarkdown(done, m.core.Notes(k), k, it.PR.HeadRefOid, false))
-		if err := slack.Copy(prompt); err != nil {
+		if err := platform.Copy(prompt); err != nil {
 			m.fail(err.Error())
 			return nil
 		}
@@ -1773,7 +1773,7 @@ func (m *Model) searchLines() []string {
 
 func (m *Model) copySlack(it inbox.Item) tea.Cmd {
 	line := m.core.SlackLine(it, false)
-	if err := slack.Copy(line); err != nil {
+	if err := platform.Copy(line); err != nil {
 		m.fail(err.Error())
 		return nil
 	}
@@ -1888,7 +1888,7 @@ func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 		cp.MyLastReview = &gh.Review{State: map[string]string{
 			"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED",
 		}[msg.event]}
-		if err := slack.Copy(m.core.SlackLine(cp, false)); err == nil {
+		if err := platform.Copy(m.core.SlackLine(cp, false)); err == nil {
 			note += " · slack line yanked"
 		}
 	}
