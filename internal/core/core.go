@@ -32,18 +32,19 @@ type Core struct {
 
 	syncing sync.Mutex // one sync at a time
 
-	mu       sync.Mutex
-	cfg      config.Config
-	cfgMod   time.Time // the config file's mtime when last read or written
-	quiet    bool      // this process never notifies (prowl list)
-	accounts []Account
-	inbox    Inbox
-	peek     map[string]bool  // repos (owner/name) whose open PRs are fetched this session
-	opened   map[string]prRef // PRs opened by link this session, kept through syncs
-	runs     map[string][]*store.Run
-	pending  map[string][]gh.DraftComment // your inline comments, by PR, until the next review
-	drafted  map[string]store.Review      // agent drafts on their way out, as prowl wrote them
-	unsent   map[string]Draft             // reviews that failed to post, by PR, until reopened
+	mu         sync.Mutex
+	cfg        config.Config
+	cfgMod     time.Time // the config file's mtime when last read or written
+	quiet      bool      // this process never notifies (prowl list)
+	accounts   []Account
+	inbox      Inbox
+	peek       map[string]bool  // repos (owner/name) whose open PRs are fetched this session
+	opened     map[string]prRef // PRs opened by link this session, kept through syncs
+	runs       map[string][]*store.Run
+	pending    map[string][]gh.DraftComment // your inline comments, by PR, until the next review
+	drafted    map[string]store.Review      // agent drafts on their way out, as prowl wrote them
+	unsent     map[string]Draft             // reviews that failed to post, by PR, until reopened
+	candidates map[string][]gh.Candidate    // who can review, by repo, for the session
 
 	updateStep  string    // what a running update is doing, "" when none runs
 	updateRetry time.Time // a failed background install waits until then to try again
@@ -565,6 +566,43 @@ func (co *Core) RequestReviews(key string, names []string) error {
 		return fmt.Errorf("request reviews on %s: %w", key, err)
 	}
 	return nil
+}
+
+// ReviewCandidates lists who can be asked to review the PR: people who can
+// be assigned in its repo, then its org's teams. It asks GitHub once per repo
+// per session.
+func (co *Core) ReviewCandidates(key string) ([]gh.Candidate, error) {
+	repo, _, err := parseKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("reviewers: %w", err)
+	}
+	co.mu.Lock()
+	cached, ok := co.candidates[repo]
+	co.mu.Unlock()
+	if ok {
+		return cached, nil
+	}
+	out, err := co.gh.ReviewCandidates(repo)
+	if err != nil {
+		return nil, err
+	}
+	co.mu.Lock()
+	if co.candidates == nil {
+		co.candidates = map[string][]gh.Candidate{}
+	}
+	co.candidates[repo] = out
+	co.mu.Unlock()
+	return out, nil
+}
+
+// SuggestedReviewers are the people GitHub suggests for the PR, from the code
+// owners and recent authors of the files it changes.
+func (co *Core) SuggestedReviewers(key string) ([]gh.Candidate, error) {
+	repo, n, err := parseKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("suggested reviewers: %w", err)
+	}
+	return co.gh.SuggestedReviewers(repo, n)
 }
 
 // Claim requests you as a reviewer on GitHub, for a PR shared without
