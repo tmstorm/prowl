@@ -56,7 +56,7 @@ func (p *docsPopup) lines(m *Model, page int) []string {
 	md := docLink.ReplaceAllStringFunc(p.pages[page].Markdown, func(l string) string {
 		return "[" + strings.ReplaceAll(docLink.FindStringSubmatch(l)[1], " ", "\u00a0") + "]"
 	})
-	return renderMarkdown(md, p.width(m)-4, m.cfg.Theme)
+	return gutter(slices.Clone(renderMarkdown(md, p.width(m)-5, m.cfg.Theme)))
 }
 
 func (p *docsPopup) mode() mode {

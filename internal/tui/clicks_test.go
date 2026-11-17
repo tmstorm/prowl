@@ -56,6 +56,20 @@ func TestOptionsCoverAgentSettings(t *testing.T) {
 	a.want("Review profiles", "adversarial", "AI summary for new PRs", "Learn from my edits", "Claude summary model", "*: golang:1.27, acme/web: node:22")
 }
 
+// The cursor's mark sits in the gutter, so it doesn't hide the first
+// character of a line that starts at the edge: a section in the PR pane, a
+// heading in the docs.
+func TestCursorMarkInGutter(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.keys("enter")
+	a.search("Reviewers")
+	if c := a.cursor(); !strings.Contains(c, "▌Reviewers") {
+		t.Fatalf("cursor = %q", c)
+	}
+	a.keys("esc", "?", "d", "/", "Snoozing", "enter")
+	a.want("▌Snoozing")
+}
+
 // The PR pane's border offers focus mode, and a click on it toggles it.
 func TestFocusModeHint(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}})

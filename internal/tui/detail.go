@@ -1561,20 +1561,29 @@ func (m *Model) selection(v *nav) (int, int) {
 	return v.cur, v.cur
 }
 
-// mark highlights row i of the focused PR when it is selected or under the
-// cursor.
+// mark puts row i of the PR behind its gutter, which shows the cursor's mark
+// when the PR pane has focus and the row is selected or under the cursor.
 func (m *Model) mark(row string, w int, v *nav, i int) string {
+	row = " " + row
 	if m.focus != fDetail {
 		return row
 	}
 	a, b := m.selection(v)
 	switch {
 	case m.mode == modeVisual && i >= a && i <= b:
-		return highlight(row, w, sPink)
+		return highlight(row, w+1, sPink)
 	case i == v.cur:
-		return highlight(row, w, sTitle)
+		return highlight(row, w+1, sTitle)
 	}
 	return row
+}
+
+// gutter puts lines that have no cursor behind the PR pane's gutter.
+func gutter(lines []string) []string {
+	for i, l := range lines {
+		lines[i] = " " + l
+	}
+	return lines
 }
 
 // commentOnSelection starts an inline comment on the line under the cursor
@@ -1742,7 +1751,7 @@ func (d *detail) body(m *Model) []string {
 	switch d.tab {
 	case tabOverview:
 		if d.det == nil && d.detErr == nil {
-			return skeleton(m, d.w, min(h, 12))
+			return gutter(skeleton(m, d.w, min(h, 12)))
 		}
 		out = d.window(m, d.rows[tabOverview], v, h)
 	case tabDiff:
@@ -1750,12 +1759,12 @@ func (d *detail) body(m *Model) []string {
 		switch {
 		case d.diffErr != nil:
 			for _, l := range wrap(d.diffErr.Error(), d.w) {
-				out = append(out, sErr.Render(l))
+				out = append(out, " "+sErr.Render(l))
 			}
 		case lines == nil:
-			return skeleton(m, d.w, min(h, 16))
+			return gutter(skeleton(m, d.w, min(h, 16)))
 		case len(lines) == 0:
-			out = append(out, sDim.Render("no changes"))
+			out = append(out, " "+sDim.Render("no changes"))
 		default:
 			rows := d.rows[tabDiff]
 			for i := v.top; i < len(rows) && i < v.top+h; i++ {
@@ -1778,11 +1787,11 @@ func (d *detail) body(m *Model) []string {
 			}
 		}
 	case tabReview:
-		out = append(out, d.reviewStatus(m), "")
+		out = append(out, " "+d.reviewStatus(m), "")
 		if cur := d.current(); playful && firstReviewRunning(cur) {
 			step := int(time.Since(cur[0].StartedAt)/(360*time.Millisecond)) + 5
 			watch := append(wakingOwl(step, true), "", sDim.Render("    reading the PR…"))
-			return append(out, watch...)
+			return append(out, gutter(watch)...)
 		}
 		out = append(out, d.window(m, d.rows[tabReview], v, h)...)
 	}
