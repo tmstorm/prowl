@@ -211,7 +211,7 @@ func spansCommits(d core.Draft) bool {
 // suggestedAction is what a current agent review suggests doing with the PR
 // ("close", "draft" or "") and why.
 func (m *Model) suggestedAction(key string) (string, string) {
-	for _, r := range store.Current(m.review[key]) {
+	for _, r := range store.Current(m.runs[key]) {
 		if r.Action != "" && r.Finished() {
 			return r.Action, r.ActionReason
 		}

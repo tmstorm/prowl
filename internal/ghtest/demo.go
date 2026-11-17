@@ -106,10 +106,10 @@ func SeedDemo(st *store.Store) error {
 			Body:  "`TestRotate` covers the happy path only. A case that rotates twice with the same token would pin down the reuse behavior."},
 	}
 	summary := "**Verdict: request changes**\n\nRotation works and the migration is safe to run on a live table. A reused token only fails its own request, though, so a stolen token's family stays usable. That needs fixing before this ships."
-	if err := st.FinishReview(id, "demo", summary, "", findings); err != nil {
+	if err := st.FinishRun(id, "demo", summary, "", findings); err != nil {
 		return err
 	}
-	if err := st.SetReviewModel(id, "opus"); err != nil {
+	if err := st.SetRunModel(id, "opus"); err != nil {
 		return err
 	}
 	if err := st.SavePoints(id, []store.Point{

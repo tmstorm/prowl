@@ -359,8 +359,8 @@ type File struct {
 	ViewerViewedState string `json:"viewerViewedState"`
 }
 
-func (c *Client) FetchDetail(nwo string, number int) (*Detail, error) {
-	owner, name, _ := strings.Cut(nwo, "/")
+func (c *Client) FetchDetail(repo string, number int) (*Detail, error) {
+	owner, name, _ := strings.Cut(repo, "/")
 	q := `query($owner: String!, $name: String!, $n: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $n) {
     body
@@ -513,13 +513,13 @@ func allPages[T any](c *Client, first page[T], vars map[string]any, field string
 }
 
 // PRDiff returns the full unified diff of the PR.
-func (c *Client) PRDiff(nwo string, number int) (string, error) {
-	return c.rawDiff(fmt.Sprintf("repos/%s/pulls/%d", nwo, number))
+func (c *Client) PRDiff(repo string, number int) (string, error) {
+	return c.rawDiff(fmt.Sprintf("repos/%s/pulls/%d", repo, number))
 }
 
 // CompareDiff returns the diff between two commits (used for "since my last review").
-func (c *Client) CompareDiff(nwo, from, to string) (string, error) {
-	return c.rawDiff(fmt.Sprintf("repos/%s/compare/%s...%s", nwo, from, to))
+func (c *Client) CompareDiff(repo, from, to string) (string, error) {
+	return c.rawDiff(fmt.Sprintf("repos/%s/compare/%s...%s", repo, from, to))
 }
 
 func (c *Client) rawDiff(path string) (string, error) {
@@ -545,7 +545,7 @@ type DraftComment struct {
 // SubmitReview posts a review. event is APPROVE, REQUEST_CHANGES or COMMENT.
 // If GitHub rejects the inline comments (e.g. a line outside the diff), the
 // comments are folded into the review body and the review is retried.
-func (c *Client) SubmitReview(nwo string, number int, commitID, event, body string, comments []DraftComment) (string, error) {
+func (c *Client) SubmitReview(repo string, number int, commitID, event, body string, comments []DraftComment) (string, error) {
 	post := func(body string, comments []DraftComment) (string, error) {
 		payload := map[string]any{"event": event, "body": body}
 		if commitID != "" {
@@ -558,7 +558,7 @@ func (c *Client) SubmitReview(nwo string, number int, commitID, event, body stri
 		var out struct {
 			HTMLURL string `json:"html_url"`
 		}
-		err := c.rest.Post(fmt.Sprintf("repos/%s/pulls/%d/reviews", nwo, number), bytes.NewReader(b), &out)
+		err := c.rest.Post(fmt.Sprintf("repos/%s/pulls/%d/reviews", repo, number), bytes.NewReader(b), &out)
 		return out.HTMLURL, err
 	}
 	url, err := post(body, comments)

@@ -144,7 +144,7 @@ echo '{"type":"result","session_id":"s1","structured_output":`+review+`}'
 	}
 	t.Cleanup(func() { st.Close() })
 	old, _ := st.StartRun("o/api#7", "abc", "claude", "", 0)
-	_ = st.FinishReview(old, "s0", "", "", []store.Finding{{Title: "old dropped finding", Path: "a.go", Line: 1, Excluded: true}})
+	_ = st.FinishRun(old, "s0", "", "", []store.Finding{{Title: "old dropped finding", Path: "a.go", Line: 1, Excluded: true}})
 	_ = st.AddPost("o/api#3", "u", store.Review{Comments: []store.Comment{{Path: "x.go", Line: 1, Body: "This might possibly be a problem."}}},
 		store.Review{Comments: []store.Comment{{Path: "x.go", Line: 1, Body: "This breaks on nil input."}}})
 
@@ -193,7 +193,7 @@ func TestRunToolOptIn(t *testing.T) {
 	}
 }
 
-func mustRuns(t *testing.T, st *store.Store) []*store.AgentReview {
+func mustRuns(t *testing.T, st *store.Store) []*store.Run {
 	t.Helper()
 	runs, err := st.Runs("o/api#7")
 	if err != nil {
@@ -297,7 +297,7 @@ echo '{"type":"result","session_id":"s1","structured_output":`+answer+`}'
 func TestFailedReviseKeepsReview(t *testing.T) {
 	st, roots, bin, head := setupRun(t)
 	id, _ := st.StartRun("o/api#7", head, "claude", "", 0)
-	_ = st.FinishReview(id, "s1", "summary", "", []store.Finding{{Severity: "must-fix", Title: "keep me"}})
+	_ = st.FinishRun(id, "s1", "summary", "", []store.Finding{{Severity: "must-fix", Title: "keep me"}})
 	_ = os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho boom >&2\nexit 1\n"), 0o755)
 	_ = st.RestartRun(id, 0)
 	cfg := config.Default()
@@ -407,7 +407,7 @@ func TestSupersededBotRuns(t *testing.T) {
 func TestOwnPRStartsFromLastAIReview(t *testing.T) {
 	st, roots, bin, head := setupRun(t)
 	prev, _ := st.StartRun("o/api#7", head, "claude", "", 0)
-	_ = st.FinishReview(prev, "s0", "earlier", "", nil)
+	_ = st.FinishRun(prev, "s0", "earlier", "", nil)
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
 	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Author: "me", Viewer: "me", Agent: "claude"}); err != nil {

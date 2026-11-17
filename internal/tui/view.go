@@ -359,7 +359,7 @@ func (m *Model) legend(w int) []string {
 		if s := it.PR.CIState(); s != "" {
 			seen["ci:"+s] = true
 		}
-		if runs := m.review[it.PR.Key()]; runs != nil {
+		if runs := m.runs[it.PR.Key()]; runs != nil {
 			seen["review"] = true
 			seen["replies"] = seen["replies"] || unsentReplies(runs) > 0
 		}
@@ -480,7 +480,7 @@ func (m *Model) listColumns() listCols {
 		if _, ok := m.snoozed[pr.Key()]; ok {
 			c.snooze = true
 		}
-		if m.review[pr.Key()] != nil {
+		if m.runs[pr.Key()] != nil {
 			c.review = true
 		}
 		c.size = max(c.size, len(sizeText(pr.Additions, pr.Deletions)))
@@ -736,7 +736,7 @@ func (m *Model) renderListRow(r listRow, w int, sel bool, cols listCols) string 
 	if _, ok := m.snoozed[pr.Key()]; ok {
 		snz = sDim.Render("z")
 	}
-	if runs := m.review[pr.Key()]; len(runs) > 0 {
+	if runs := m.runs[pr.Key()]; len(runs) > 0 {
 		cl = reviewGlyph(m, store.Current(runs))
 	}
 	badges := " "
@@ -794,7 +794,7 @@ func (m *Model) renderListRow(r listRow, w int, sel bool, cols listCols) string 
 
 // reviewGlyph is the inbox icon for a PR's AI reviews: a spinner while any
 // agent is reviewing, red when they all failed, green once posted.
-func reviewGlyph(m *Model, cur []*store.AgentReview) string {
+func reviewGlyph(m *Model, cur []*store.Run) string {
 	icon := "C"
 	if m.cfg.NerdFont {
 		icon = "\U000f06a9"
@@ -823,7 +823,7 @@ func reviewGlyph(m *Model, cur []*store.AgentReview) string {
 
 // unsentReplies counts the drafted thread replies of the current reviews
 // that haven't been sent.
-func unsentReplies(runs []*store.AgentReview) int {
+func unsentReplies(runs []*store.Run) int {
 	n := 0
 	for _, r := range store.Current(runs) {
 		n += r.Unsent()
@@ -1041,7 +1041,7 @@ func (m *Model) statusline() string {
 	}
 	switch running := m.running; {
 	case running == 1:
-		for _, runs := range m.review {
+		for _, runs := range m.runs {
 			for _, r := range store.Current(runs) {
 				if r.Status == "running" {
 					sync = sYellow.Render(core.ReviewerTitle(r.Reviewer())+" reviewing") + " " + sDim.Render(thinR) + " " + sync

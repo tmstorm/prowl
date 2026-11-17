@@ -308,8 +308,8 @@ func TestReviewProfiles(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	for _, profile := range []string{"", "adversarial"} {
 		id, _ := a.st.StartRun("o/api#7", "abc1234", "claude", profile, 0)
-		_ = a.st.SetReviewModel(id, "claude-opus-5-5")
-		_ = a.st.FinishReview(id, "s", "summary "+profile, "", []store.Finding{{Severity: "must-fix", Path: "a.go", Line: 3, Title: "bad " + profile}})
+		_ = a.st.SetRunModel(id, "claude-opus-5-5")
+		_ = a.st.FinishRun(id, "s", "summary "+profile, "", []store.Finding{{Severity: "must-fix", Path: "a.go", Line: 3, Title: "bad " + profile}})
 	}
 	a = reopen(a)
 	a.keys("enter", "4")

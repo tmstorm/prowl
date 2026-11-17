@@ -97,7 +97,7 @@ func (co *Core) reopen(key string, d *Draft) {
 func (co *Core) AgentDraft(key string) (Draft, error) {
 	cfg := co.Config()
 	co.mu.Lock()
-	var done []*store.AgentReview
+	var done []*store.Run
 	for _, r := range store.Current(co.runs[key]) {
 		if r.Finished() {
 			done = append(done, r)
@@ -383,7 +383,7 @@ func (co *Core) PostReply(runID int64, threadID, body string) error {
 
 // draftedReply is the run that drafted a reply to a thread, and the reply's
 // index in it.
-func (co *Core) draftedReply(runID int64, threadID string) (*store.AgentReview, int, error) {
+func (co *Core) draftedReply(runID int64, threadID string) (*store.Run, int, error) {
 	run, err := co.st.Run(runID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("reply: %w", err)

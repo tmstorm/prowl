@@ -95,10 +95,10 @@ type detail struct {
 	folds   map[string]bool // explicit fold state per block
 	foldAll *bool           // zR / zM override
 
-	runs        []*store.AgentReview // every agent's review runs, newest first
-	summary     *store.Summary       // the AI summary, if one was written
-	summarizing bool                 // a summary is being written
-	flat        []findingRef         // the current reviews' findings, as rows refer to them
+	runs        []*store.Run   // every agent's review runs, newest first
+	summary     *store.Summary // the AI summary, if one was written
+	summarizing bool           // a summary is being written
+	flat        []findingRef   // the current reviews' findings, as rows refer to them
 	reviewSig   string
 	logs        map[string][]store.LogEntry // per agent: your instructions and its replies (local only)
 	ciLogs      map[int64]ciLog             // failed Actions jobs' logs, as gl loaded them
@@ -146,9 +146,9 @@ func (d *detail) setItem(it inbox.Item) {
 	d.dirty = true
 }
 
-// setReview updates the review runs, rebuilding rows only when something
+// setRuns updates the review runs, rebuilding rows only when something
 // visible in them changed (the live status line renders separately).
-func (d *detail) setReview(runs []*store.AgentReview) {
+func (d *detail) setRuns(runs []*store.Run) {
 	var sig strings.Builder
 	for _, r := range runs {
 		fmt.Fprintf(&sig, "#%d|%s|%s|%s|%d|%s", r.ID, r.Status, r.SessionID, r.Error, r.FinishedAt.Unix(), r.Summary)
@@ -185,9 +185,9 @@ func (d *detail) setLogs(logs map[string][]store.LogEntry) {
 
 // current is each agent's latest run, in reviewer order, then any other
 // agent that has reviewed the PR.
-func (d *detail) current() []*store.AgentReview {
+func (d *detail) current() []*store.Run {
 	cur := store.Current(d.runs)
-	var out []*store.AgentReview
+	var out []*store.Run
 	for _, name := range reviewerOrder {
 		if r := store.Latest(cur, name); r != nil {
 			out = append(out, r)
@@ -976,7 +976,7 @@ func (d *detail) buildReview() []brow {
 
 // agentSection is one agent's current review, folded under its name, with
 // its earlier runs in a History fold at the end.
-func (d *detail) agentSection(run *store.AgentReview, cur []*store.AgentReview) []brow {
+func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
 	name := run.Reviewer()
 	id := "agent:" + name
 	folded := d.folded(id, false)
@@ -1117,8 +1117,8 @@ func (d *detail) agentSection(run *store.AgentReview, cur []*store.AgentReview) 
 
 // historyRows are an agent's earlier runs on the PR, folded away, each with
 // what became of its findings.
-func (d *detail) historyRows(current *store.AgentReview) []brow {
-	var earlier []*store.AgentReview
+func (d *detail) historyRows(current *store.Run) []brow {
+	var earlier []*store.Run
 	for _, r := range d.runs {
 		if r.Reviewer() == current.Reviewer() && r.ID != current.ID {
 			earlier = append(earlier, r)
@@ -1197,7 +1197,7 @@ func severityStyle(sev string) lipgloss.Style {
 }
 
 // runState is a run's status in a word or two.
-func runState(r *store.AgentReview) string {
+func runState(r *store.Run) string {
 	switch r.Status {
 	case "running":
 		return sYellow.Render("reviewing")
@@ -1210,7 +1210,7 @@ func runState(r *store.AgentReview) string {
 }
 
 // alsoFoundBy names the other agents whose current review raised f too.
-func alsoFoundBy(f store.Finding, run *store.AgentReview, cur []*store.AgentReview) string {
+func alsoFoundBy(f store.Finding, run *store.Run, cur []*store.Run) string {
 	var names []string
 	for _, o := range cur {
 		if o == run {
@@ -1758,7 +1758,7 @@ func modelName(id string) string {
 
 // firstReviewRunning is true while every agent is on its first draft, so the
 // tab has nothing to show yet.
-func firstReviewRunning(cur []*store.AgentReview) bool {
+func firstReviewRunning(cur []*store.Run) bool {
 	if len(cur) == 0 {
 		return false
 	}
@@ -1809,7 +1809,7 @@ func (d *detail) reviewStatus(m *Model) string {
 }
 
 // replyRows lists the replies a reviewer drafted to threads waiting on you.
-func (d *detail) replyRows(a *rowAdder, run *store.AgentReview) {
+func (d *detail) replyRows(a *rowAdder, run *store.Run) {
 	if len(run.Replies) == 0 {
 		return
 	}
@@ -1926,7 +1926,7 @@ var pointVerdicts = []struct {
 
 // pointRows lists what reviewers, bots and checks raised, as the agent
 // checked it against the code. They are for you only.
-func (d *detail) pointRows(a *rowAdder, run *store.AgentReview) {
+func (d *detail) pointRows(a *rowAdder, run *store.Run) {
 	if len(run.Points) == 0 {
 		return
 	}
@@ -1958,7 +1958,7 @@ func (d *detail) pointRows(a *rowAdder, run *store.AgentReview) {
 }
 
 // ranText is when a review started and how long it took.
-func ranText(r *store.AgentReview) string {
+func ranText(r *store.Run) string {
 	s := r.StartedAt.Format("Jan 2 15:04")
 	if !r.FinishedAt.IsZero() {
 		s += ", took " + r.FinishedAt.Sub(r.StartedAt).Round(time.Second).String()

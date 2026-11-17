@@ -333,9 +333,9 @@ func TestRunReportsReviews(t *testing.T) {
 	defer stop()
 	go co.Run(ctx)
 	id, _ := st.StartRun("o/api#1", "abc", "claude", "", 0)
-	_ = st.FinishReview(id, "s1", "looks fine", "", nil)
+	_ = st.FinishRun(id, "s1", "looks fine", "", nil)
 	waitEvent(t, co, core.RunsChanged)
-	if runs := co.Reviews()["o/api#1"]; len(runs) != 1 || runs[0].Status != "done" {
+	if runs := co.Runs()["o/api#1"]; len(runs) != 1 || runs[0].Status != "done" {
 		t.Fatalf("reviews: %+v", runs)
 	}
 }
@@ -385,7 +385,7 @@ func TestReviewNeedsAgentAndRun(t *testing.T) {
 func TestFindingsAndDiscard(t *testing.T) {
 	_, st := newCore(t, &ghtest.GitHub{})
 	id, _ := st.StartRun("o/api#1", "abc", "claude", "", 0)
-	_ = st.FinishReview(id, "s1", "summary", "", []store.Finding{{Severity: "must-fix", Title: "a"}, {Severity: "nit", Title: "b"}})
+	_ = st.FinishRun(id, "s1", "summary", "", []store.Finding{{Severity: "must-fix", Title: "a"}, {Severity: "nit", Title: "b"}})
 	_ = st.AddReviewLog("o/api#1", "claude", "you", "drop b")
 	co := core.New(config.Default(), mustClient(t), st)
 	if err := co.SetExcluded(id, 0, true); err != nil {
@@ -406,7 +406,7 @@ func TestFindingsAndDiscard(t *testing.T) {
 	if err := co.Discard(id); err != nil {
 		t.Fatal(err)
 	}
-	if len(co.Reviews()["o/api#1"]) != 0 || len(co.Notes("o/api#1")) != 0 {
+	if len(co.Runs()["o/api#1"]) != 0 || len(co.Notes("o/api#1")) != 0 {
 		t.Fatal("the run or its notes survived the discard")
 	}
 }
@@ -419,7 +419,7 @@ func TestChat(t *testing.T) {
 	if _, err := core.New(config.Default(), mustClient(t), st).Chat("o/api#1", "claude"); err == nil || !strings.Contains(err.Error(), "wait for the review") {
 		t.Fatalf("a running review can't be chatted with: %v", err)
 	}
-	_ = st.FinishReview(id, "s1", "summary", "", nil)
+	_ = st.FinishRun(id, "s1", "summary", "", nil)
 	co := core.New(config.Default(), mustClient(t), st)
 	wt := agent.WorktreePath("o/api", 1, "claude")
 	if err := os.MkdirAll(wt, 0o755); err != nil {
@@ -465,11 +465,11 @@ func TestAgentDraftAndSubmit(t *testing.T) {
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
 	_, st := newCore(t, fake)
 	claude, _ := st.StartRun("o/api#7", "abc1234", "claude", "", 0)
-	_ = st.FinishReview(claude, "s1", "**Verdict: request changes**\n\nThe map write races.", "", []store.Finding{
+	_ = st.FinishRun(claude, "s1", "**Verdict: request changes**\n\nThe map write races.", "", []store.Finding{
 		{Severity: "must-fix", Path: "a.go", Line: 10, Title: "nil map write", Body: "Init it."},
 		{Severity: "nit", Path: "a.go", Line: 20, Title: "naming", Body: "Rename.", Excluded: true}})
 	codex, _ := st.StartRun("o/api#7", "abc1234", "codex", "", 0)
-	_ = st.FinishReview(codex, "s2", "codex summary", "", []store.Finding{{Severity: "should-fix", Title: "description is stale", Body: "Update it."}})
+	_ = st.FinishRun(codex, "s2", "codex summary", "", []store.Finding{{Severity: "should-fix", Title: "description is stale", Body: "Update it."}})
 	c, _ := fake.Client()
 	co := core.New(config.Default(), c, st)
 	refresh(t, co)
@@ -515,7 +515,7 @@ func TestApproveAgentDraftAfterPush(t *testing.T) {
 		RejectReview: map[int]bool{2: true}}
 	_, st := newCore(t, fake)
 	run, _ := st.StartRun("o/api#7", "abc1234", "claude", "", 0)
-	_ = st.FinishReview(run, "s1", "Looks fine.", "", []store.Finding{{Severity: "should-fix", Path: "a.go", Line: 10, Title: "naming", Body: "Rename."}})
+	_ = st.FinishRun(run, "s1", "Looks fine.", "", []store.Finding{{Severity: "should-fix", Path: "a.go", Line: 10, Title: "naming", Body: "Rename."}})
 	c, _ := fake.Client()
 	co := core.New(config.Default(), c, st)
 	refresh(t, co)
@@ -748,7 +748,7 @@ func TestPostReply(t *testing.T) {
 	fake := &ghtest.GitHub{}
 	co, st := newCore(t, fake)
 	id, _ := st.StartRun("o/api#7", "abc", "claude", "", 0)
-	_ = st.FinishReview(id, "s1", "fine", "", nil)
+	_ = st.FinishRun(id, "s1", "fine", "", nil)
 	_ = st.SaveReplies(id, []store.ThreadReply{{ThreadID: "t1", Path: "a.go", Line: 3, Body: "Thanks, looks right."}})
 	if err := co.PostReply(id, "t1", "Thanks, the wrap helps."); err != nil {
 		t.Fatal(err)
@@ -866,7 +866,7 @@ echo '{"type":"result","session_id":"s1","structured_output":{"summary":"A panic
 	if key != "local:o/api@feat/x" {
 		t.Fatalf("key %q", key)
 	}
-	if runs := co.Reviews()[key]; len(runs) != 1 || runs[0].Status != "done" || len(runs[0].Findings) != 1 {
+	if runs := co.Runs()[key]; len(runs) != 1 || runs[0].Status != "done" || len(runs[0].Findings) != 1 {
 		t.Fatalf("runs: %+v", runs)
 	}
 	prompt := read(t, filepath.Join(bin, "prompts"))
@@ -909,7 +909,7 @@ echo '{"type":"result","session_id":"s1","structured_output":{"summary":"A panic
 	if _, ok := find(refresh(t, co), key); ok {
 		t.Fatal("once its PR is open, the local review should move to it")
 	}
-	runs := co.Reviews()["o/api#9"]
+	runs := co.Runs()["o/api#9"]
 	if len(runs) != 1 || runs[0].Origin != "local" || len(runs[0].Findings) != 1 {
 		t.Fatalf("the PR should hold the local review: %+v", runs)
 	}
@@ -995,7 +995,7 @@ func TestDraftWithReplies(t *testing.T) {
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
 	_, st := newCore(t, fake)
 	id, _ := st.StartRun("o/api#7", "abc1234", "claude", "", 0)
-	_ = st.FinishReview(id, "s1", "fine", "", nil)
+	_ = st.FinishRun(id, "s1", "fine", "", nil)
 	_ = st.SaveReplies(id, []store.ThreadReply{
 		{ThreadID: "t1", Path: "a.go", Line: 3, To: "alice", Body: "Thanks."},
 		{ThreadID: "t2", Path: "b.go", Line: 9, To: "alice", Body: "Not this one."}})
@@ -1086,7 +1086,7 @@ func TestPendingCommitAndFailedRevise(t *testing.T) {
 	}
 
 	id, _ := st.StartRun("o/api#7", "abc1234", "claude", "", 0)
-	_ = st.FailReview(id, "boom")
+	_ = st.FailRun(id, "boom")
 	c, _ := fake.Client()
 	co = core.New(config.Default(), c, st)
 	refresh(t, co)
@@ -1154,7 +1154,7 @@ func TestRepliesOnly(t *testing.T) {
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
 	_, st := newCore(t, fake)
 	id, _ := st.StartRun("o/api#7", "abc1234", "claude", "", 0)
-	_ = st.FinishReview(id, "s1", "", "", nil)
+	_ = st.FinishRun(id, "s1", "", "", nil)
 	_ = st.SaveReplies(id, []store.ThreadReply{{ThreadID: "t1", Path: "a.go", Line: 3, Body: "Thanks."}})
 	c, _ := fake.Client()
 	co := core.New(config.Default(), c, st)
@@ -1250,10 +1250,10 @@ func TestDismissedChangeRequest(t *testing.T) {
 func TestProgress(t *testing.T) {
 	co, _ := newCore(t, &ghtest.GitHub{})
 	now := time.Now()
-	at := func(act string, ago time.Duration) *store.AgentReview {
-		return &store.AgentReview{Activity: act, ActivityAt: now.Add(-ago)}
+	at := func(act string, ago time.Duration) *store.Run {
+		return &store.Run{Activity: act, ActivityAt: now.Add(-ago)}
 	}
-	if got := co.Progress(&store.AgentReview{}, now); got != "starting" {
+	if got := co.Progress(&store.Run{}, now); got != "starting" {
 		t.Errorf("no activity yet: %q", got)
 	}
 	if got := co.Progress(at("reviewing: reading a.go", time.Second), now); got != "reviewing: reading a.go" {

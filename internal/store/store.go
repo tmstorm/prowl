@@ -262,10 +262,10 @@ type ThreadReply struct {
 	Posted   bool   `json:"posted,omitempty"`
 }
 
-// AgentReview is one review run: an agent reviewing a PR at one commit. A
+// Run is one review run: an agent reviewing a PR at one commit. A
 // revise or sync updates the run; a new review starts a new one, and the
 // earlier runs are the agent's history for that PR.
-type AgentReview struct {
+type Run struct {
 	ID                              int64
 	Key, Status, HeadOid, SessionID string
 	PID                             int
@@ -286,7 +286,7 @@ type AgentReview struct {
 }
 
 // MustFix counts the review's must-fix findings.
-func (r *AgentReview) MustFix() int {
+func (r *Run) MustFix() int {
 	n := 0
 	for _, f := range r.Findings {
 		if f.Severity == "must-fix" {
@@ -297,7 +297,7 @@ func (r *AgentReview) MustFix() int {
 }
 
 // StillOpen counts the points raised that still hold.
-func (r *AgentReview) StillOpen() int {
+func (r *Run) StillOpen() int {
 	n := 0
 	for _, p := range r.Points {
 		if p.Verdict == "open" {
@@ -309,7 +309,7 @@ func (r *AgentReview) StillOpen() int {
 
 // Unsent counts the drafted thread replies still to send: not sent, and
 // not left out.
-func (r *AgentReview) Unsent() int {
+func (r *Run) Unsent() int {
 	n := 0
 	for _, rp := range r.Replies {
 		if !rp.Posted && !rp.Excluded {
@@ -320,10 +320,10 @@ func (r *AgentReview) Unsent() int {
 }
 
 // Reviewer names who reviewed: the agent, or agent:profile.
-func (r *AgentReview) Reviewer() string { return Reviewer(r.Agent, r.Profile) }
+func (r *Run) Reviewer() string { return Reviewer(r.Agent, r.Profile) }
 
 // Finished reports whether the review ran to its end, posted or not.
-func (r *AgentReview) Finished() bool { return r.Status == "done" || r.Status == "posted" }
+func (r *Run) Finished() bool { return r.Status == "done" || r.Status == "posted" }
 
 // Reviewer is the key for an agent running with a profile ("" for none).
 func Reviewer(agent, profile string) string {
@@ -350,22 +350,22 @@ func (s *Store) RestartRun(id int64, pid int) error {
 	return wrap("restart run", err)
 }
 
-func (s *Store) SetReviewPID(id int64, pid int) error {
+func (s *Store) SetRunPID(id int64, pid int) error {
 	_, err := s.db.Exec(`UPDATE review_runs SET pid=? WHERE id=?`, pid, id)
 	return wrap("set review pid", err)
 }
 
-func (s *Store) SetReviewModel(id int64, model string) error {
+func (s *Store) SetRunModel(id int64, model string) error {
 	_, err := s.db.Exec(`UPDATE review_runs SET model=? WHERE id=?`, model, id)
 	return wrap("set review model", err)
 }
 
-func (s *Store) SetReviewActivity(id int64, activity string) error {
+func (s *Store) SetRunActivity(id int64, activity string) error {
 	_, err := s.db.Exec(`UPDATE review_runs SET activity=?, activity_at=? WHERE id=?`, activity, time.Now().Unix(), id)
 	return wrap("set review activity", err)
 }
 
-func (s *Store) FinishReview(id int64, sessionID, summary, guidance string, findings []Finding) error {
+func (s *Store) FinishRun(id int64, sessionID, summary, guidance string, findings []Finding) error {
 	b, _ := json.Marshal(findings)
 	_, err := s.db.Exec(`UPDATE review_runs SET status='done', session_id=?, summary=?, guidance=?, findings=?, finished_at=?, activity='' WHERE id=?`,
 		sessionID, summary, guidance, string(b), time.Now().Unix(), id)
@@ -380,7 +380,7 @@ func (s *Store) EndRevise(id int64) error {
 	return wrap("end revise", err)
 }
 
-func (s *Store) FailReview(id int64, msg string) error {
+func (s *Store) FailRun(id int64, msg string) error {
 	_, err := s.db.Exec(`UPDATE review_runs SET status='failed', error=?, finished_at=?, activity='' WHERE id=?`,
 		msg, time.Now().Unix(), id)
 	return wrap("fail review", err)
@@ -494,7 +494,7 @@ func (s *Store) ReviewLog(key, reviewer string) ([]LogEntry, error) {
 }
 
 // Run is one review run, or nil.
-func (s *Store) Run(id int64) (*AgentReview, error) {
+func (s *Store) Run(id int64) (*Run, error) {
 	all, err := s.reviews(`WHERE id = ?`, id)
 	if err != nil || len(all) == 0 {
 		return nil, wrap("run", err)
@@ -503,17 +503,17 @@ func (s *Store) Run(id int64) (*AgentReview, error) {
 }
 
 // Runs are a PR's review runs from every agent, newest first.
-func (s *Store) Runs(key string) ([]*AgentReview, error) {
+func (s *Store) Runs(key string) ([]*Run, error) {
 	return s.reviews(`WHERE key = ? ORDER BY id DESC`, key)
 }
 
 // AllRuns are every PR's review runs, newest first.
-func (s *Store) AllRuns() (map[string][]*AgentReview, error) {
+func (s *Store) AllRuns() (map[string][]*Run, error) {
 	all, err := s.reviews(`ORDER BY id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("all runs: %w", err)
 	}
-	out := map[string][]*AgentReview{}
+	out := map[string][]*Run{}
 	for _, c := range all {
 		out[c.Key] = append(out[c.Key], c)
 	}
@@ -521,7 +521,7 @@ func (s *Store) AllRuns() (map[string][]*AgentReview, error) {
 }
 
 // Latest is a reviewer's current run in runs (newest first), or nil.
-func Latest(runs []*AgentReview, reviewer string) *AgentReview {
+func Latest(runs []*Run, reviewer string) *Run {
 	for _, r := range runs {
 		if r.Reviewer() == reviewer {
 			return r
@@ -531,8 +531,8 @@ func Latest(runs []*AgentReview, reviewer string) *AgentReview {
 }
 
 // Current is each reviewer's latest run, newest first.
-func Current(runs []*AgentReview) []*AgentReview {
-	var out []*AgentReview
+func Current(runs []*Run) []*Run {
+	var out []*Run
 	seen := map[string]bool{}
 	for _, r := range runs {
 		if !seen[r.Reviewer()] {
@@ -543,16 +543,16 @@ func Current(runs []*AgentReview) []*AgentReview {
 	return out
 }
 
-func (s *Store) reviews(where string, args ...any) ([]*AgentReview, error) {
+func (s *Store) reviews(where string, args ...any) ([]*Run, error) {
 	rows, err := s.db.Query(`SELECT id, key, status, head_oid, session_id, pid, started_at, finished_at,
   activity, activity_at, summary, findings, replies, points, action, action_reason, origin, error, guidance, model, agent, profile FROM review_runs `+where, args...)
 	if err != nil {
 		return nil, fmt.Errorf("reviews: %w", err)
 	}
 	defer rows.Close()
-	var out []*AgentReview
+	var out []*Run
 	for rows.Next() {
-		var c AgentReview
+		var c Run
 		var started, finished, activityAt int64
 		var findings, replies, points string
 		if err := rows.Scan(&c.ID, &c.Key, &c.Status, &c.HeadOid, &c.SessionID, &c.PID, &started, &finished,

@@ -198,7 +198,7 @@ func TestCodexModels(t *testing.T) {
 // Posting combines agents' findings: excluded ones out, a problem two agents
 // raised kept once at the higher severity, one agent's findings never merged.
 func TestCombine(t *testing.T) {
-	runs := []*store.AgentReview{
+	runs := []*store.Run{
 		{Status: "done", Findings: []store.Finding{{Severity: "should-fix", Path: "a.go", Line: 11, Title: "x"}, {Path: "c.go", Line: 1, Excluded: true}}},
 		{Status: "done", Findings: []store.Finding{{Severity: "must-fix", Path: "a.go", Line: 9, Title: "y"}, {Severity: "nit", Path: "b.go", Line: 1}}},
 		{Status: "running", Findings: []store.Finding{{Path: "z.go", Line: 1}}},
@@ -210,7 +210,7 @@ func TestCombine(t *testing.T) {
 	if len(agent.Combine(runs, true)) != 3 {
 		t.Fatal("all includes excluded findings")
 	}
-	one := []*store.AgentReview{{Status: "done", Findings: []store.Finding{{Path: "a.go", Line: 10}, {Path: "a.go", Line: 12}}}}
+	one := []*store.Run{{Status: "done", Findings: []store.Finding{{Path: "a.go", Line: 10}, {Path: "a.go", Line: 12}}}}
 	if len(agent.Combine(one, false)) != 2 {
 		t.Fatal("two findings from one agent are two findings")
 	}
