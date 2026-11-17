@@ -327,7 +327,7 @@ func (co *Core) afterReview(key, event string) (string, error) {
 	it, _ := co.item(key)
 	co.mu.Unlock()
 	state := map[string]string{"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED"}[event]
-	if sl == nil || !shared || state == "" {
+	if sl == nil || !shared || state == "" || cfg.SlackAfterReview == "off" {
 		return "", nil
 	}
 	if loggedOut != nil {

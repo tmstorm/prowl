@@ -20,6 +20,7 @@ import (
 	"github.com/tmstorm/prowl/internal/ghtest"
 	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/slack"
+	"github.com/zalando/go-keyring"
 )
 
 // fakeSlack answers auth.test as U1 and search.messages with matches, which
@@ -406,5 +407,48 @@ func TestSlackLoggedOutInSync(t *testing.T) {
 	co.CheckAuth()
 	if _, _, err := co.SlackActivity(); err != nil {
 		t.Fatalf("channels after logging in: %v", err)
+	}
+}
+
+// With slack_after_review off, a review on a shared PR doesn't mind Slack
+// being logged out.
+func TestAfterReviewOffLoggedOut(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
+	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("api", 7, "feat: shared", "alice")}, Closed: map[string]bool{}}
+	co, _ := newCore(t, fake)
+	cfg := config.Default()
+	cfg.SlackChannels, cfg.SlackAfterReview = []string{"C1"}, "off"
+	co.SetConfig(cfg)
+	sl := &fakeSlack{}
+	co.UseSlack(sl.client(t))
+	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
+	refresh(t, co)
+	sl.mu.Lock()
+	sl.authErr = "token_revoked"
+	sl.mu.Unlock()
+	co.CheckAuth()
+
+	if sent, err := co.Submit("o/api#7", core.Draft{Event: "APPROVE"}); err != nil || sent.Slack != "" {
+		t.Fatalf("submit: %+v, %v", sent, err)
+	}
+}
+
+// LoadSlack signs in with the token `prowl slack` saved, so a sign-in from
+// Accounts needs no restart.
+func TestLoadSlack(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("PROWL_SLACK_TOKEN", "")
+	co, st := newCore(t, &ghtest.GitHub{})
+	if err := co.LoadSlack(); err != nil || co.SlackConnected() {
+		t.Fatalf("before signing in: %v, connected %v", err, co.SlackConnected())
+	}
+	if err := slack.SaveToken(slack.Token{Access: "xoxp-saved"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSlackSignedIn(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := co.LoadSlack(); err != nil || !co.SlackConnected() {
+		t.Fatalf("after signing in: %v, connected %v", err, co.SlackConnected())
 	}
 }
