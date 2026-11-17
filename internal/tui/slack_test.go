@@ -2,6 +2,8 @@ package tui_test
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -199,4 +201,34 @@ func TestSlackSyncError(t *testing.T) {
 	a := newSlackApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, slack.NewWith(slack.Token{Access: "xoxp-test"}, "http://127.0.0.1:1/"))
 	a.waitFor("slack auth.test")
 	a.want("fix: crash")
+}
+
+// Errors joined from one sync show on the bottom row as one line, each
+// once, so the panes keep their place.
+func TestJoinedErrorsOneLine(t *testing.T) {
+	now := fmt.Sprintf("%d.000100", time.Now().Unix())
+	share := func(n int) string {
+		return fmt.Sprintf(`{"ts":%q,"user":"U1","username":"me","text":"<https://github.com/o/api/pull/%d>","permalink":"https://x.slack.com/archives/C1/p%d","channel":{"id":"C1","name":"reviews"}}`, now, n, n)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth.test":
+			fmt.Fprint(w, `{"ok":true,"user":"me","team":"Acme","user_id":"U1"}`)
+		case "/search.messages":
+			fmt.Fprintf(w, `{"ok":true,"messages":{"paging":{"pages":1},"matches":[%s,%s]}}`, share(3), share(4))
+		case "/users.list":
+			fmt.Fprint(w, `{"ok":true,"members":[]}`)
+		default:
+			fmt.Fprint(w, `{"ok":false,"error":"ratelimited"}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	fake := &fakeGitHub{PRs: []gh.PR{pr("api", 3, "feat: one", "me"), pr("api", 4, "feat: two", "me")}}
+	a := newSlackApp(t, fake, slack.NewWith(slack.Token{Access: "xoxp-test"}, srv.URL+"/"), func(c *config.Config) { c.SlackChannels = []string{"C1"} })
+	a.waitFor("slack reactions.get: ratelimited")
+	lines := a.lines()
+	if len(lines) != a.h || !strings.Contains(lines[len(lines)-1], "slack reactions.get: ratelimited") ||
+		strings.Count(a.screen(), "ratelimited") != 1 {
+		t.Fatalf("want the error once, on the bottom row of %d:\n%s", a.h, a.screen())
+	}
 }
