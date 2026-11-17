@@ -1008,7 +1008,8 @@ func (p *reviewerPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 }
 
 // ask requests everyone checked, and the name typed when it matches nobody.
-// With nobody checked, it asks the row under the cursor.
+// With nobody checked, a filter you typed asks the row under the cursor;
+// enter on an untouched list asks nobody.
 func (p *reviewerPicker) ask(m *Model) tea.Cmd {
 	var names []string
 	for _, r := range p.all {
@@ -1019,7 +1020,7 @@ func (p *reviewerPicker) ask(m *Model) tea.Cmd {
 	switch typed := strings.TrimSpace(p.input.Value()); {
 	case len(p.results) == 0 && typed != "":
 		names = append(names, strings.Split(typed, ",")...)
-	case len(names) == 0 && p.cur < len(p.results):
+	case len(names) == 0 && typed != "" && p.cur < len(p.results):
 		names = []string{p.all[p.results[p.cur]].login}
 	}
 	m.popup = nil
@@ -1037,9 +1038,10 @@ func (p *reviewerPicker) ask(m *Model) tea.Cmd {
 func (p *reviewerPicker) height(m *Model) int { return max(m.h-14, 6) }
 
 // click checks or unchecks the row clicked; rows start below the title, a
-// blank line, the filter and a rule.
-func (p *reviewerPicker) click(_ *Model, _, y int) tea.Cmd {
-	if i := p.top + y - 5; y >= 5 && i < len(p.results) {
+// blank line, the filter and a rule. A click outside the rows on screen does
+// nothing.
+func (p *reviewerPicker) click(m *Model, _, y int) tea.Cmd {
+	if i := p.top + y - 5; y >= 5 && i < min(p.top+p.height(m), len(p.results)) {
 		p.cur = i
 		r := &p.all[p.results[i]]
 		r.on = !r.on

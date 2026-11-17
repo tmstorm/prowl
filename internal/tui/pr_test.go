@@ -481,8 +481,9 @@ func TestAskForReviewsPicker(t *testing.T) {
 	}
 }
 
-// A filter that leaves fewer rows than the picker had scrolled past keeps
-// it drawing, with the cursor on a row that's left.
+// A click below the rows on screen checks nobody, and a filter that leaves
+// fewer rows than the picker had scrolled past keeps it drawing, with the
+// cursor on a row that's left.
 func TestReviewerPickerScrollThenFilter(t *testing.T) {
 	var people []string
 	for i := range 32 {
@@ -494,6 +495,8 @@ func TestReviewerPickerScrollThenFilter(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Assignable: people})
 	a.keys("space", "A")
 	a.want("kay00")
+	a.clickFirst("space or click check")
+	a.wantNot("[x]")
 	for range 39 {
 		a.keys("down")
 	}
@@ -503,10 +506,15 @@ func TestReviewerPickerScrollThenFilter(t *testing.T) {
 	a.wantNot("wes07")
 }
 
-// Enter with nobody checked asks the row under the cursor; a typed name that
-// matches nobody is asked along with whoever is checked; a click checks a row.
+// Enter with nobody checked asks the row under the cursor once you've typed
+// a filter, and nobody before; a typed name that matches nobody is asked
+// along with whoever is checked; a click checks a row.
 func TestReviewerPickerEnterAndClick(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Assignable: []string{"bob", "carol"}})
+	a.keys("space", "A", "enter")
+	if a.wrote("POST /repos/o/api/pulls/7/requested_reviewers") {
+		t.Fatal("enter on an untouched list asked someone")
+	}
 	a.keys("space", "A", "bob", "enter")
 	a.want("asked bob to review")
 
