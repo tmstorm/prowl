@@ -18,7 +18,7 @@ type DocPage struct {
 }
 
 // docOrder is the reading order; a page not in it comes after, by name.
-var docOrder = []string{"install", "inbox", "reviewing", "ai-reviews", "slack", "config"}
+var docOrder = []string{"inbox", "reviewing", "ai-reviews", "slack", "running", "config"}
 
 // Docs are the pages of prowl's docs, built into the binary, in reading
 // order.

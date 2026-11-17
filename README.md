@@ -41,7 +41,7 @@ gh auth login
 prowl
 ```
 
-That's it. Actions live behind the leader key: `space` by default, and `,`, `\` or `;` if you'd rather (set `leader` in the config or the options). The docs write it `<leader>`, so `<leader>a` means the leader, then `a`. Not a vim user? The arrow keys move around, `?` lists every key, and the `menu` button at the bottom right opens every action with a click.
+That's it. Actions live behind the leader key: `space` by default, and `,`, `\` or `;` if you'd rather (set `leader` in the config or the options). The docs write it `<leader>`, so `<leader>a` means the leader, then `a`. Not a vim user? The arrow keys move around, `?` lists the keys, and the `menu` button at the bottom right opens every action with a click.
 
 A few things worth doing next:
 
@@ -67,14 +67,15 @@ A few things worth doing next:
 
 ## Docs
 
-- [Installing](docs/install.md): every install path, what prowl needs, commands, background notifications, updates, logins
-- [The inbox](docs/inbox.md): how PRs are sorted, watching a repo, focusing
+- [Installing](docs/install.md): every install path and what prowl needs
+- [The inbox](docs/inbox.md): tabs and buckets, sorting, focusing, watching a repo, snoozing
 - [Reading and reviewing](docs/reviewing.md): keys, the diff, comments and suggestions, approving, asking for reviews
 - [AI reviews](docs/ai-reviews.md): agents, models, profiles, severities, replies, closing or drafting, local reviews, hooks
 - [Slack](docs/slack.md): setting it up, shared PRs, reactions, posting and DMs
+- [Running prowl](docs/running.md): commands, background notifications, updates, uninstalling, logins
 - [Config](docs/config.md): every setting and its default
 
-`?` in prowl lists every key. The same docs are built into prowl for the version you run: `?` then `d` opens them in the app, and `prowl docs [page [section]]` prints them.
+`?` in prowl lists the keys. The same docs are built into prowl for the version you run: `?` then `d` opens them in the app, and `prowl docs [page [section]]` prints them.
 
 ## Where it's going
 

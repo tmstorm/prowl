@@ -25,13 +25,13 @@ Prefer your own app? Create it from the same manifest, install it, and paste its
 Last, in prowl's options (`<leader>,`), under Slack:
 
 - **Channels** lists the channels you're in, the busiest with links to your orgs' PRs first, and recommends the ones with at least 5 in the last two weeks. Check the ones where people ask for reviews. The top row covers every DM and group DM at once.
-- **Slack names** matches your teammates' GitHub logins to their Slack users, by email, name, login, and who posts their PRs. Accept the matches with `space` (or all with `a`), pick someone with `e`, and save with `enter`.
+- **Slack names** matches your teammates' GitHub logins to their Slack users, by email, name, login, and who posts their PRs. Accept the matches with `space` (or all with `a`), pick someone with `e`, clear one with `x`, and save with `enter`. `E` edits them all as text.
 
 prowl reminds you of both after the first sync.
 
 ## Shared PRs
 
-Each sync, prowl searches Slack once for PR links posted since the last search. A PR linked in a channel you checked, or sent to you in a DM, that you haven't reviewed goes in the **shared** section, right after needs review: "shared in #reviews by bob" or "sent to you by bob". It stays there until you review it or it closes. If you were also asked to review on GitHub, it stays under needs review and the reason says it was shared too. Drafts and your own links don't count.
+Each sync, prowl searches Slack for PR links posted since the last search; the first search looks back a week. A PR linked in a channel you checked, or sent to you in a DM, that you haven't reviewed goes in the **shared** section, right after needs review: "shared in #reviews by bob" or "sent to you by bob". It stays there until you review it or it closes. If you were also asked to review on GitHub, it stays under needs review and the reason says it was shared too. Drafts and your own links don't count.
 
 Slack's search takes about half a minute to find a new message, so a share reaches prowl within a sync of being posted. Slack already notified you, so a new share doesn't send a desktop notification.
 
@@ -46,7 +46,7 @@ With `slack_after_review = "react"` (the default), prowl keeps your emoji on the
 | `x` | you requested changes |
 | `speech_balloon` | you reviewed with comments |
 
-It follows your latest review after the share, wherever you made it, on github.com or in prowl. A sync where nothing changed makes no Slack calls. prowl only removes emoji it added itself. Change them under `[slack_reactions]`.
+It follows your latest review after the share, wherever you made it, on github.com or in prowl. prowl only removes emoji it added itself. Change them under `[slack_reactions]`.
 
 With `"reply"`, submitting a review from prowl posts its Slack line in the share's thread instead, e.g. `https://github.com/acme/api/pull/12 Approved · @bob · fix: retry on timeout`. With `"off"`, or for a PR nobody shared, the line goes to your clipboard as before.
 
@@ -67,7 +67,7 @@ On your own open PRs, prowl reads the reactions on the newest message that share
 
 | Scope | For |
 | --- | --- |
-| `search:read` | finding PR links, one search per sync |
+| `search:read` | finding PR links |
 | `channels:read`, `groups:read`, `im:read` | the channel list |
 | `channels:history`, `groups:history`, `im:history` | reading the messages behind the links |
 | `reactions:read`, `reactions:write` | your emoji on shares, and reactions on your PRs |
@@ -76,4 +76,4 @@ On your own open PRs, prowl reads the reactions on the newest message that share
 
 Everything prowl posts or reacts with is as you. It posts only when you submit a review in reply mode or confirm `<leader>y` or `<leader>Y`, and it reacts only with the emoji in `[slack_reactions]`.
 
-Slack limits each app's calls per workspace, and everyone signed in to your team's app shares them. A sync makes one search call plus one call per change in your emoji and one per shared PR of yours.
+Slack limits each app's calls per workspace, and everyone signed in to your team's app shares them. Each sync searches for links (a call per 100 messages, up to 5), reads the reactions on each shared PR of yours, and makes a call to add each emoji it sets and one to remove the one it replaces. The first sync also looks up who you are and the workspace's users.

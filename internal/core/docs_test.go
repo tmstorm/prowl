@@ -21,7 +21,7 @@ func TestDocs(t *testing.T) {
 			t.Errorf("%s has no title or text", p.Name)
 		}
 	}
-	if !slices.Equal(names[:6], []string{"install", "inbox", "reviewing", "ai-reviews", "slack", "config"}) {
+	if !slices.Equal(names[:6], []string{"inbox", "reviewing", "ai-reviews", "slack", "running", "config"}) {
 		t.Errorf("order = %v", names)
 	}
 	if p, ok := core.Doc("slack.md"); !ok || p.Title != "Slack" {
@@ -45,7 +45,7 @@ func TestDocs(t *testing.T) {
 func TestSearchDocs(t *testing.T) {
 	hits := core.SearchDocs("SLACK_AFTER_REVIEW react")
 	i := slices.IndexFunc(hits, func(h core.DocHit) bool { return h.Page == "config" })
-	if i < 0 || !strings.Contains(hits[i].Line, "slack_after_review") || hits[i].Heading != "Config" {
+	if i < 0 || !strings.Contains(hits[i].Line, "slack_after_review") || hits[i].Heading != "Slack" {
 		t.Fatalf("hits = %+v", hits)
 	}
 	if core.SearchDocs("  ") != nil {
