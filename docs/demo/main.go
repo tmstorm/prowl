@@ -23,6 +23,7 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/ghtest"
+	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/store"
 	"github.com/tmstorm/prowl/internal/tui"
 )
@@ -95,7 +96,7 @@ func run() error {
 	defer stop()
 	co := core.New(cfg, c, st)
 	go co.Run(ctx)
-	_, err = tea.NewProgram(tui.New(co), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	_, err = tea.NewProgram(tui.New(co), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(platform.Terminal)).Run()
 	return err
 }
 

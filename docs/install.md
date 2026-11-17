@@ -33,7 +33,7 @@ Or from a clone: `go build` (or `task build` / `task install` if you use [Task](
 - Optional: a [Nerd Font](https://www.nerdfonts.com) for icons and powerline separators. The first start shows a few icons and asks whether they look right; yes turns on `nerd_font`.
 - Optional: an editor for long reviews; prowl uses `$VISUAL`, then `$EDITOR`, then `vi` (`notepad` on Windows).
 
-Notifications use `notify-send` on Linux, Notification Center on macOS and toasts on Windows. The clipboard uses `wl-copy`, `xclip`, `xsel`, `pbcopy` or PowerShell, whichever the system has.
+Notifications use `notify-send` on Linux, Notification Center on macOS and toasts on Windows. The clipboard uses `wl-copy` on Wayland, `xclip` or `xsel` on X11, `pbcopy` on macOS and PowerShell on Windows and WSL. Over SSH, or with none of those, prowl hands the text to your terminal with OSC 52, so it reaches the clipboard of the machine you are sitting at. Most terminals accept that; in tmux it needs `set -g set-clipboard on`.
 
 With no configuration, prowl shows every open PR that involves you across GitHub. To limit it to your work, set `orgs` (see [Config](config.md)). The config lives at `~/.config/prowl/config.toml` and state (review snapshots, snoozes, AI reviews, worktrees) in `~/.local/share/prowl`, following `XDG_CONFIG_HOME` and `XDG_DATA_HOME`.
 

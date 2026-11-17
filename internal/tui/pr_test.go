@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/gh"
@@ -75,6 +77,7 @@ func TestSplitDiff(t *testing.T) {
 	a.keys("enter", "3")
 	a.want("- -- old note", "+ new one")
 	a.keys("s")
+	t.Cleanup(func() { a.keys("s") })
 	for _, l := range a.lines() {
 		if strings.Contains(l, "old one") && strings.Contains(l, "new one") {
 			return
@@ -529,4 +532,82 @@ func TestReviewerPickerEnterAndClick(t *testing.T) {
 	c.clickFirst("Carol Example")
 	c.want("[x] carol")
 	c.wantNot("[x] bob")
+}
+
+// yy copies the cursor's line of a PR, and v selects lines for y to copy: a
+// diff line as its code, without line numbers or the +/- mark, and a side by
+// side row as both its lines. V marks the file viewed, and ys copies the
+// Slack line that yy used to.
+func TestYank(t *testing.T) {
+	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,3 +1,3 @@\n ctx line\n-old one\n+\treturn nil\n tail\n"
+	f := withComment(7, "bob", "first paragraph\n\nsecond paragraph")
+	f.Diffs = map[int]string{7: diff}
+	a := newApp(t, f)
+	a.keys("y", "y")
+	if got := a.copied(); got != "" {
+		t.Fatalf("yy in the inbox copied %q", got)
+	}
+	a.keys("y", "s")
+	if got := a.copied(); !strings.HasPrefix(got, "https://github.com/o/api/pull/7 Needs review") {
+		t.Fatalf("ys copied %q", got)
+	}
+
+	a.keys("enter")
+	a.search("second paragraph")
+	a.keys("y", "y")
+	a.want("copied 1 line")
+	if got := strings.TrimSpace(a.copied()); got != "second paragraph" {
+		t.Fatalf("yy copied %q", got)
+	}
+
+	a.keys("3")
+	a.search("ctx line")
+	a.keys("v", "j", "j", "y")
+	a.want("copied 3 lines")
+	if got := a.copied(); got != "ctx line\nold one\n\treturn nil" {
+		t.Fatalf("y copied %q", got)
+	}
+
+	a.keys("s")
+	t.Cleanup(func() { a.keys("s") })
+	a.search("old one")
+	a.keys("y", "y")
+	if got := a.copied(); got != "old one\n\treturn nil" {
+		t.Fatalf("yy side by side copied %q", got)
+	}
+
+	a.keys("V")
+	a.want("✓ viewed")
+}
+
+// Dragging over a PR's lines selects them for y, and a drag that starts in
+// the inbox selects nothing. A click on another tab ends the selection, and
+// a click on the cursor's line still comments on it.
+func TestDragSelects(t *testing.T) {
+	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,3 +1,3 @@\n ctx line\n-old one\n+new one\n tail\n"
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Diffs: map[int]string{7: diff}})
+	a.keys("enter", "3")
+	x, y := a.find("old one")
+	a.send(mouseAt(x, y))
+	ix, iy := a.find("api #7")
+	a.send(tea.MouseMsg{X: ix, Y: iy, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease})
+	a.send(mouseAt(ix, iy))
+	a.send(tea.MouseMsg{X: x, Y: y + 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
+	a.wantNot("VISUAL")
+
+	a.drag("old one", "tail")
+	a.want("VISUAL")
+	a.keys("y")
+	if got := a.copied(); got != "old one\nnew one\ntail" {
+		t.Fatalf("y copied %q", got)
+	}
+
+	a.keys("v")
+	a.click("[2] Overview")
+	a.wantNot("VISUAL")
+	a.click("[3] Diff")
+	a.click("new one")
+	a.wantNot("VISUAL", "Comment on a.go")
+	a.click("new one")
+	a.want("Comment on a.go:2")
 }

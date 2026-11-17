@@ -42,6 +42,7 @@ type app struct {
 	gh      *fakeGitHub
 	st      *store.Store
 	cfg     config.Config
+	clip    string // the file the fake wl-copy writes
 	w, h    int
 	queue   []tea.Cmd
 	late    chan tea.Msg // messages from commands, delivered in the next round
@@ -65,6 +66,11 @@ func newSlackApp(t *testing.T, fake *fakeGitHub, sl *slack.Client, configure ...
 			t.Fatal(err)
 		}
 	}
+	clip := filepath.Join(t.TempDir(), "clipboard")
+	if err := os.WriteFile(filepath.Join(bin, "wl-copy"), []byte("#!/bin/sh\nexec /bin/cat > "+clip+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WAYLAND_DISPLAY", "test")
 	t.Setenv("PATH", bin)
 	c, err := fake.Client()
 	if err != nil {
@@ -82,7 +88,7 @@ func newSlackApp(t *testing.T, fake *fakeGitHub, sl *slack.Client, configure ...
 	for _, f := range configure {
 		f(&cfg)
 	}
-	a := &app{t: t, gh: fake, st: st, cfg: cfg, w: 160, h: 44, late: make(chan tea.Msg, 1024)}
+	a := &app{t: t, gh: fake, st: st, cfg: cfg, clip: clip, w: 160, h: 44, late: make(chan tea.Msg, 1024)}
 	a.m = tui.New(start(t, cfg, c, st, sl))
 	a.send(tea.WindowSizeMsg{Width: a.w, Height: a.h})
 	a.queue = append(a.queue, a.m.Init())
@@ -268,18 +274,42 @@ func (a *app) wantNot(texts ...string) {
 	}
 }
 
-// click presses the mouse on the first cell of text (the last match when
+// click clicks the mouse on the first cell of text (the last match when
 // last is set, e.g. to reach a popup over the inbox).
 func (a *app) click(text string) {
+	a.t.Helper()
+	x, y := a.find(text)
+	a.send(mouseAt(x, y))
+	a.send(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease})
+}
+
+// find is the screen cell where the lowest match of text starts.
+func (a *app) find(text string) (x, y int) {
 	a.t.Helper()
 	ls := a.lines()
 	for y := len(ls) - 1; y >= 0; y-- {
 		if i := strings.Index(ls[y], text); i >= 0 {
-			a.send(mouseAt(lipgloss.Width(ls[y][:i]), y))
-			return
+			return lipgloss.Width(ls[y][:i]), y
 		}
 	}
 	a.t.Fatalf("%q is not on screen:\n%s", text, a.screen())
+	return 0, 0
+}
+
+// drag holds the left button down on from, moves to to and lets go.
+func (a *app) drag(from, to string) {
+	a.t.Helper()
+	x, y := a.find(from)
+	a.send(mouseAt(x, y))
+	x, y = a.find(to)
+	a.send(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
+	a.send(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease})
+}
+
+// copied is what prowl last put on the clipboard.
+func (a *app) copied() string {
+	b, _ := os.ReadFile(a.clip)
+	return string(b)
 }
 
 func (a *app) resize(w, h int) {
@@ -331,7 +361,9 @@ func (a *app) clickFirst(text string) {
 	a.t.Helper()
 	for y, l := range a.lines() {
 		if i := strings.Index(l, text); i >= 0 {
-			a.send(mouseAt(lipgloss.Width(l[:i]), y))
+			x := lipgloss.Width(l[:i])
+			a.send(mouseAt(x, y))
+			a.send(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease})
 			return
 		}
 	}

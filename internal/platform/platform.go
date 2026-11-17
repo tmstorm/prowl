@@ -1,16 +1,20 @@
 // Package platform holds the few OS-specific operations prowl needs:
-// desktop notifications, opening URLs, process checks, and running
-// `prowl watch` at login.
+// desktop notifications, opening URLs, the clipboard, process checks, and
+// running `prowl watch` at login.
 package platform
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // ErrLocked is TryLock's answer while another process holds the lock.
@@ -66,6 +70,64 @@ func Open(url string) error {
 		}
 	}
 	return Spawn(exec.Command("xdg-open", url))
+}
+
+// Terminal is the terminal prowl draws on. A write to it finishes before the
+// next starts, so the TUI's frames and Copy's OSC 52 can't run into each
+// other. The TUI must draw through it.
+var Terminal = &terminal{File: os.Stdout}
+
+type terminal struct {
+	*os.File
+	mu sync.Mutex
+}
+
+func (t *terminal) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.File.Write(p)
+}
+
+// Copy puts text on the clipboard of the machine you are sitting at. It
+// tries each tool the session can reach: wl-copy on Wayland, xclip or xsel
+// on X11, PowerShell on Windows and WSL, pbcopy on macOS. When none works,
+// as over SSH, it asks the terminal to take the text with OSC 52.
+func Copy(text string) error {
+	setClipboard := []string{"-NoProfile", "-NonInteractive", "-Command",
+		"[Console]::InputEncoding = [Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"}
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("powershell", setClipboard...)
+		cmd.Stdin = strings.NewReader(text)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("copy with PowerShell: %w", err)
+		}
+		return nil
+	}
+	var tools [][]string
+	if os.Getenv("WAYLAND_DISPLAY") != "" {
+		tools = append(tools, []string{"wl-copy"})
+	}
+	if os.Getenv("DISPLAY") != "" {
+		tools = append(tools, []string{"xclip", "-selection", "clipboard"}, []string{"xsel", "-ib"})
+	}
+	if os.Getenv("WSL_DISTRO_NAME") != "" {
+		tools = append(tools, append([]string{"powershell.exe"}, setClipboard...))
+	}
+	if runtime.GOOS == "darwin" && os.Getenv("SSH_TTY") == "" {
+		tools = append(tools, []string{"pbcopy"})
+	}
+	for _, t := range tools {
+		cmd := exec.Command(t[0], t[1:]...)
+		cmd.Stdin = strings.NewReader(text)
+		if cmd.Run() == nil {
+			return nil
+		}
+	}
+	if !term.IsTerminal(int(Terminal.Fd())) {
+		return errors.New("no clipboard to copy to: install wl-clipboard or xclip, or use a terminal that supports OSC 52")
+	}
+	_, err := fmt.Fprintf(Terminal, "\x1b]52;c;%s\x07", base64.StdEncoding.EncodeToString([]byte(text)))
+	return err
 }
 
 // Spawn starts cmd without waiting for it, and reaps it once it exits, so

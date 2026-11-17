@@ -344,7 +344,7 @@ func remindLogin(co *core.Core, last string) string {
 }
 
 func progOpts(cfg config.Config) []tea.ProgramOption {
-	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithOutput(platform.Terminal)}
 	if cfg.Mouse {
 		opts = append(opts, tea.WithMouseCellMotion())
 	}

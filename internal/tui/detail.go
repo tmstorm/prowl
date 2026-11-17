@@ -16,6 +16,7 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/inbox"
+	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
@@ -1253,6 +1254,17 @@ func (m *Model) detailKey(d *detail, key string) tea.Cmd {
 		d.foldEverything(true)
 		m.info("all folds closed")
 		return nil
+	case "v":
+		if m.mode == modeVisual {
+			m.mode = modeNormal
+		} else {
+			m.mode = modeVisual
+			m.visualAnchor = v.cur
+		}
+		return nil
+	case "y":
+		m.yank(d)
+		return nil
 	}
 
 	switch d.tab {
@@ -1291,7 +1303,7 @@ func (m *Model) detailKey(d *detail, key string) tea.Cmd {
 			jumpRow(threadStart, 1)
 		case "[t":
 			jumpRow(threadStart, -1)
-		case "v":
+		case "V":
 			return m.toggleViewed(d)
 		case "s":
 			splitDiff = !splitDiff
@@ -1317,13 +1329,6 @@ func (m *Model) detailKey(d *detail, key string) tea.Cmd {
 				m.info("diff: full PR")
 			}
 			return d.loadDiff(m.core)
-		case "V":
-			if m.mode == modeVisual {
-				m.mode = modeNormal
-			} else {
-				m.mode = modeVisual
-				m.visualAnchor = v.cur
-			}
 		case "c":
 			return m.commentOnSelection(d, false)
 		case "S":
@@ -1457,6 +1462,121 @@ func (d *detail) toggleIncluded(m *Model) {
 	}
 }
 
+// press is the left button going down on a row of a PR: again when that
+// row already held the cursor, which makes the click act on it.
+type press struct {
+	on, again bool
+	row       int
+}
+
+// bodyMouse handles the left button in a PR's body, whose first row is on
+// screen line top. A press moves the cursor and a drag selects lines, as v
+// does. A click folds a head row and, on the row that held the cursor,
+// includes a finding or comments on a diff line.
+func (m *Model) bodyMouse(d *detail, top int, msg tea.MouseMsg) tea.Cmd {
+	v := d.nav()
+	rows := d.rows[d.tab]
+	at := v.top + msg.Y - top
+	switch msg.Action {
+	case tea.MouseActionPress:
+		m.focus = fDetail
+		if m.mode == modeVisual {
+			m.mode = modeNormal
+		}
+		again := v.cur == at
+		v.jump(at)
+		m.press = press{on: v.cur == at && at < len(rows), again: again, row: at}
+	case tea.MouseActionMotion:
+		if !m.press.on || at == v.cur {
+			return nil
+		}
+		if m.mode != modeVisual {
+			m.mode, m.visualAnchor = modeVisual, m.press.row
+		}
+		v.jump(at)
+	case tea.MouseActionRelease:
+		p := m.press
+		if !p.on || p.row != at || at >= len(rows) || m.mode == modeVisual {
+			return nil
+		}
+		switch r := rows[at]; {
+		case r.head:
+			d.foldAt("za")
+		case !p.again:
+		case d.tab == tabReview && r.finding >= 0:
+			d.toggleIncluded(m)
+		case d.tab == tabDiff && r.diff >= 0:
+			return m.commentOnSelection(d, false)
+		}
+	}
+	return nil
+}
+
+// yank copies the cursor's row, or the visual selection, to the clipboard.
+func (m *Model) yank(d *detail) {
+	a, b := m.selection(d.nav())
+	m.mode = modeNormal
+	text, n := d.yankText(a, b)
+	if n == 0 {
+		return
+	}
+	if err := platform.Copy(text); err != nil {
+		m.fail(err.Error())
+		return
+	}
+	if n == 1 {
+		m.info("copied 1 line")
+	} else {
+		m.info(fmt.Sprintf("copied %d lines", n))
+	}
+}
+
+// yankText is rows a through b of the open tab as text to paste, and how
+// many lines that is. A diff row gives its line of code, without the line
+// numbers or the +/- mark; a side-by-side row that pairs a removed line
+// with an added one gives both.
+func (d *detail) yankText(a, b int) (string, int) {
+	rows := d.rows[d.tab]
+	lines := d.diffs[d.sinceReview]
+	var out []string
+	for i := a; i <= b && i < len(rows); i++ {
+		r := rows[i]
+		if d.tab != tabDiff || r.diff < 0 || r.diff >= len(lines) {
+			out = append(out, strings.TrimRight(r.plain, " "))
+			continue
+		}
+		out = append(out, lines[r.diff].text)
+		if splitDiff && lines[r.diff].kind == lkDel && r.pair >= 0 {
+			out = append(out, lines[r.pair].text)
+		}
+	}
+	return strings.Join(out, "\n"), len(out)
+}
+
+// selection is the rows visual mode covers, or the cursor's row alone.
+func (m *Model) selection(v *nav) (int, int) {
+	if m.mode == modeVisual {
+		return min(m.visualAnchor, v.cur), max(m.visualAnchor, v.cur)
+	}
+	return v.cur, v.cur
+}
+
+// mark highlights row i of the focused PR when it is selected or under the
+// cursor.
+func (m *Model) mark(row string, w int, v *nav, i int) string {
+	if m.focus != fDetail {
+		return row
+	}
+	a, b := m.selection(v)
+	switch {
+	case m.mode == modeVisual && i >= a && i <= b:
+		return highlight(row, w, sPink)
+	case i == v.cur:
+		return highlight(row, w, sTitle)
+	}
+	return row
+}
+
 // commentOnSelection starts an inline comment on the line under the cursor
 // or the visual selection. With suggest, it starts a GitHub suggested change
 // instead: a suggestion block holding the new version of those lines, for
@@ -1472,10 +1592,7 @@ func (m *Model) commentOnSelection(d *detail, suggest bool) tea.Cmd {
 		m.fail("GitHub anchors comments to the full PR diff. Press D to switch, then comment")
 		return nil
 	}
-	a, b := v.cur, v.cur
-	if m.mode == modeVisual {
-		a, b = min(m.visualAnchor, v.cur), max(m.visualAnchor, v.cur)
-	}
+	a, b := m.selection(v)
 	var sel []diffLine
 	for i := a; i <= b && i < len(rows); i++ {
 		if r := rows[i]; r.diff >= 0 && lines[r.diff].commentable() {
@@ -1640,10 +1757,6 @@ func (d *detail) body(m *Model) []string {
 		case len(lines) == 0:
 			out = append(out, sDim.Render("no changes"))
 		default:
-			a, b := -1, -1
-			if m.mode == modeVisual && m.focus == fDetail {
-				a, b = min(m.visualAnchor, v.cur), max(m.visualAnchor, v.cur)
-			}
 			rows := d.rows[tabDiff]
 			for i := v.top; i < len(rows) && i < v.top+h; i++ {
 				r := rows[i]
@@ -1661,13 +1774,7 @@ func (d *detail) body(m *Model) []string {
 				default:
 					row = fit(r.text, d.w)
 				}
-				switch {
-				case i >= a && i <= b:
-					row = highlight(row, d.w, sPink)
-				case i == v.cur && m.focus == fDetail:
-					row = highlight(row, d.w, sTitle)
-				}
-				out = append(out, row)
+				out = append(out, m.mark(row, d.w, v, i))
 			}
 		}
 	case tabReview:
@@ -1707,11 +1814,7 @@ func (d *detail) fileHeader(path string) string {
 func (d *detail) window(m *Model, rows []brow, v *nav, h int) []string {
 	var out []string
 	for i := v.top; i < len(rows) && i < v.top+h; i++ {
-		row := fit(rows[i].text, d.w)
-		if i == v.cur && m.focus == fDetail {
-			row = highlight(row, d.w, sTitle)
-		}
-		out = append(out, row)
+		out = append(out, m.mark(fit(rows[i].text, d.w), d.w, v, i))
 	}
 	return out
 }
