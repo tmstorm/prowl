@@ -51,12 +51,34 @@ Stdout:
 
 A finding with no path goes to the reviewer, who must attach it to the line in the diff that causes it and may not lower its severity. A finding with a path goes into the review as is. `base_dir` is a worktree at the merge base that prowl adds only when an extension asks for it with `"needs_base": true` in its config.
 
+### On demand
+
+An extension can also run when you ask, on the PR you're looking at, instead of on every review:
+
+```toml
+[[agent.extensions]]
+name = "factory"
+command = "acme-factory"
+repos = ["acme/api"]
+on_demand = true
+key = "f"                         # optional: <leader>xf
+```
+
+- prowl owns the keys. Every on-demand extension is listed by name under one leader group, `<leader>x`, and `key` only picks its letter inside that group, so an extension can't take a key prowl uses or will use. A `key` that two extensions share is a config error.
+- Same protocol. prowl prepares the same checkouts and input as for a review. The output shows in a popup: `summary`, then `prompt` rendered as markdown, then the findings. Findings with a path join the PR's AI review as drafts you edit before posting. The rest stay in the popup.
+- `on_demand = true` takes the extension out of the automatic run. One that should do both is listed twice.
+- The action lives in `internal/core`, so the VS Code extension gets the same list as command-palette entries.
+
 ### Code
 
-- `internal/config`: `Extensions`, with a lookup per repo.
+- `internal/config`: `Extensions`, with a lookup per repo, `on_demand`, `key` and the duplicate-key check.
 - `internal/agent`: the `Extension` interface, the exec adapter, running them with their timeouts, the prompt sections, the locked-severity findings.
-- Docs: a section in `docs/ai-reviews.md` with the protocol, `docs/config.md`.
-- Tests: an extension script's prompt and findings reach the review, a failing and a slow one leave the review going with a note in the summary, a finding with no path is attached by the reviewer at its severity, a repo the extension isn't enabled for is unchanged.
+- `internal/core`: running one extension on a PR on demand.
+- `internal/tui`: the `<leader>x` group, the output popup.
+- Docs: a section in `docs/ai-reviews.md` with the protocol, `docs/config.md`, the `<leader>x` keys in `docs/reviewing.md`.
+- Tests: an extension script's prompt and findings reach the review, a failing and a slow one leave the review going with a note in the summary, a finding with no path is attached by the reviewer at its severity, a repo the extension isn't enabled for is unchanged, an on-demand extension stays out of reviews and shows under `<leader>x` with its key, a shared key fails config loading.
+
+Open: an on-demand extension that acts on the PR (starts a job, pushes, posts) runs something with side effects on a keypress. Whether prowl asks before running it, and what it shows when it fails halfway, depends on what extensions like the forked one do. Settle it before this PR.
 
 ## 2. Findings for the author
 
