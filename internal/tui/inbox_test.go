@@ -385,13 +385,14 @@ func TestRepoNames(t *testing.T) {
 }
 
 // Someone new to vim keys gets in: the legend lists the basic keys, ? opens
-// the help, the arrows move between panes, and the statusline's menu button
-// opens the leader menu with a click.
+// the help, which says its leader keys are only a few, the arrows move
+// between panes, and the statusline's menu button opens the leader menu with
+// a click.
 func TestNewcomerKeys(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	a.want("↑↓ move · ←→ panes · enter open · ? keys", "<space> menu")
 	a.keys("?")
-	a.want("Keys", "any other key closes", "suggest a change")
+	a.want("Keys", "any other key closes", "suggest a change", "Leader · a few of them", "<space>    every action")
 	a.keys("esc")
 	a.keys("right", "4")
 	a.want("No AI review yet")

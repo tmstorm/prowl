@@ -495,7 +495,7 @@ func (p *helpPopup) view(m *Model) string {
 		k("ys yu", "copy Slack line / PR URL"),
 		k("R "+leader+"r", "refresh"),
 		"",
-		sSection.Render("Leader"),
+		sSection.Render("Leader") + sDim.Render(" · a few of them"),
 		k(leader, "every action; or click \"menu\" below"),
 		k(leader+"c", "AI reviews"),
 		k(leader+"f", "find & focus a repo or type"),
