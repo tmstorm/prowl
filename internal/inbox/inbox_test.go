@@ -28,6 +28,15 @@ func requestMe(p *gh.PR) {
 	p.ReviewRequests.Nodes = append(p.ReviewRequests.Nodes, rr)
 }
 
+func requested(p *gh.PR, h int) {
+	ti := gh.TimelineItem{Typename: "ReviewRequestedEvent", CreatedAt: at(h)}
+	ti.RequestedReviewer = &struct {
+		Login string `json:"login"`
+		Slug  string `json:"slug"`
+	}{Login: "me"}
+	p.TimelineItems.Nodes = append(p.TimelineItems.Nodes, ti)
+}
+
 func commit(p *gh.PR, h int) {
 	ti := gh.TimelineItem{Typename: "PullRequestCommit"}
 	ti.Commit = &struct {
@@ -102,6 +111,20 @@ func TestClassify(t *testing.T) {
 			p := pr("alice")
 			p.Reviews.Nodes = []gh.Review{review("me", "APPROVED", 1)}
 			requestMe(&p)
+			return p
+		}, inbox.ReApprove},
+		{"request still listed just after I approved", func() gh.PR {
+			p := pr("alice")
+			p.Reviews.Nodes = []gh.Review{review("me", "APPROVED", 2)}
+			requestMe(&p)
+			requested(&p, 1)
+			return p
+		}, inbox.Approved},
+		{"re-requested after I approved, with the event", func() gh.PR {
+			p := pr("alice")
+			p.Reviews.Nodes = []gh.Review{review("me", "APPROVED", 1)}
+			requestMe(&p)
+			requested(&p, 2)
 			return p
 		}, inbox.ReApprove},
 		{"approved, quiet", func() gh.PR {

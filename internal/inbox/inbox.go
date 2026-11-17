@@ -172,7 +172,9 @@ func login(a *gh.Actor) string {
 // (the author owes you a response) while your change request stands, or when
 // you reviewed with comments (a review body or a thread you started) and
 // haven't approved or requested changes. Replying in someone else's thread is
-// not feedback: GitHub records it as an empty comment review.
+// not feedback: GitHub records it as an empty comment review. A review request
+// older than your verdict is stale: GitHub can keep listing it for a moment
+// after you approve.
 func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, recheck bool) Item {
 	it := Item{PR: pr, Since: pr.CreatedAt}
 
@@ -242,7 +244,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 	}
 	othersLatest, threadActivity := others.at, threads.at
 
-	var lastPush, requestedAt time.Time
+	var lastPush, requestedAt, requestedMeAt time.Time
 	commitsAfterReview := 0
 	for _, ti := range pr.TimelineItems.Nodes {
 		switch ti.Typename {
@@ -259,6 +261,9 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 			if rr := ti.RequestedReviewer; rr != nil && (rr.Login == me || myTeams[rr.Slug]) {
 				requestedAt = maxT(requestedAt, ti.CreatedAt)
 			}
+			if rr := ti.RequestedReviewer; rr != nil && rr.Login == me {
+				requestedMeAt = maxT(requestedMeAt, ti.CreatedAt)
+			}
 		}
 	}
 
@@ -270,6 +275,9 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 		if myTeams[rr.RequestedReviewer.Slug] {
 			requestedTeam = true
 		}
+	}
+	if requestedDirect && myVerdict != nil && !requestedMeAt.IsZero() && requestedMeAt.Before(myVerdict.SubmittedAt) {
+		requestedDirect = false
 	}
 
 	asked := false
