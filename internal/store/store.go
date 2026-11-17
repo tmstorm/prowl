@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS slack_shares (
   user TEXT NOT NULL,      -- who posted it (Slack ID)
   user_name TEXT NOT NULL,
   at INTEGER NOT NULL,
+  link TEXT NOT NULL DEFAULT '',        -- the message's permalink
   my_reaction TEXT NOT NULL DEFAULT '', -- the emoji prowl last set, on others' PRs
   PRIMARY KEY (channel, ts, pr_key)
 );
@@ -863,20 +864,20 @@ func (s *Store) Watcher() int {
 
 // SlackShare is a PR link posted in Slack.
 type SlackShare struct {
-	Channel, TS, PRKey, PRID, ChannelName, ThreadTS, User, UserName string
-	At                                                              time.Time
-	MyReaction                                                      string // the emoji prowl last set on it
+	Channel, TS, PRKey, PRID, ChannelName, ThreadTS, User, UserName, Link string
+	At                                                                    time.Time
+	MyReaction                                                            string // the emoji prowl last set on it
 }
 
 // SaveSlackShares keeps shares, updating the ones already kept but not the
 // reactions prowl recorded on them.
 func (s *Store) SaveSlackShares(shares []SlackShare) error {
 	for _, sh := range shares {
-		_, err := s.db.Exec(`INSERT INTO slack_shares (channel, ts, pr_key, pr_id, channel_name, thread_ts, user, user_name, at)
-VALUES (?,?,?,?,?,?,?,?,?)
+		_, err := s.db.Exec(`INSERT INTO slack_shares (channel, ts, pr_key, pr_id, channel_name, thread_ts, user, user_name, at, link)
+VALUES (?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(channel, ts, pr_key) DO UPDATE SET pr_id=excluded.pr_id, channel_name=excluded.channel_name,
-  thread_ts=excluded.thread_ts, user_name=excluded.user_name`,
-			sh.Channel, sh.TS, sh.PRKey, sh.PRID, sh.ChannelName, sh.ThreadTS, sh.User, sh.UserName, sh.At.Unix())
+  thread_ts=excluded.thread_ts, user_name=excluded.user_name, link=excluded.link`,
+			sh.Channel, sh.TS, sh.PRKey, sh.PRID, sh.ChannelName, sh.ThreadTS, sh.User, sh.UserName, sh.At.Unix(), sh.Link)
 		if err != nil {
 			return wrap("save slack shares", err)
 		}
@@ -886,7 +887,7 @@ ON CONFLICT(channel, ts, pr_key) DO UPDATE SET pr_id=excluded.pr_id, channel_nam
 
 // SlackShares are every kept share, newest first.
 func (s *Store) SlackShares() ([]SlackShare, error) {
-	rows, err := s.db.Query(`SELECT channel, ts, pr_key, pr_id, channel_name, thread_ts, user, user_name, at, my_reaction
+	rows, err := s.db.Query(`SELECT channel, ts, pr_key, pr_id, channel_name, thread_ts, user, user_name, at, link, my_reaction
 FROM slack_shares ORDER BY at DESC, ts DESC`)
 	if err != nil {
 		return nil, wrap("slack shares", err)
@@ -896,7 +897,7 @@ FROM slack_shares ORDER BY at DESC, ts DESC`)
 	for rows.Next() {
 		var sh SlackShare
 		var at int64
-		if err := rows.Scan(&sh.Channel, &sh.TS, &sh.PRKey, &sh.PRID, &sh.ChannelName, &sh.ThreadTS, &sh.User, &sh.UserName, &at, &sh.MyReaction); err != nil {
+		if err := rows.Scan(&sh.Channel, &sh.TS, &sh.PRKey, &sh.PRID, &sh.ChannelName, &sh.ThreadTS, &sh.User, &sh.UserName, &at, &sh.Link, &sh.MyReaction); err != nil {
 			return nil, wrap("slack shares", err)
 		}
 		sh.At = time.Unix(at, 0)

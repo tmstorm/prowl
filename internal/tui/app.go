@@ -1334,6 +1334,7 @@ var leaderKeys = []leaderKey{
 	{cat: "Share", key: "y", desc: "post / copy slack line"},
 	{cat: "Share", key: "Y", desc: "DM the author"},
 	{cat: "Share", key: "o", desc: "open in browser"},
+	{cat: "Share", key: "O", desc: "open in Slack"},
 	{cat: "prowl", key: ",", desc: "options"},
 	{cat: "prowl", key: "U", desc: "update prowl"},
 	{cat: "prowl", key: "N", desc: "what's new"},
@@ -1430,6 +1431,12 @@ func (m *Model) leader(key string) tea.Cmd {
 		if onGitHub() {
 			return openURL(it.PR.URL)
 		}
+	case "O":
+		if it.SlackLink == "" {
+			m.info("nobody shared this PR in a Slack channel you watch")
+			return nil
+		}
+		return openURL(it.SlackLink)
 	case "s":
 		if need() {
 			m.popup = newSnooze(*it)

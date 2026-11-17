@@ -145,6 +145,9 @@ type Inbox struct {
 	Shared           map[string]Share // PR key -> its newest share in Slack, by someone else
 	// PR key -> who reacted on the Slack share of your PR, e.g. "#reviews: Bob ✅".
 	Reactions map[string]string
+	// PR key -> the Slack message that shared it: the newest by someone else,
+	// or on your PR the newest by anyone.
+	SlackLinks map[string]string
 }
 
 // Share is a PR link someone posted in Slack.

@@ -111,7 +111,7 @@ func (co *Core) syncSlack(sl *slack.Client, cfg config.Config, kept []store.Slac
 			continue
 		}
 		save = append(save, store.SlackShare{Channel: s.Channel, TS: s.TS, PRKey: cmp.Or(pr.PRKey, s.Key()), PRID: pr.PRID, ChannelName: s.Name,
-			ThreadTS: s.ThreadTS, User: s.User, UserName: s.UserName, At: s.At})
+			ThreadTS: s.ThreadTS, User: s.User, UserName: s.UserName, At: s.At, Link: s.Link})
 	}
 	if err := co.st.SaveSlackShares(save); err != nil {
 		return nil, err
@@ -181,9 +181,10 @@ func (co *Core) withShares(in *gh.Inbox, cfg config.Config, newlyShared []gh.PR)
 	}
 	all, _ := co.st.SlackShares()
 	shares := newestShares(cfg, co.slackMe, all)
-	in.Shared = map[string]gh.Share{}
+	in.Shared, in.SlackLinks = map[string]gh.Share{}, map[string]string{}
 	for key, s := range shares {
 		in.Shared[key] = gh.Share{Channel: s.ChannelName, From: s.UserName, At: s.At}
+		in.SlackLinks[key] = s.Link
 	}
 	return shares
 }
@@ -357,6 +358,7 @@ func (co *Core) PostInThread(key, text string) (string, error) {
 // PRs, whoever posted it, and sums up each one, e.g. "#reviews: Bob ✅,
 // Carol 👀". Only the emoji in slack_reactions count, and not yours; someone
 // with several counts by the one that says most. One call per shared PR.
+// It adds the link to each share to in.SlackLinks.
 func (co *Core) reactionsOnYours(sl *slack.Client, cfg config.Config, in *gh.Inbox) (map[string]string, error) {
 	yours := map[string]string{}
 	for _, pr := range in.PRs {
@@ -373,6 +375,7 @@ func (co *Core) reactionsOnYours(sl *slack.Client, cfg config.Config, in *gh.Inb
 		key, ok := yours[strings.ToLower(s.PRKey)]
 		if _, seen := newest[key]; ok && !seen && watchedShare(cfg, s.Channel, s.ChannelName == "") {
 			newest[key] = s
+			in.SlackLinks[key] = s.Link
 		}
 	}
 	e := cfg.SlackReactions

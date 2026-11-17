@@ -73,7 +73,9 @@ type Item struct {
 	ThreadCount     int // review threads, resolved or not
 	// On your PR: who reacted on its Slack share, e.g. "#reviews: Bob ✅".
 	SlackReactions string
-	ReviewStatus   string // approved | changes requested | needs review | needs rebase | draft
+	SlackLink      string // the Slack message that shared it
+
+	ReviewStatus string // approved | changes requested | needs review | needs rebase | draft
 }
 
 func Classify(in *gh.Inbox) []Item {
@@ -88,6 +90,7 @@ func Classify(in *gh.Inbox) []Item {
 		if shared {
 			it = withShare(it, share)
 		}
+		it.SlackLink = in.SlackLinks[pr.Key()]
 		if r := in.Reactions[pr.Key()]; r != "" && it.Bucket == Mine {
 			it.Reason += " · " + r
 			it.SlackReactions = r

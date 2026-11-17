@@ -904,6 +904,10 @@ func (m *Model) detailPane(l layout, x int) string {
 	for _, hl := range d.header(m) {
 		lines = append(lines, " "+hl)
 	}
+	if link := d.item.SlackLink; link != "" {
+		reasonW := lipgloss.Width(d.item.Bucket.String() + ": " + d.item.Reason)
+		m.hits.add(x+2, 3, min(reasonW, w-4), 1, func(m *Model) tea.Cmd { return openURL(link) })
+	}
 	lines = append(lines, "")
 	for _, b := range d.body(m) {
 		lines = append(lines, " "+b)

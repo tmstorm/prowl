@@ -358,6 +358,7 @@ type Share struct {
 	User     string // who posted it (ID)
 	UserName string
 	At       time.Time
+	Link     string // the message's permalink
 }
 
 // Key is the PR as prowl names it, e.g. owner/name#12.
@@ -407,7 +408,7 @@ func (c *Client) Shares(ctx context.Context, since time.Time) ([]Share, error) {
 				continue
 			}
 			s := Share{Channel: m.Channel.ID, DM: m.Channel.IsIM || m.Channel.IsMPIM, TS: m.TS,
-				User: m.User, UserName: m.Username, At: time.Unix(int64(at), 0)}
+				User: m.User, UserName: m.Username, At: time.Unix(int64(at), 0), Link: m.Permalink}
 			if !s.DM {
 				s.Name = m.Channel.Name
 			}

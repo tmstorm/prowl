@@ -113,7 +113,8 @@ func TestSlackShares(t *testing.T) {
 		t.Fatalf("shares notify: %v", changes)
 	}
 	in := co.Inbox()
-	if it, ok := find(in, "o/api#7"); !ok || it.Bucket != inbox.Shared || it.Reason != "shared in #reviews by bob" {
+	if it, ok := find(in, "o/api#7"); !ok || it.Bucket != inbox.Shared || it.Reason != "shared in #reviews by bob" ||
+		it.SlackLink != "https://x.slack.com/archives/C1/p1" {
 		t.Fatalf("o/api#7 = %v %+v", ok, it)
 	}
 	if it, ok := find(in, "o/api#10"); !ok || it.Bucket != inbox.Shared || it.Reason != "sent to you by carol" {
@@ -243,8 +244,8 @@ func TestReactionsOnYours(t *testing.T) {
 		t.Fatal(err, co.SlackErr())
 	}
 	it, _ := find(co.Inbox(), "o/api#3")
-	if it.Reason != "awaiting reviewers · #reviews: Bob ✅, Carol Diaz 👀" {
-		t.Fatalf("reason = %q", it.Reason)
+	if it.Reason != "awaiting reviewers · #reviews: Bob ✅, Carol Diaz 👀" || it.SlackLink != "https://x.slack.com/archives/C1/p1" {
+		t.Fatalf("reason = %q, link %q", it.Reason, it.SlackLink)
 	}
 	if len(changes) != 1 {
 		t.Fatalf("changes = %v", changes)

@@ -3,10 +3,13 @@ package tui_test
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/gh"
@@ -155,4 +158,37 @@ func TestSlackChannels(t *testing.T) {
 	if !strings.Contains(string(b), `slack_channels = ["C1"]`) || !strings.Contains(string(b), "slack_dms = false") {
 		t.Fatalf("not saved:\n%s", b)
 	}
+}
+
+// A PR shared in Slack links its reason to the message, and a click on it or
+// <leader>O opens the message.
+func TestOpenShareInSlack(t *testing.T) {
+	opened := filepath.Join(t.TempDir(), "opened")
+	t.Setenv("OPENED", opened)
+	link := "https://acme.slack.com/archives/C1/p1794869000000100"
+	sl := &fakeSlack{matches: fmt.Sprintf(`{"ts":"%d.000100","user":"U2","username":"bob","text":"<https://github.com/o/api/pull/7>",
+"permalink":%q,"channel":{"id":"C1","name":"reviews"}}`, time.Now().Unix(), link)}
+	opener := `echo "$1" >> "$OPENED"`
+	fake := &fakeGitHub{Others: []gh.PR{pr("api", 7, "fix: crash", "alice")}, Bins: map[string]string{"xdg-open": opener, "open": opener}}
+	a := newSlackApp(t, fake, sl.client(t), func(c *config.Config) { c.SlackChannels = []string{"C1"} })
+	a.refresh()
+	a.waitFor("shared: shared in #reviews by bob")
+	if !strings.Contains(a.m.View(), ansi.SetHyperlink(link)) {
+		t.Fatal("the reason doesn't link to the Slack message")
+	}
+	wantOpened := func(n int) {
+		t.Helper()
+		for range 50 {
+			if b, _ := os.ReadFile(opened); strings.Count(string(b), link) == n {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		b, _ := os.ReadFile(opened)
+		t.Fatalf("opened %q, want the Slack message %d times", b, n)
+	}
+	a.keys("space", "O")
+	wantOpened(1)
+	a.clickFirst("shared in #reviews by bob")
+	wantOpened(2)
 }

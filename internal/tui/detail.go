@@ -1595,10 +1595,11 @@ func (d *detail) header(m *Model) []string {
 		sGreen.Render(fmt.Sprintf("+%d", pr.Additions)) + " " + sRed.Render(fmt.Sprintf("-%d", pr.Deletions)) + sDim.Render(fmt.Sprintf(" in %d files", pr.ChangedFiles)),
 		sDim.Render("opened " + ago(pr.CreatedAt) + " ago"),
 	}
-	status := []string{
-		bucketStyle(d.item.Bucket).Render(d.item.Bucket.String()) + sDim.Render(": "+d.item.Reason),
-		statusBadge(d.item.ReviewStatus),
+	reason := bucketStyle(d.item.Bucket).Render(d.item.Bucket.String()) + sDim.Render(": "+d.item.Reason)
+	if d.item.SlackLink != "" {
+		reason = ansi.SetHyperlink(d.item.SlackLink) + reason + ansi.ResetHyperlink()
 	}
+	status := []string{reason, statusBadge(d.item.ReviewStatus)}
 	if ci := pr.CIState(); ci != "" {
 		status = append(status, ciBadge(ci, m.cfg.NerdFont)+sDim.Render(" ci"))
 	}
@@ -1612,7 +1613,7 @@ func (d *detail) header(m *Model) []string {
 	return []string{
 		fit(styledTitle(pr.Title, true), w),
 		fit(strings.Join(meta, sep), w),
-		fit(strings.Join(status, sep), w),
+		fit(strings.Join(status, sep), w) + ansi.ResetHyperlink(),
 	}
 }
 

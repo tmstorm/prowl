@@ -74,7 +74,8 @@ func TestSlackShares(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := store.SlackShare{Channel: "C1", TS: "1.0", PRKey: "o/r#1", PRID: "PR1", ChannelName: "reviews", User: "U1", UserName: "alice", At: time.Unix(100, 0)}
+	old := store.SlackShare{Channel: "C1", TS: "1.0", PRKey: "o/r#1", PRID: "PR1", ChannelName: "reviews", User: "U1", UserName: "alice", At: time.Unix(100, 0),
+		Link: "https://acme.slack.com/archives/C1/p1"}
 	newer := old
 	newer.TS, newer.At = "2.0", time.Unix(200, 0)
 	other := store.SlackShare{Channel: "D1", TS: "3.0", PRKey: "o/r#2", PRID: "PR2", User: "U2", UserName: "bob", At: time.Unix(150, 0)}

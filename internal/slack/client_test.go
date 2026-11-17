@@ -110,6 +110,9 @@ func TestShares(t *testing.T) {
 	for _, s := range shares {
 		got = append(got, fmt.Sprintf("%s %s %s %v %s %s", s.Key(), s.Channel, s.Name, s.DM, s.ThreadTS, s.UserName))
 	}
+	if shares[0].Link != "https://x.slack.com/archives/C1/p1794869000000100" {
+		t.Errorf("link = %q", shares[0].Link)
+	}
 	want := []string{
 		"o/web#41 C1 reviews false  alice",
 		"o/api#12 C1 reviews false  alice",
