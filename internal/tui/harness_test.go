@@ -368,7 +368,7 @@ func (f *fakeSlack) client(t *testing.T) *slack.Client {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return slack.NewWith("xoxp-test", srv.URL+"/")
+	return slack.NewWith(slack.Token{Access: "xoxp-test"}, srv.URL+"/")
 }
 
 func (f *fakeSlack) posts() []string {

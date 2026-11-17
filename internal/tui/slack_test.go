@@ -196,7 +196,7 @@ func TestOpenShareInSlack(t *testing.T) {
 
 // A sync that can't read Slack says why in the status line.
 func TestSlackSyncError(t *testing.T) {
-	a := newSlackApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, slack.NewWith("xoxp-test", "http://127.0.0.1:1/"))
+	a := newSlackApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, slack.NewWith(slack.Token{Access: "xoxp-test"}, "http://127.0.0.1:1/"))
 	a.waitFor("slack auth.test")
 	a.want("fix: crash")
 }

@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zalando/go-keyring"
@@ -42,20 +43,30 @@ func Manifest() string {
 		"settings:\n  org_deploy_enabled: false\n  socket_mode_enabled: false\n  token_rotation_enabled: false\n"
 }
 
+// Token is a Slack user token. Signing in with PKCE gives one that expires
+// after 12 hours, and Refresh renews it from the app ClientID.
+type Token struct {
+	Access   string `json:"access"`
+	Refresh  string `json:"refresh,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
+}
+
 // Client calls the Slack Web API as one user.
 type Client struct {
-	token string
-	api   string
-	http  *http.Client
+	api  string
+	http *http.Client
+
+	mu    sync.Mutex
+	token Token
 }
 
 // New returns a client for the Slack Web API.
-func New(token string) *Client {
+func New(token Token) *Client {
 	return NewWith(token, "https://slack.com/api/")
 }
 
 // NewWith returns a client for the Web API at api, e.g. an httptest server.
-func NewWith(token, api string) *Client {
+func NewWith(token Token, api string) *Client {
 	return &Client{token: token, api: api, http: &http.Client{Timeout: 30 * time.Second}}
 }
 
@@ -67,14 +78,79 @@ type Error struct {
 
 func (e *Error) Error() string { return "slack " + e.Method + ": " + e.Code }
 
+// call calls method, renewing the token once if it has expired.
 func (c *Client) call(ctx context.Context, method string, params url.Values, out any) error {
+	access := c.access()
+	err := c.send(ctx, method, access, params, out)
+	if se, ok := errors.AsType[*Error](err); !ok || se.Code != "token_expired" {
+		return err
+	}
+	if err := c.renew(ctx, access); err != nil {
+		return err
+	}
+	return c.send(ctx, method, c.access(), params, out)
+}
+
+func (c *Client) access() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.token.Access
+}
+
+// renew replaces the expired access token with the one another prowl process
+// already saved, else with a new one from Slack. Calls that find the same
+// token expired renew it once.
+func (c *Client) renew(ctx context.Context, expired string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token.Access != expired {
+		return nil
+	}
+	if c.token.Refresh == "" {
+		return errors.New("the Slack token expired: sign in again with `prowl slack`")
+	}
+	if c.adoptSaved(expired) {
+		return nil
+	}
+	var g grant
+	err := c.send(ctx, "oauth.v2.access", "", url.Values{
+		"client_id":     {c.token.ClientID},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {c.token.Refresh},
+	}, &g)
+	if err == nil && g.token(c.token.ClientID).Access == "" {
+		err = errors.New("slack returned no user token")
+	}
+	if err != nil {
+		if c.adoptSaved(expired) {
+			return nil
+		}
+		return fmt.Errorf("renew the Slack token: %w; sign in again with `prowl slack`", err)
+	}
+	c.token = g.token(c.token.ClientID)
+	return SaveToken(c.token)
+}
+
+// adoptSaved takes the token in the keyring when another prowl process has
+// renewed it already. Slack revokes a refresh token once it's used, so
+// renewing again with the old one would fail.
+func (c *Client) adoptSaved(expired string) bool {
+	saved, err := keyringToken()
+	if err != nil || saved.Refresh == "" || saved.Access == expired {
+		return false
+	}
+	c.token = saved
+	return true
+}
+
+func (c *Client) send(ctx context.Context, method, access string, params url.Values, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.api+method, strings.NewReader(params.Encode()))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if access != "" {
+		req.Header.Set("Authorization", "Bearer "+access)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -122,16 +198,34 @@ func (c *Client) AuthTest(ctx context.Context) (Identity, error) {
 	return id, err
 }
 
+// grant is oauth.v2.access's answer. The user token is under authed_user
+// after sign-in and, as Slack's SDKs read it, at the top after a refresh.
+type grant struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	AuthedUser   struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	} `json:"authed_user"`
+}
+
+func (g grant) token(clientID string) Token {
+	if g.AuthedUser.AccessToken != "" {
+		return Token{Access: g.AuthedUser.AccessToken, Refresh: g.AuthedUser.RefreshToken, ClientID: clientID}
+	}
+	return Token{Access: g.AccessToken, Refresh: g.RefreshToken, ClientID: clientID}
+}
+
 // Login signs in through the browser with PKCE and returns the user token.
 // open shows the authorize URL; Slack then redirects to RedirectURL, which
 // Login listens on until ctx ends.
-func (c *Client) Login(ctx context.Context, clientID string, open func(string) error) (string, error) {
+func (c *Client) Login(ctx context.Context, clientID string, open func(string) error) (Token, error) {
 	verifier, state := randomString(), randomString()
 	sum := sha256.Sum256([]byte(verifier))
 	redirect, _ := url.Parse(RedirectURL)
 	ln, err := net.Listen("tcp", redirect.Host)
 	if err != nil {
-		return "", fmt.Errorf("listen for the Slack sign-in on %s: %w", redirect.Host, err)
+		return Token{}, fmt.Errorf("listen for the Slack sign-in on %s: %w", redirect.Host, err)
 	}
 	codes := make(chan string, 1)
 	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -166,22 +260,18 @@ func (c *Client) Login(ctx context.Context, clientID string, open func(string) e
 		"code_challenge_method": {"S256"},
 	}
 	if err := open("https://slack.com/oauth/v2/authorize?" + auth.Encode()); err != nil {
-		return "", err
+		return Token{}, err
 	}
 	var code string
 	select {
 	case <-ctx.Done():
-		return "", fmt.Errorf("slack sign-in: %w", ctx.Err())
+		return Token{}, fmt.Errorf("slack sign-in: %w", ctx.Err())
 	case code = <-codes:
 	}
 	if code == "" {
-		return "", errors.New("slack sign-in was cancelled")
+		return Token{}, errors.New("slack sign-in was cancelled")
 	}
-	var out struct {
-		AuthedUser struct {
-			AccessToken string `json:"access_token"`
-		} `json:"authed_user"`
-	}
+	var out grant
 	err = c.call(ctx, "oauth.v2.access", url.Values{
 		"client_id":     {clientID},
 		"code":          {code},
@@ -189,12 +279,13 @@ func (c *Client) Login(ctx context.Context, clientID string, open func(string) e
 		"redirect_uri":  {RedirectURL},
 	}, &out)
 	if err != nil {
-		return "", err
+		return Token{}, err
 	}
-	if out.AuthedUser.AccessToken == "" {
-		return "", errors.New("slack sign-in returned no user token")
+	token := out.token(clientID)
+	if token.Access == "" {
+		return Token{}, errors.New("slack sign-in returned no user token")
 	}
-	return out.AuthedUser.AccessToken, nil
+	return token, nil
 }
 
 // React adds your emoji to a message. One already there is fine.
@@ -442,30 +533,48 @@ func randomString() string {
 
 const keyringService, keyringUser = "prowl", "slack"
 
-// Token is the user token: PROWL_SLACK_TOKEN, for machines without a
+// LoadToken is the user token: PROWL_SLACK_TOKEN, for machines without a
 // keyring, else the one saved in the keyring when saved says there is one.
 // Reading the keyring can wait on a prompt to unlock it, so prowl doesn't
 // for people who never signed in. Empty means not connected.
-func Token(saved bool) (string, error) {
+func LoadToken(saved bool) (Token, error) {
 	if t := os.Getenv("PROWL_SLACK_TOKEN"); t != "" {
-		return t, nil
+		return Token{Access: t}, nil
 	}
 	if !saved {
-		return "", nil
+		return Token{}, nil
 	}
-	t, err := keyring.Get(keyringService, keyringUser)
+	t, err := keyringToken()
 	if errors.Is(err, keyring.ErrNotFound) {
-		return "", nil
+		return Token{}, nil
 	}
+	return t, err
+}
+
+// keyringToken reads the token saved in the keyring. Before prowl renewed
+// tokens it saved the bare access token, which still reads.
+func keyringToken() (Token, error) {
+	s, err := keyring.Get(keyringService, keyringUser)
 	if err != nil {
-		return "", fmt.Errorf("read the Slack token from the keyring: %w", err)
+		return Token{}, fmt.Errorf("read the Slack token from the keyring: %w", err)
+	}
+	if !strings.HasPrefix(s, "{") {
+		return Token{Access: s}, nil
+	}
+	var t Token
+	if err := json.Unmarshal([]byte(s), &t); err != nil {
+		return Token{}, fmt.Errorf("read the Slack token from the keyring: %w", err)
 	}
 	return t, nil
 }
 
 // SaveToken keeps the user token in the OS keyring.
-func SaveToken(token string) error {
-	if err := keyring.Set(keyringService, keyringUser, token); err != nil {
+func SaveToken(t Token) error {
+	b, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	if err := keyring.Set(keyringService, keyringUser, string(b)); err != nil {
 		return fmt.Errorf("save the Slack token in the keyring: %w", err)
 	}
 	return nil

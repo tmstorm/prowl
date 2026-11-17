@@ -9,10 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/tmstorm/prowl/internal/slack"
+	"github.com/zalando/go-keyring"
 )
 
 func TestAuthTest(t *testing.T) {
@@ -25,11 +29,11 @@ func TestAuthTest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	id, err := slack.NewWith("xoxp-1", srv.URL+"/").AuthTest(context.Background())
+	id, err := slack.NewWith(slack.Token{Access: "xoxp-1"}, srv.URL+"/").AuthTest(context.Background())
 	if err != nil || id.User != "sam" || id.TeamID != "T1" {
 		t.Fatalf("AuthTest = %+v, %v", id, err)
 	}
-	_, err = slack.NewWith("xoxp-bad", srv.URL+"/").AuthTest(context.Background())
+	_, err = slack.NewWith(slack.Token{Access: "xoxp-bad"}, srv.URL+"/").AuthTest(context.Background())
 	var se *slack.Error
 	if !errors.As(err, &se) || se.Code != "invalid_auth" {
 		t.Fatalf("bad token: err = %v, want invalid_auth", err)
@@ -47,7 +51,7 @@ func TestLogin(t *testing.T) {
 		case r.Form.Get("client_secret") != "", base64.RawURLEncoding.EncodeToString(sum[:]) != challenge:
 			fmt.Fprint(w, `{"ok":false,"error":"invalid_code_verifier"}`)
 		default:
-			fmt.Fprint(w, `{"ok":true,"authed_user":{"id":"U1","access_token":"xoxp-new"}}`)
+			fmt.Fprint(w, `{"ok":true,"authed_user":{"id":"U1","access_token":"xoxe.xoxp-new","refresh_token":"xoxe-1-r","expires_in":43200}}`)
 		}
 	}))
 	defer srv.Close()
@@ -72,9 +76,9 @@ func TestLogin(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	token, err := slack.NewWith("", srv.URL+"/").Login(ctx, "123.456", browser)
-	if err != nil || token != "xoxp-new" {
-		t.Fatalf("Login = %q, %v", token, err)
+	token, err := slack.NewWith(slack.Token{}, srv.URL+"/").Login(ctx, "123.456", browser)
+	if want := (slack.Token{Access: "xoxe.xoxp-new", Refresh: "xoxe-1-r", ClientID: "123.456"}); err != nil || token != want {
+		t.Fatalf("Login = %+v, %v", token, err)
 	}
 }
 
@@ -99,7 +103,7 @@ func TestShares(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	shares, err := slack.NewWith("xoxp-1", srv.URL+"/").Shares(context.Background(), since)
+	shares, err := slack.NewWith(slack.Token{Access: "xoxp-1"}, srv.URL+"/").Shares(context.Background(), since)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +145,7 @@ func TestReactAndPost(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	c := slack.NewWith("xoxp-1", srv.URL+"/")
+	c := slack.NewWith(slack.Token{Access: "xoxp-1"}, srv.URL+"/")
 	ctx := context.Background()
 	if err := c.React(ctx, "C1", "1.0", "eyes"); err != nil {
 		t.Fatal(err)
@@ -170,7 +174,7 @@ func TestUsers(t *testing.T) {
 		fmt.Fprint(w, `{"ok":true,"members":[{"id":"U2","name":"gone","deleted":true},{"id":"U3","name":"carol"}],"response_metadata":{"next_cursor":""}}`)
 	}))
 	defer srv.Close()
-	users, err := slack.NewWith("xoxp-1", srv.URL+"/").Users(context.Background())
+	users, err := slack.NewWith(slack.Token{Access: "xoxp-1"}, srv.URL+"/").Users(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +197,7 @@ func TestReactions(t *testing.T) {
 		fmt.Fprint(w, `{"ok":true,"type":"message","message":{"reactions":[{"name":"eyes","users":["U1","U2"],"count":2},{"name":"x","users":["U3"],"count":1}]}}`)
 	}))
 	defer srv.Close()
-	got, err := slack.NewWith("xoxp-1", srv.URL+"/").Reactions(context.Background(), "C1", "1.0")
+	got, err := slack.NewWith(slack.Token{Access: "xoxp-1"}, srv.URL+"/").Reactions(context.Background(), "C1", "1.0")
 	if err != nil || fmt.Sprint(got) != "map[eyes:[U1 U2] x:[U3]]" {
 		t.Fatalf("Reactions = %v, %v", got, err)
 	}
@@ -214,7 +218,7 @@ func TestChannels(t *testing.T) {
 		fmt.Fprint(w, `{"ok":true,"channels":[{"id":"G1","name":"team","is_private":true}]}`)
 	}))
 	defer srv.Close()
-	got, err := slack.NewWith("xoxp-1", srv.URL+"/").Channels(context.Background())
+	got, err := slack.NewWith(slack.Token{Access: "xoxp-1"}, srv.URL+"/").Channels(context.Background())
 	if err != nil || fmt.Sprint(got) != "[{C1 reviews false} {G1 team true}]" {
 		t.Fatalf("Channels = %v, %v", got, err)
 	}
@@ -232,21 +236,118 @@ func TestSharesStopsPaging(t *testing.T) {
 {"ts":"1794700000.000000","text":"https://github.com/o/api/pull/2","permalink":"https://x.slack.com/archives/C1/p2","channel":{"id":"C1","name":"reviews"}}]}}`)
 	}))
 	defer srv.Close()
-	shares, err := slack.NewWith("xoxp-1", srv.URL+"/").Shares(context.Background(), time.Unix(1794800000, 0))
+	shares, err := slack.NewWith(slack.Token{Access: "xoxp-1"}, srv.URL+"/").Shares(context.Background(), time.Unix(1794800000, 0))
 	if err != nil || len(shares) != 1 || fmt.Sprint(pages) != "[1]" {
 		t.Fatalf("shares %v, pages %v, %v", shares, pages, err)
 	}
 }
 
-// Without a sign-in, Token doesn't go to the keyring at all;
-// PROWL_SLACK_TOKEN works either way.
-func TestToken(t *testing.T) {
+// Without a sign-in, LoadToken doesn't go to the keyring at all;
+// PROWL_SLACK_TOKEN works either way. A token saved before prowl renewed
+// tokens still reads.
+func TestLoadToken(t *testing.T) {
+	keyring.MockInit()
 	t.Setenv("PROWL_SLACK_TOKEN", "")
-	if token, err := slack.Token(false); token != "" || err != nil {
-		t.Fatalf("Token(false) = %q, %v", token, err)
+	if token, err := slack.LoadToken(false); token != (slack.Token{}) || err != nil {
+		t.Fatalf("LoadToken(false) = %+v, %v", token, err)
+	}
+	if token, err := slack.LoadToken(true); token != (slack.Token{}) || err != nil {
+		t.Fatalf("nothing saved: %+v, %v", token, err)
+	}
+	if err := keyring.Set("prowl", "slack", "xoxp-old"); err != nil {
+		t.Fatal(err)
+	}
+	if token, err := slack.LoadToken(true); token != (slack.Token{Access: "xoxp-old"}) || err != nil {
+		t.Fatalf("bare token: %+v, %v", token, err)
+	}
+	saved := slack.Token{Access: "xoxe.xoxp-1", Refresh: "xoxe-1-r", ClientID: "123.456"}
+	if err := slack.SaveToken(saved); err != nil {
+		t.Fatal(err)
+	}
+	if token, err := slack.LoadToken(true); token != saved || err != nil {
+		t.Fatalf("saved token: %+v, %v", token, err)
 	}
 	t.Setenv("PROWL_SLACK_TOKEN", "xoxp-env")
-	if token, err := slack.Token(false); token != "xoxp-env" || err != nil {
-		t.Fatalf("with PROWL_SLACK_TOKEN: %q, %v", token, err)
+	if token, err := slack.LoadToken(false); token != (slack.Token{Access: "xoxp-env"}) || err != nil {
+		t.Fatalf("with PROWL_SLACK_TOKEN: %+v, %v", token, err)
+	}
+}
+
+// rotatingSlack answers with token_expired until a call renews the token,
+// then accepts only the new one, and counts the renewals.
+func rotatingSlack(t *testing.T, renewals *atomic.Int32) *httptest.Server {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		switch {
+		case r.URL.Path == "/oauth.v2.access":
+			if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "xoxe-1-old" ||
+				r.Form.Get("client_id") != "123.456" || r.Form.Get("client_secret") != "" {
+				fmt.Fprint(w, `{"ok":false,"error":"invalid_refresh_token"}`)
+				return
+			}
+			renewals.Add(1)
+			fmt.Fprint(w, `{"ok":true,"token_type":"user","access_token":"xoxe.xoxp-new","refresh_token":"xoxe-1-new","expires_in":43200}`)
+		case r.Header.Get("Authorization") == "Bearer xoxe.xoxp-new":
+			fmt.Fprint(w, `{"ok":true,"message":{"reactions":[{"name":"eyes","users":["U1"]}]}}`)
+		default:
+			fmt.Fprint(w, `{"ok":false,"error":"token_expired"}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// An expired token renews once, however many calls find it expired, and
+// the new one is saved for the next prowl to start.
+func TestRenew(t *testing.T) {
+	keyring.MockInit()
+	var renewals atomic.Int32
+	srv := rotatingSlack(t, &renewals)
+	c := slack.NewWith(slack.Token{Access: "xoxe.xoxp-old", Refresh: "xoxe-1-old", ClientID: "123.456"}, srv.URL+"/")
+
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Go(func() {
+			if got, err := c.Reactions(context.Background(), "C1", "1.0"); err != nil || len(got["eyes"]) != 1 {
+				t.Errorf("Reactions = %v, %v", got, err)
+			}
+		})
+	}
+	wg.Wait()
+	if n := renewals.Load(); n != 1 {
+		t.Fatalf("renewed %d times, want 1", n)
+	}
+	saved, err := slack.LoadToken(true)
+	if want := (slack.Token{Access: "xoxe.xoxp-new", Refresh: "xoxe-1-new", ClientID: "123.456"}); err != nil || saved != want {
+		t.Fatalf("saved %+v, %v; want %+v", saved, err, want)
+	}
+}
+
+// When another prowl renewed the token first, the client takes the one it
+// saved instead of renewing with a refresh token Slack has revoked.
+func TestRenewTakesSaved(t *testing.T) {
+	keyring.MockInit()
+	if err := slack.SaveToken(slack.Token{Access: "xoxe.xoxp-new", Refresh: "xoxe-1-new", ClientID: "123.456"}); err != nil {
+		t.Fatal(err)
+	}
+	var renewals atomic.Int32
+	srv := rotatingSlack(t, &renewals)
+	c := slack.NewWith(slack.Token{Access: "xoxe.xoxp-old", Refresh: "xoxe-1-old", ClientID: "123.456"}, srv.URL+"/")
+	if _, err := c.Reactions(context.Background(), "C1", "1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if n := renewals.Load(); n != 0 {
+		t.Fatalf("renewed %d times, want 0", n)
+	}
+}
+
+// A token without a refresh token, e.g. from PROWL_SLACK_TOKEN, can't renew,
+// so the error says to sign in again.
+func TestExpiredWithoutRefresh(t *testing.T) {
+	var renewals atomic.Int32
+	srv := rotatingSlack(t, &renewals)
+	_, err := slack.NewWith(slack.Token{Access: "xoxe.xoxp-old"}, srv.URL+"/").Reactions(context.Background(), "C1", "1.0")
+	if err == nil || !strings.Contains(err.Error(), "prowl slack") || renewals.Load() != 0 {
+		t.Fatalf("err = %v, renewals %d", err, renewals.Load())
 	}
 }
