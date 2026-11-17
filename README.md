@@ -74,7 +74,7 @@ A few things worth doing next:
 - [Slack](docs/slack.md): setting it up, shared PRs, reactions, posting and DMs
 - [Config](docs/config.md): every setting and its default
 
-`?` in prowl lists every key.
+`?` in prowl lists every key. The same docs are built into prowl for the version you run: `?` then `d` opens them in the app, and `prowl docs [page [section]]` prints them.
 
 ## Where it's going
 

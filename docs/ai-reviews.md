@@ -117,7 +117,7 @@ A review takes a few minutes and runs every time the hook fires, so turn it on p
 
 On your own PRs, an AI review is often more useful as a to-do list than as comments. Two ways to hand it to the agent working in your checkout, without posting anything:
 
-- Install the skill once with `prowl skill install` for Claude Code, or `prowl skill install --agent codex` for Codex. After that, asking the agent in a checkout to "fix the review findings" (or "what did the review say?") is enough: it runs `prowl findings` (or `prowl review` when you ask for a review before a PR), checks each finding against the code, fixes the ones that hold up, says why it left the others, and drafts text for findings about the PR description. It never commits, pushes or posts. The skill's source is [`internal/skill/SKILL.md`](internal/skill/SKILL.md).
+- Install the skill once with `prowl skill install` for Claude Code, or `prowl skill install --agent codex` for Codex. After that, asking the agent in a checkout to "fix the review findings" (or "what did the review say?") is enough: it runs `prowl findings` (or `prowl review` when you ask for a review before a PR), checks each finding against the code, fixes the ones that hold up, says why it left the others, and drafts text for findings about the PR description. It never commits, pushes or posts. The skill's source is [`internal/skill/SKILL.md`](../internal/skill/SKILL.md).
 - Without the skill, tell any agent to run `prowl findings --prompt`, which prints the findings wrapped in the same instructions.
 - In prowl, `<leader>ch` copies that prompt to the clipboard to paste wherever you like.
 

@@ -294,7 +294,7 @@ func TestLegendAndHelp(t *testing.T) {
 	for _, w := range []int{80, 120, 160} {
 		a.resize(w, 50)
 		a.keys("space", "?")
-		a.want("Keys", "any key to close", "hide it")
+		a.want("Keys", "any other key closes", "hide it")
 		if n := len(a.lines()); n != a.h {
 			t.Fatalf("width %d: screen has %d lines, help wrapped", w, n)
 		}
@@ -391,7 +391,7 @@ func TestNewcomerKeys(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	a.want("↑↓ move · ←→ panes · enter open · ? keys", "<space> menu")
 	a.keys("?")
-	a.want("Keys", "any key to close", "suggest a change")
+	a.want("Keys", "any other key closes", "suggest a change")
 	a.keys("esc")
 	a.keys("right", "4")
 	a.want("No AI review yet")
@@ -459,7 +459,7 @@ func TestUpdateInstalled(t *testing.T) {
 	a = reopen(a)
 	a.want("prowl v0.2.0 is installed · <space>U restarts into it", "1 new feature · <space>N what's new")
 	a.keys("?")
-	a.want("prowl 0.1.0 · any key to close")
+	a.want("prowl 0.1.0 · d opens prowl's docs")
 	a.keys("esc", "space", "N")
 	a.want("What's new in prowl v0.2.0", "released 2026-11-20", "feat(update): retry failed installs an hour later #9",
 		"fix: show the reviewer's note", "o opens the release on GitHub")
@@ -639,4 +639,27 @@ func TestDMAuthor(t *testing.T) {
 	if p := sl.posts(); len(p) != 1 || p[0] != "/chat.postMessage D9  https://github.com/o/api/pull/7 Needs review · <@U0ALICE123> · fix: crash" {
 		t.Fatalf("posted %q", p)
 	}
+}
+
+// ? then d opens prowl's docs: tab moves between pages, / searches every
+// page and jumps to a hit, enter follows a link on the cursor line, and
+// backspace goes back.
+func TestDocsViewer(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.keys("?")
+	a.want("d opens prowl's docs")
+	a.keys("d")
+	a.want("prowl docs · Installing prowl", "install · inbox · reviewing")
+	a.keys("tab")
+	a.want("prowl docs · The inbox")
+	a.keys("/", "until you review them")
+	a.want("inbox", "wait under shared until you review them")
+	a.keys("enter")
+	a.want("prowl docs · The inbox")
+	a.keys("enter")
+	a.want("prowl docs · Slack", "Setting it up")
+	a.keys("backspace")
+	a.want("prowl docs · The inbox")
+	a.keys("esc")
+	a.wantNot("prowl docs")
 }
