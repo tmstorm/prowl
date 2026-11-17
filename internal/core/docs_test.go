@@ -101,6 +101,23 @@ func TestFindDocTag(t *testing.T) {
 	}
 }
 
+// An agent reads the docs by topic, falls back to the lines that mention
+// words that aren't one, and lists the pages for nothing.
+func TestDocsText(t *testing.T) {
+	if s := core.DocsText("stale_after"); !strings.Contains(s, "| `stale_after` |") {
+		t.Errorf("stale_after: %q", s)
+	}
+	if s := core.DocsText("keyring"); !strings.Contains(s, "slack › Setting it up: ") {
+		t.Errorf("keyring: %q", s)
+	}
+	if s := core.DocsText(""); !strings.HasPrefix(s, "inbox: The inbox\n") {
+		t.Errorf("no topic: %q", s)
+	}
+	if s := core.DocsText("zzz qqq"); !strings.HasPrefix(s, "Nothing in prowl's docs") {
+		t.Errorf("zzz qqq: %q", s)
+	}
+}
+
 var docLink = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 
 // Every relative link in the docs reaches a page, a heading in it, or a file

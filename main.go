@@ -136,7 +136,11 @@ func run(args []string) error {
 		if len(args) < 3 {
 			return fmt.Errorf("agent-tools needs a repo and a directory")
 		}
-		s, err := agent.ToolServer(cfg, args[1], args[2], slices.Contains(args[3:], "--local"))
+		var docs func(string) string
+		if slices.Contains(args[3:], "--chat") {
+			docs = core.DocsText
+		}
+		s, err := agent.ToolServer(cfg, args[1], args[2], slices.Contains(args[3:], "--local"), docs)
 		if err != nil {
 			return err
 		}
@@ -498,12 +502,8 @@ func showDocs(args []string) error {
 		}
 	}
 	topic := strings.Join(args, " ")
-	if tags := core.FindDocTag(topic); len(tags) > 0 {
-		var parts []string
-		for _, t := range tags {
-			parts = append(parts, t.Markdown())
-		}
-		printMarkdown(strings.Join(parts, "\n\n") + "\n")
+	if md := core.DocTopic(topic); md != "" {
+		printMarkdown(md + "\n")
 		return nil
 	}
 	var sections []string

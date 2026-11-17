@@ -22,7 +22,7 @@ func runTool(t *testing.T, ctx context.Context, repo, dir string, local bool, co
 	t.Helper()
 	cfg := config.Default()
 	cfg.Agent.RunImages = map[string]string{"*": "busybox:1.37"}
-	s, err := agent.ToolServer(cfg, repo, dir, local)
+	s, err := agent.ToolServer(cfg, repo, dir, local, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +43,38 @@ func runTool(t *testing.T, ctx context.Context, repo, dir string, local bool, co
 		t.Fatal(err)
 	}
 	return out, nil
+}
+
+// The chat's docs tool answers from the docs it is given, with or without a
+// run image, and a review's tool server has no docs tool.
+func TestDocsTool(t *testing.T) {
+	ctx := context.Background()
+	call := func(docs func(string) string) (*mcp.CallToolResult, error) {
+		s, err := agent.ToolServer(config.Default(), "acme/api", t.TempDir(), false, docs)
+		if err != nil {
+			return nil, err
+		}
+		st, ct := mcp.NewInMemoryTransports()
+		go func() { _ = s.Run(ctx, st) }()
+		cs, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(ctx, ct, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cs.Close()
+		return cs.CallTool(ctx, &mcp.CallToolParams{Name: "docs", Arguments: map[string]any{"topic": "stale_after"}})
+	}
+	res, err := call(func(topic string) string { return "about " + topic })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out agent.DocsOutput
+	b, _ := json.Marshal(res.StructuredContent)
+	if err := json.Unmarshal(b, &out); err != nil || out.Text != "about stale_after" {
+		t.Fatalf("docs: %s, %v", b, err)
+	}
+	if _, err := call(nil); err == nil {
+		t.Fatal("with no run image and no docs, there is no tool server")
+	}
 }
 
 // The run tool runs in a container on a copy of the repo: the exit code and

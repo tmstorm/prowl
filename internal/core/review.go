@@ -383,7 +383,7 @@ func (co *Core) Chat(key, reviewer string) (Command, error) {
 	if _, err := os.Stat(wt); err != nil {
 		return Command{}, fmt.Errorf("the review's worktree is gone; run the review again")
 	}
-	cmd := be.Chat(run.SessionID, wt, cfg.Agent.Model(be.Name()), agent.ToolServerCommand(cfg, be, repo, wt, l.Dir != ""))
+	cmd := be.Chat(run.SessionID, wt, cfg.Agent.Model(be.Name()), agent.ToolServerCommand(cfg, be, repo, wt, l.Dir != "", true))
 	if cmd == nil {
 		return Command{}, fmt.Errorf("%s has no interactive session to chat in; ask it to revise instead", be.Title())
 	}

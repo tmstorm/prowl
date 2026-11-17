@@ -221,6 +221,42 @@ func FindDocTag(topic string) []DocTag {
 	return slices.CompactFunc(out, func(a, b DocTag) bool { return a.Page == b.Page && a.Line == b.Line })
 }
 
+// DocTopic is the Markdown a topic leads to, each place of its tag in turn,
+// or "" when no tag fits.
+func DocTopic(topic string) string {
+	var parts []string
+	for _, t := range FindDocTag(topic) {
+		parts = append(parts, t.Markdown())
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// DocsText is what the docs say about a topic, for an agent to read: what
+// its tag leads to, or else the lines that mention it and their sections. An
+// empty topic lists the pages.
+func DocsText(topic string) string {
+	if strings.TrimSpace(topic) == "" {
+		var b strings.Builder
+		for _, p := range Docs() {
+			fmt.Fprintf(&b, "%s: %s\n", p.Name, p.Title)
+		}
+		return b.String()
+	}
+	if md := DocTopic(topic); md != "" {
+		return md
+	}
+	hits := SearchDocs(topic)
+	if len(hits) == 0 {
+		return fmt.Sprintf("Nothing in prowl's docs mentions %q.", topic)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "No topic %q. Lines that mention it, as page › section: line:\n\n", topic)
+	for _, h := range hits[:min(len(hits), 30)] {
+		fmt.Fprintf(&b, "%s › %s: %s\n", h.Page, h.Heading, h.Line)
+	}
+	return b.String()
+}
+
 // DocHit is a line of the docs that matches a search.
 type DocHit struct {
 	Page    string // its page's name

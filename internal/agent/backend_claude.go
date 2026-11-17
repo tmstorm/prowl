@@ -38,7 +38,7 @@ func (claudeBackend) SkillDirs() []string {
 func (claudeBackend) Chat(session, dir, model string, toolServer []string) *exec.Cmd {
 	args := []string{"--resume", session, "--setting-sources", claudeSettings}
 	if len(toolServer) > 0 {
-		args = append(args, "--mcp-config", claudeMCPConfig(toolServer), "--allowedTools", "mcp__prowl__run")
+		args = append(args, "--mcp-config", claudeMCPConfig(toolServer), "--allowedTools", "mcp__prowl__run,mcp__prowl__docs")
 	}
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = dir

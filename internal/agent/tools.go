@@ -35,6 +35,14 @@ type RunOutput struct {
 	Output   string `json:"output" jsonschema:"stdout and stderr together, only the end when it is long"`
 }
 
+type DocsInput struct {
+	Topic string `json:"topic,omitempty" jsonschema:"a page, a heading, a key, a setting or a bucket, e.g. config, Running tests, <leader>cc, stale_after, re-check; other words return the lines that mention them; empty lists the pages"`
+}
+
+type DocsOutput struct {
+	Text string `json:"text" jsonschema:"Markdown from prowl's docs"`
+}
+
 // ToolServer is the MCP server a review agent starts as `prowl agent-tools`. Its
 // run tool runs a command in a container of the repo's image, on a copy of
 // dir and nothing else of yours: no home, no environment, no credentials. It
@@ -43,18 +51,31 @@ type RunOutput struct {
 // is mounted read-only, so a PR's tests can't change files that git on your
 // machine reads later, such as the worktree's .git. local is a review of your
 // own checkout: it gets a cache of its own, so a PR can't plant code in a
-// module that your next local review runs.
-func ToolServer(cfg config.Config, repo, dir string, local bool) (*mcp.Server, error) {
-	image := cfg.Agent.RunImage(repo)
-	if image == "" {
-		return nil, fmt.Errorf("agent tools: no image for %s in [agent.run_images]", repo)
+// module that your next local review runs. docs, for the chat, answers its
+// docs tool from prowl's own docs.
+func ToolServer(cfg config.Config, repo, dir string, local bool, docs func(topic string) string) (*mcp.Server, error) {
+	if !canRun(cfg, repo) && docs == nil {
+		return nil, fmt.Errorf("agent tools: no run tool for %s: no image in [agent.run_images], or no docker", repo)
 	}
+	image := cfg.Agent.RunImage(repo)
 	trust := "pr"
 	if local {
 		trust = "local"
 	}
 	cache := filepath.Join(config.DataDir(), "cache", filepath.FromSlash(repo), trust)
 	s := mcp.NewServer(&mcp.Implementation{Name: "prowl"}, nil)
+	if docs != nil {
+		mcp.AddTool(s, &mcp.Tool{
+			Name: "docs",
+			Description: "Read prowl's own docs, for the version you run in: what its keys, settings, inbox buckets and review features do. " +
+				"Use it when asked how prowl works, rather than answering from memory.",
+		}, func(_ context.Context, _ *mcp.CallToolRequest, in DocsInput) (*mcp.CallToolResult, DocsOutput, error) {
+			return nil, DocsOutput{Text: docs(in.Topic)}, nil
+		})
+	}
+	if !canRun(cfg, repo) {
+		return s, nil
+	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "run",
 		Description: fmt.Sprintf("Run a shell command at the root of the repo, in a %s container with only a copy of the repo. "+
