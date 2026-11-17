@@ -114,6 +114,24 @@ CREATE TABLE IF NOT EXISTS locals (
   base TEXT NOT NULL,      -- the default branch it is compared with
   at INTEGER NOT NULL      -- last reviewed
 );
+CREATE TABLE IF NOT EXISTS slack_shares (
+  channel TEXT NOT NULL,   -- Slack channel ID
+  ts TEXT NOT NULL,        -- the message
+  pr_key TEXT NOT NULL,
+  pr_id TEXT NOT NULL,     -- the PR's node ID
+  channel_name TEXT NOT NULL, -- '' for a DM
+  thread_ts TEXT NOT NULL, -- '' at the top level
+  user TEXT NOT NULL,      -- who posted it (Slack ID)
+  user_name TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  my_reaction TEXT NOT NULL DEFAULT '',     -- the emoji prowl last set, on others' PRs
+  seen_reactions TEXT NOT NULL DEFAULT '{}', -- Slack user -> emoji last seen, on your PRs
+  PRIMARY KEY (channel, ts, pr_key)
+);
+CREATE TABLE IF NOT EXISTS slack_search (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  at INTEGER NOT NULL      -- the last search for shares that succeeded
+);
 `
 
 func Open(dir string) (*Store, error) {
@@ -835,4 +853,68 @@ func (s *Store) Watcher() int {
 	var pid int
 	_ = s.db.QueryRow(`SELECT pid FROM watcher WHERE id = 1`).Scan(&pid)
 	return pid
+}
+
+// SlackShare is a PR link posted in Slack.
+type SlackShare struct {
+	Channel, TS, PRKey, PRID, ChannelName, ThreadTS, User, UserName string
+	At                                                              time.Time
+}
+
+// SaveSlackShares keeps shares, updating the ones already kept but not the
+// reactions prowl recorded on them.
+func (s *Store) SaveSlackShares(shares []SlackShare) error {
+	for _, sh := range shares {
+		_, err := s.db.Exec(`INSERT INTO slack_shares (channel, ts, pr_key, pr_id, channel_name, thread_ts, user, user_name, at)
+VALUES (?,?,?,?,?,?,?,?,?)
+ON CONFLICT(channel, ts, pr_key) DO UPDATE SET pr_id=excluded.pr_id, channel_name=excluded.channel_name,
+  thread_ts=excluded.thread_ts, user_name=excluded.user_name`,
+			sh.Channel, sh.TS, sh.PRKey, sh.PRID, sh.ChannelName, sh.ThreadTS, sh.User, sh.UserName, sh.At.Unix())
+		if err != nil {
+			return wrap("save slack shares", err)
+		}
+	}
+	return nil
+}
+
+// SlackShares are every kept share, newest first.
+func (s *Store) SlackShares() ([]SlackShare, error) {
+	rows, err := s.db.Query(`SELECT channel, ts, pr_key, pr_id, channel_name, thread_ts, user, user_name, at
+FROM slack_shares ORDER BY at DESC, ts DESC`)
+	if err != nil {
+		return nil, wrap("slack shares", err)
+	}
+	defer rows.Close()
+	var out []SlackShare
+	for rows.Next() {
+		var sh SlackShare
+		var at int64
+		if err := rows.Scan(&sh.Channel, &sh.TS, &sh.PRKey, &sh.PRID, &sh.ChannelName, &sh.ThreadTS, &sh.User, &sh.UserName, &at); err != nil {
+			return nil, wrap("slack shares", err)
+		}
+		sh.At = time.Unix(at, 0)
+		out = append(out, sh)
+	}
+	return out, wrap("slack shares", rows.Err())
+}
+
+// DeleteSlackShares forgets the shares of a PR, once it closes.
+func (s *Store) DeleteSlackShares(key string) error {
+	_, err := s.db.Exec(`DELETE FROM slack_shares WHERE pr_key = ?`, key)
+	return wrap("delete slack shares", err)
+}
+
+// SlackSearched is when the last search for shares succeeded, or zero.
+func (s *Store) SlackSearched() time.Time {
+	var at int64
+	if s.db.QueryRow(`SELECT at FROM slack_search WHERE id = 1`).Scan(&at) != nil {
+		return time.Time{}
+	}
+	return time.Unix(at, 0)
+}
+
+// SetSlackSearched records a search for shares that succeeded.
+func (s *Store) SetSlackSearched(at time.Time) error {
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO slack_search (id, at) VALUES (1, ?)`, at.Unix())
+	return wrap("set slack searched", err)
 }

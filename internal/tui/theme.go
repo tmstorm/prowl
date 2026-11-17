@@ -69,7 +69,7 @@ func init() { applyTheme("dracula") }
 
 func bucketStyle(b inbox.Bucket) lipgloss.Style {
 	switch b {
-	case inbox.NeedsReview, inbox.ReReview:
+	case inbox.NeedsReview, inbox.ReReview, inbox.Shared:
 		return sRed
 	case inbox.ReApprove, inbox.Recheck:
 		return sOrange

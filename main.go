@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -26,6 +28,7 @@ import (
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/skill"
+	"github.com/tmstorm/prowl/internal/slack"
 	"github.com/tmstorm/prowl/internal/store"
 	"github.com/tmstorm/prowl/internal/tui"
 )
@@ -62,6 +65,9 @@ usage:
                    show how you edited agent reviews before posting them:
                    each rewrite as draft and posted, what you dropped and
                    added. Feed it to a style guide or a writing skill.
+  prowl slack [--off]
+                   sign in to Slack, so PR links shared there show in the
+                   inbox. --off signs out.
   prowl version    print the version, and the newer release when one is out
   prowl update     install the newest release over this prowl and print
                    what's new. A prowl from a package manager says which
@@ -149,6 +155,8 @@ func run(args []string) error {
 		return findings(cfg, st, args[1:])
 	case "service":
 		return service(args[1:])
+	case "slack":
+		return connectSlack(cfg, args[1:])
 	case "uninstall":
 		return uninstall(cfg, st, args[1:])
 	case "edits":
@@ -210,7 +218,7 @@ func run(args []string) error {
 	case "":
 		ctx, stop := context.WithCancel(context.Background())
 		defer stop()
-		co := core.New(cfg, c, st)
+		co := withSlack(core.New(cfg, c, st))
 		go co.Run(ctx)
 		final, err := tea.NewProgram(tui.New(co), progOpts(cfg)...).Run()
 		if m, ok := final.(*tui.Model); ok && err == nil && m.Restart() {
@@ -221,7 +229,7 @@ func run(args []string) error {
 	case "watch":
 		return watch(cfg, c, st)
 	case "list":
-		co := core.New(cfg, c, st)
+		co := withSlack(core.New(cfg, c, st))
 		co.Quiet()
 		if _, err := co.Refresh(); err != nil {
 			return err
@@ -248,7 +256,7 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 	if interval < 30*time.Second {
 		interval = 30 * time.Second
 	}
-	co := core.New(cfg, c, st)
+	co := withSlack(core.New(cfg, c, st))
 	if err := co.Watching(); errors.Is(err, core.ErrWatching) {
 		fmt.Println(err)
 		return nil
@@ -287,6 +295,9 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 		} else {
 			core.Notify(changes, cfg.NotifyTimeout.Duration)
 			fmt.Printf("%s synced %d PRs, %d changes\n", time.Now().Format(time.TimeOnly), len(co.Inbox().Items), len(changes))
+			if err := co.SlackErr(); err != nil {
+				fmt.Fprintln(os.Stderr, time.Now().Format(time.TimeOnly), "slack:", err)
+			}
 			co.PruneClosed()
 		}
 		time.Sleep(interval)
@@ -744,7 +755,84 @@ func uninstall(cfg config.Config, st *store.Store, args []string) error {
 	if err := core.Uninstall(f); err != nil {
 		return err
 	}
+	if purge {
+		if err := slack.DeleteToken(); err != nil {
+			fmt.Fprintln(os.Stderr, "prowl:", err)
+		}
+	}
 	fmt.Println("prowl is uninstalled")
+	return nil
+}
+
+var clientID = regexp.MustCompile(`^\d+\.\d+$`)
+
+// withSlack has co read the PR links shared in Slack, when you're signed in.
+func withSlack(co *core.Core) *core.Core {
+	if token, err := slack.Token(); err == nil && token != "" {
+		co.UseSlack(slack.New(token))
+	}
+	return co
+}
+
+// connectSlack signs in to the team's Slack app, or shows how to make one,
+// and keeps the user token in the keyring.
+func connectSlack(cfg config.Config, args []string) error {
+	switch {
+	case slices.Contains(args, "--off"):
+		if err := slack.DeleteToken(); err != nil {
+			return err
+		}
+		fmt.Println("signed out of Slack")
+		return nil
+	case len(args) > 0:
+		return fmt.Errorf("usage: prowl slack [--off]")
+	}
+	ctx := context.Background()
+	token := ""
+	if cfg.SlackClientID == "" {
+		fmt.Print("prowl needs a Slack app to sign in to. Your team needs only one: if someone\n" +
+			"already made it, enter its client ID. Otherwise create it at\n" +
+			"https://api.slack.com/apps?new_app=1 (From a manifest) with this manifest,\n" +
+			"then enter its client ID (Basic Information, App Credentials):\n\n" + slack.Manifest() + "\n" +
+			"Client ID, or a user token (xoxp-...) from an app of your own: ")
+		answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("read the client ID: %w", err)
+		}
+		answer = strings.TrimSpace(answer)
+		switch {
+		case strings.HasPrefix(answer, "xoxp-"):
+			token = answer
+		case !clientID.MatchString(answer):
+			return fmt.Errorf("%q isn't a client ID: it's two numbers joined by a dot, under Basic Information, App Credentials", answer)
+		default:
+			cfg.SlackClientID = answer
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+		}
+	}
+	if token == "" {
+		login, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		var err error
+		token, err = slack.New("").Login(login, cfg.SlackClientID, func(url string) error {
+			fmt.Println("Opening Slack in your browser to sign in. If it doesn't open, go to:\n" + url)
+			_ = platform.Open(url)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	id, err := slack.New(token).AuthTest(ctx)
+	if err != nil {
+		return err
+	}
+	if err := slack.SaveToken(token); err != nil {
+		return err
+	}
+	fmt.Printf("signed in to Slack as %s in %s\n", id.User, id.Team)
 	return nil
 }
 

@@ -197,7 +197,7 @@ func (f *GitHub) graphql(q string, v map[string]any) any {
 		repo := fmt.Sprintf("%s/%s", v["owner"], v["name"])
 		n := int(v["n"].(float64))
 		for _, pr := range append(append([]gh.PR{}, f.PRs...), f.Others...) {
-			if pr.Repository.NameWithOwner == repo && pr.Number == n {
+			if strings.EqualFold(pr.Repository.NameWithOwner, repo) && pr.Number == n {
 				pr.State = "OPEN"
 				if f.Closed[pr.Key()] {
 					pr.State = "MERGED"

@@ -340,6 +340,7 @@ var bucketTags = map[inbox.Bucket]string{
 	inbox.Activity: "activity", inbox.TeamRequest: "team", inbox.Mine: "mine",
 	inbox.WaitingOnAuthor: "waiting", inbox.Approved: "approved", inbox.Involved: "involved",
 	inbox.ReApprove: "re-approve", inbox.Unclaimed: "unclaimed", inbox.Watching: "watching", inbox.Recheck: "re-check", inbox.Local: "local",
+	inbox.Shared: "shared",
 }
 
 // legend explains the icons currently on screen, wrapped to at most two lines.
