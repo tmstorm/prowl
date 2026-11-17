@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0](https://github.com/tmstorm/prowl/compare/v0.3.0...v0.4.0) (2026-11-17)
+
+
+### Features
+
+* **slack:** bring PRs shared in Slack into prowl ([#36](https://github.com/tmstorm/prowl/issues/36)) ([824a8c2](https://github.com/tmstorm/prowl/commit/824a8c240cb4360aaabd1bdfe2caec3caa933d47))
+* **tui:** count a release's new features in the update tip ([#38](https://github.com/tmstorm/prowl/issues/38)) ([90d8040](https://github.com/tmstorm/prowl/commit/90d80400b13d06dc133104ad71b019942e0ba8d1))
+* **tui:** pick reviewers from a list when asking for reviews ([#35](https://github.com/tmstorm/prowl/issues/35)) ([28a43ab](https://github.com/tmstorm/prowl/commit/28a43ab284aa74614dc20c3813b16225887a23b3))
+
+
+### Bug Fixes
+
+* **platform:** stop finished link openers and reviews lingering as zombies ([#34](https://github.com/tmstorm/prowl/issues/34)) ([668a56f](https://github.com/tmstorm/prowl/commit/668a56f05f65b3d88cf96cce30ced7fd5621dc7c))
+
+
+### Performance Improvements
+
+* **agent:** test only what changed on a re-review ([#37](https://github.com/tmstorm/prowl/issues/37)) ([f933a62](https://github.com/tmstorm/prowl/commit/f933a628c27bfc647b41e2f8c1638443c4a41d6b))
+* show a posted review and a sync sooner ([#31](https://github.com/tmstorm/prowl/issues/31)) ([05a0beb](https://github.com/tmstorm/prowl/commit/05a0beb053299820e9efabd5b7b895ee5eb6e891))
+
 ## [0.3.0](https://github.com/tmstorm/prowl/compare/v0.2.0...v0.3.0) (2026-11-13)
 
 
