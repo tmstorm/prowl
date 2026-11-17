@@ -6,7 +6,7 @@
 curl -fsSL https://raw.githubusercontent.com/tmstorm/prowl/main/install.sh | sh
 ```
 
-The script first checks for `gh` and `git`. When one is missing it shows the command that installs it with your package manager (pacman, apt, dnf, zypper, apk or Homebrew) and asks before running it; say no and it stops with what to install. Then it offers the extras prowl works without: a Nerd Font for icons, and on Linux `notify-send` and a clipboard tool. On Linux the font is the Nerd Font symbols in `~/.local/share/fonts`, which most terminals use for icons without changing your font; WezTerm, Ghostty and kitty have them built in. Last, it downloads the latest release for your system, checks it against the release's checksums, and puts `prowl` in `~/.local/bin` (set `PROWL_INSTALL_DIR` to change that).
+The script first checks for `gh` and `git`. When one is missing it shows the command that installs it with your package manager (pacman, apt, dnf, zypper, apk or Homebrew) and asks before running it; say no and it stops with what to install. Then it offers the extras prowl works without: a Nerd Font for icons, and on Linux `notify-send` and a clipboard tool. On Linux the font is the Nerd Font symbols, which most terminals use for icons without changing your font: the `ttf-nerd-fonts-symbols` package on Arch, and a download into `~/.local/share/fonts` elsewhere. WezTerm, Ghostty and kitty have them built in. Last, it downloads the latest release for your system, checks it against the release's checksums, and puts `prowl` in `~/.local/bin` (set `PROWL_INSTALL_DIR` to change that).
 
 With no terminal to ask, as in CI, it installs no extras and stops if `gh` or `git` is missing. `PROWL_YES=1` answers yes to every question, and `NO_COLOR=1` turns the colors off.
 
@@ -16,7 +16,7 @@ With no terminal to ask, as in CI, it installs no extras and stops if `gh` or `g
 irm https://raw.githubusercontent.com/tmstorm/prowl/main/install.ps1 | iex
 ```
 
-It checks for `gh` and `git` first and offers to install what's missing with `winget`, then offers JetBrainsMono Nerd Font for icons (choose it as Windows Terminal's font face afterwards). It puts `prowl.exe` in `%LOCALAPPDATA%\Programs\prowl` and adds that folder to your PATH. Windows support is new and less tested than Linux and macOS: the agent chat opens fullscreen (Windows has no pseudo-terminal for the floating window), notifications are Windows toasts, and the config and data live in `%APPDATA%\prowl` and `%LOCALAPPDATA%\prowl`.
+It checks for `gh` and `git` first and offers to install what's missing with `winget`, then offers JetBrainsMono Nerd Font for icons (choose it as Windows Terminal's font face afterwards). It puts `prowl.exe` in `%LOCALAPPDATA%\Programs\prowl` and adds that folder to your PATH. `PROWL_INSTALL_DIR`, `PROWL_YES=1` and `NO_COLOR=1` work as they do for the script above. Windows support is new and less tested than Linux and macOS: the agent chat opens fullscreen (Windows has no pseudo-terminal for the floating window), notifications are Windows toasts, and the config and data live in `%APPDATA%\prowl` and `%LOCALAPPDATA%\prowl`.
 
 ## With Go
 
@@ -35,64 +35,7 @@ Or from a clone: `go build` (or `task build` / `task install` if you use [Task](
 
 Notifications use `notify-send` on Linux, Notification Center on macOS and toasts on Windows. The clipboard uses `wl-copy` on Wayland, `xclip` or `xsel` on X11, `pbcopy` on macOS and PowerShell on Windows and WSL. Over SSH, or with none of those, prowl hands the text to your terminal with OSC 52, so it reaches the clipboard of the machine you are sitting at. Most terminals accept that; in tmux it needs `set -g set-clipboard on`.
 
-With no configuration, prowl shows every open PR that involves you across GitHub. To limit it to your work, set `orgs` (see [Config](config.md)). The config lives at `~/.config/prowl/config.toml` and state (review snapshots, snoozes, AI reviews, worktrees) in `~/.local/share/prowl`, following `XDG_CONFIG_HOME` and `XDG_DATA_HOME`.
+With no configuration, prowl shows every open PR that involves you across GitHub. To limit it to your work, set `orgs` (see [Config](config.md)).
 
-## Notifications in the background
+The rest of the docs are built into prowl for the version you run: `?` then `d` opens them, and `prowl docs` prints them. [Running prowl](running.md) covers its commands, background notifications, updating, uninstalling and logins.
 
-```sh
-prowl service install
-```
-
-runs `prowl watch` at login and starts it now: a systemd user service on Linux, a launchd agent on macOS, and on Windows an entry in your startup programs (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, listed under Task Manager's Startup apps), which needs no admin. `prowl service uninstall` removes it. The same switch is in the options (`<leader>,` → Background notifications), and prowl suggests it once, the first time you open it. While it runs, the TUI leaves notifications to it.
-
-On Linux, check it with `systemctl --user status prowl-watch` and follow its log with `journalctl --user -u prowl-watch -f`. It's your user's service, so no `sudo`.
-
-When prowl is updated, the running `prowl watch` notices its executable changed and restarts on the new version within a poll interval. On Windows a running `.exe` can't be overwritten: prowl's own update moves it aside first, and `install.ps1` stops `prowl watch`, updates prowl and starts it again.
-
-## Updating
-
-prowl asks GitHub once a day whether a newer release is out. What happens next depends on how you installed it.
-
-- **With the install script**, prowl updates itself. The background service installs the new release, or the TUI does when the service isn't running. The TUI you have open keeps the version it started with and says `prowl v0.2.0 is installed`; `<leader>U` restarts it on the new one. `prowl update` does the same by hand and prints what's new.
-- **From a package manager** (the AUR's `prowl-bin` is coming soon, then Homebrew and Scoop), the package manager owns `prowl` and prowl never replaces it. It tells you once per release, under the legend and in `prowl version`, which command updates it, such as `yay -S prowl-bin`.
-- **With `go install`**, it tells you to run `go install github.com/tmstorm/prowl@latest`.
-- **A build from source** never checks.
-
-The first time a new version starts, the legend offers its release notes and counts the features it adds, and `<leader>N` shows the notes at any time. `check_updates = false` turns the daily check off. `auto_update = false` keeps the check but leaves installing to you, with `prowl update` or `<leader>U`.
-
-Each release's `checksums.txt` is signed with prowl's release key, and prowl installs nothing that doesn't match a signed checksum. To check a download yourself, use [minisign](https://jedisct1.github.io/minisign/) with the key in [`minisign.pub`](../minisign.pub):
-
-```sh
-minisign -Vm checksums.txt -p minisign.pub
-sha256sum --check --ignore-missing checksums.txt
-```
-
-## Uninstalling
-
-```sh
-prowl uninstall
-```
-
-lists what prowl put on this machine and asks before removing it: the background service, the review worktrees and `refs/prowl/*` refs it added to checkouts under `repo_roots`, the `prowl-findings` skill (only as this prowl writes it; a copy that differs stays, and it says so) and, unless a package manager owns it, the `prowl` binary. If a step fails, the binary stays so you can run it again to finish. On Windows the binary goes once prowl exits, and its folder comes off your PATH when nothing else is in it. Your config and data stay for a reinstall; `prowl uninstall --purge` removes them too. `--yes` skips the question.
-
-When a package manager installed prowl, it says which command removes the binary, such as `sudo pacman -R prowl-bin`. Run `prowl uninstall` first: package managers can't clean up what prowl put in your home folder.
-
-## Commands
-
-- `prowl` opens the TUI.
-- `prowl watch` polls GitHub and sends a desktop notification when a PR moves into a state that needs you. When it starts, it catches up on what changed while it wasn't running; more than a few changes come as one summary. While it runs, the TUI leaves notifications to it, so none arrive twice. `prowl service install` runs it at login.
-- `prowl list` prints what needs you, one PR per line, for scripts and status bars.
-- `prowl review [--detach] [--agent NAME[:PROFILE]]` reviews the branch checked out here before it has a pull request (see [Reviewing before a pull request](ai-reviews.md#reviewing-before-a-pull-request)).
-- `prowl findings [PR] [--all] [--prompt] [--agent NAME[:PROFILE]]` prints the AI review's findings as markdown, then each reviewer's note. Run it in a checkout and it finds the current branch's PR, or its local review when it has none; or pass a number or `owner/repo#N`.
-- `prowl skill install [--agent claude|codex] [DIR]` installs the `prowl-findings` skill (see [Fixing findings with your own coding agent](ai-reviews.md#fixing-findings-with-your-own-coding-agent)); `prowl skill print` shows it.
-- `prowl edits [--since 30d] [--repo NAME]` shows how you edited AI reviews before posting them (see [Learning from your edits](ai-reviews.md#learning-from-your-edits)).
-- `prowl schema` prints the JSON Schema a review must match, for a `command` reviewer.
-- `prowl update` installs the newest release over this prowl and prints what's new, or says which command updates it when a package manager installed it (see [Updating](#updating)).
-- `prowl version` prints the version, and the newer release when one is out.
-- `prowl uninstall [--purge] [--yes]` removes what prowl put on this machine (see [Uninstalling](#uninstalling)).
-
-## Accounts
-
-prowl uses the logins of the tools it drives: the GitHub CLI, your agent and Slack. If `gh` isn't logged in when prowl starts, it offers to run `gh auth login`. `<leader>l` shows every login, with the account and, for Claude Code, when the login runs out. `enter` on one runs that tool's own login (`gh auth login`, `claude auth login`, `codex login`) and checks again when it finishes. Slack is listed too, and `enter` on it runs `prowl slack`, which also signs you in the first time. prowl checks in the background every half hour. The statusline says when your review agent is logged out or Slack refuses your sign-in, or `Claude relogin in 2d` when its login runs out within three days, so you can log in again early from `<leader>l`. A review won't start on a logged-out agent, and while Slack is logged out prowl stops reading it and refuses to post there. `prowl watch` sends a desktop notification when the agent is logged out or its login ends within a day, and when Slack refuses your sign-in.
-
-A `command` agent can join in with `login_command` (what `<leader>l` runs) and `status_command` (exit 0 when logged in; it may print `{"loggedIn": true, "account": "...", "expiresAt": "<RFC 3339>"}`) under `[agent]`.

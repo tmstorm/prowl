@@ -68,6 +68,9 @@ usage:
   prowl slack [--off]
                    sign in to Slack, so PR links shared there show in the
                    inbox. --off signs out.
+  prowl docs [PAGE [SECTION]]
+                   list prowl's docs, built in for this version, or print a
+                   page or one section of it
   prowl version    print the version, and the newer release when one is out
   prowl update     install the newest release over this prowl and print
                    what's new. A prowl from a package manager says which
@@ -153,6 +156,8 @@ func run(args []string) error {
 		return nil
 	case "findings":
 		return findings(cfg, st, args[1:])
+	case "docs":
+		return showDocs(args[1:])
 	case "service":
 		return service(args[1:])
 	case "slack":
@@ -473,6 +478,31 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 		return nil
 	}
 	printMarkdown(md)
+	return nil
+}
+
+// showDocs lists the docs pages, or prints a page or one section of it.
+func showDocs(args []string) error {
+	switch len(args) {
+	case 0:
+		for _, p := range core.Docs() {
+			fmt.Printf("%-12s %s\n", p.Name, p.Title)
+		}
+		fmt.Println("\nprowl docs PAGE [SECTION] prints a page, or one section of it.")
+		return nil
+	case 1:
+		p, ok := core.Doc(args[0])
+		if !ok {
+			return fmt.Errorf("no docs page %q: `prowl docs` lists them", args[0])
+		}
+		printMarkdown(p.Markdown)
+		return nil
+	}
+	s, err := core.DocSection(args[0], strings.Join(args[1:], " "))
+	if err != nil {
+		return err
+	}
+	printMarkdown(s + "\n")
 	return nil
 }
 
