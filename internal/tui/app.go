@@ -1340,7 +1340,7 @@ var leaderKeys = []leaderKey{
 	{cat: "Inbox", key: "r", desc: "refresh"},
 	{cat: "Share", key: "y", desc: "post / copy slack line"},
 	{cat: "Share", key: "Y", desc: "DM the author"},
-	{cat: "Share", key: "o", desc: "open in browser"},
+	{cat: "Share", key: "o", desc: "open in GitHub"},
 	{cat: "Share", key: "O", desc: "open in Slack"},
 	{cat: "prowl", key: ",", desc: "options"},
 	{cat: "prowl", key: "U", desc: "update prowl"},

@@ -503,7 +503,7 @@ func (p *helpPopup) view(m *Model) string {
 		k("+", "PR pane full width / back"),
 		k("h esc q", "back to inbox"),
 		k("^p "+leader+leader, "find a PR, or paste a link"),
-		k("o", "open in browser (the check, on one)"),
+		k("o", "open in GitHub (the check, on one)"),
 		k("yy yu", "copy Slack line / PR URL"),
 		k("R "+leader+"r", "refresh"),
 		"",
