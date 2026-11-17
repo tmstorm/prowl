@@ -186,6 +186,7 @@ func New(co *core.Core) *Model {
 	applyConfig(cfg)
 	ti := textinput.New()
 	ti.Prompt = ""
+	ti.ShowSuggestions = true
 	m := &Model{
 		cfg: cfg, core: co, loading: true, waking: true, started: time.Now(),
 		runs:        map[string][]*store.Run{},
@@ -1190,6 +1191,7 @@ func (m *Model) normal(key string) tea.Cmd {
 		m.mode = modeSearch
 		m.searchInput.Prompt = ":"
 		m.searchInput.SetValue("")
+		m.searchInput.SetSuggestions(nil)
 		m.searchInput.Width = m.w - 4
 		return m.searchInput.Focus()
 	case "j", "down":
@@ -1227,11 +1229,14 @@ func (m *Model) normal(key string) tea.Cmd {
 	case "?":
 		m.popup = &helpPopup{}
 		return nil
+	case "K":
+		return m.openDocs(m.docsTopic())
 	case "/":
 		m.mode = modeSearch
 		m.searchBack = false
 		m.searchInput.Prompt = key
 		m.searchInput.SetValue("")
+		m.searchInput.SetSuggestions(nil)
 		m.searchInput.Width = m.w - 4
 		return m.searchInput.Focus()
 	case "n":
@@ -1709,7 +1714,49 @@ func (m *Model) searchKey(k tea.KeyMsg) tea.Cmd {
 	}
 	var cmd tea.Cmd
 	m.searchInput, cmd = m.searchInput.Update(k)
+	if m.searchInput.Prompt == ":" {
+		m.searchInput.SetSuggestions(helpSuggestions(m.searchInput.Value()))
+	}
 	return cmd
+}
+
+// helpSuggestions completes a :help topic with the docs' tags, so tab fills
+// one in.
+func helpSuggestions(q string) []string {
+	cmd, _, ok := strings.Cut(q, " ")
+	if !ok || (cmd != "h" && cmd != "help") {
+		return nil
+	}
+	var out []string
+	for _, t := range core.DocTags() {
+		if s := cmd + " " + t.Tag; !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// docsTopic is the docs topic for what the cursor is on: a PR's bucket, or in
+// the PR pane its finding, thread, check or tab.
+func (m *Model) docsTopic() string {
+	if m.focus == fDetail {
+		if d := m.current(); d != nil {
+			return d.docsTopic()
+		}
+		return ""
+	}
+	c := m.list.cur
+	if c < 0 || c >= len(m.rows) {
+		return ""
+	}
+	switch r := m.rows[c]; {
+	case r.repo != "":
+		return "Grouping and focusing"
+	case r.header:
+		return r.bucket.String()
+	default:
+		return m.items[r.item].Bucket.String()
+	}
 }
 
 // exCommand runs a vim-style : command.
@@ -1722,6 +1769,9 @@ func (m *Model) exCommand(q string) tea.Cmd {
 	case q == "noh" || q == "nohlsearch":
 		m.search = ""
 		return nil
+	}
+	if cmd, topic, _ := strings.Cut(q, " "); cmd == "h" || cmd == "help" {
+		return m.openDocs(strings.TrimSpace(topic))
 	}
 	if n, err := strconv.Atoi(q); err == nil {
 		m.activeNav().gotoLine(n)

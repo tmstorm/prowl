@@ -21,6 +21,8 @@ prowl has two panes: the inbox on the left and the PR pane on the right. Under 1
 | `zz`/`zt`/`zb` | put the cursor line in the middle, top or bottom |
 | `/`, `n`/`N` | search, next and previous (`N` searches backwards); `:noh` clears the highlight |
 | `:42` | go to line 42 |
+| `K` | open these docs at what the cursor is on: a PR's bucket, a finding, a check, a thread, an option in `<leader>,` |
+| `:help`, `:h` | open these docs; `:help stale_after` opens them at a key, option or heading, and `tab` completes it |
 | `ctrl+p`, `<leader><leader>`, `<leader>ff` | fuzzy-find a PR, or paste a link to one |
 | `o` | open the PR on GitHub |
 | `R`, `<leader>r` | refresh now |
@@ -40,24 +42,24 @@ Anything that posts to GitHub sits behind the leader key, written `<leader>` in 
 
 | Key | Does |
 | --- | --- |
-| `a` | approve, after a `y` |
-| `x` | request changes, in your editor |
-| `m` | comment review, in your editor |
-| `n` | a plain comment in the conversation, not a review; pending inline comments stay pending |
-| `t` | the thread under the cursor: `r` resolve, `u` unresolve, `c` reply |
-| `A` | ask people or teams for a review |
-| `R` | request yourself as a reviewer |
-| `X` | close with a comment |
-| `D` | make it a draft, or ready for review |
-| `c` | AI reviews (see [AI reviews](ai-reviews.md)) |
-| `p` | post the AI review |
-| `l` | accounts and logins (see [Accounts](running.md#accounts)) |
-| `f` | find and focus: `ff` find a PR, `fr` one repo, `ft` one commit type |
-| `g`, `s`, `S`, `z`, `w` | group, snooze, unsnooze, show snoozed, watch a repo (see [The inbox](inbox.md)) |
-| `y`, `Y`, `O` | Slack: post the review line, DM the author, open the share (see [Slack](slack.md#keys)) |
-| `o` | open on GitHub |
-| `,` | options |
-| `U`, `N` | update prowl, what's new (see [Updating](running.md#updating)) |
+| `<leader>a` | approve, after a `y` |
+| `<leader>x` | request changes, in your editor |
+| `<leader>m` | comment review, in your editor |
+| `<leader>n` | a plain comment in the conversation, not a review; pending inline comments stay pending |
+| `<leader>t` | the thread under the cursor: `r` resolve, `u` unresolve, `c` reply |
+| `<leader>A` | ask people or teams for a review |
+| `<leader>R` | request yourself as a reviewer |
+| `<leader>X` | close with a comment |
+| `<leader>D` | make it a draft, or ready for review |
+| `<leader>c` | AI reviews (see [AI reviews](ai-reviews.md)) |
+| `<leader>p` | post the AI review |
+| `<leader>l` | accounts and logins (see [Accounts](running.md#accounts)) |
+| `<leader>fr`, `<leader>ft` | focus one repo or one commit type (see [Grouping and focusing](inbox.md#grouping-and-focusing)); `<leader>ff` finds a PR |
+| `<leader>g`, `<leader>s`, `<leader>S`, `<leader>z`, `<leader>w` | group, snooze, unsnooze, show snoozed, watch a repo (see [The inbox](inbox.md)) |
+| `<leader>y`, `<leader>Y`, `<leader>O` | Slack: post the review line, DM the author, open the share (see [Slack](slack.md#keys)) |
+| `<leader>o` | open on GitHub |
+| `<leader>,` | options |
+| `<leader>U`, `<leader>N` | update prowl, what's new (see [Updating](running.md#updating)) |
 
 `<leader>A` lists everyone who can review the PR as you type, with GitHub's suggestions near the top. Someone who reviewed already starts checked, for another look.
 

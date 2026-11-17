@@ -68,9 +68,9 @@ usage:
   prowl slack [--off]
                    sign in to Slack, so PR links shared there show in the
                    inbox. --off signs out.
-  prowl docs [PAGE [SECTION]]
+  prowl docs [TOPIC | PAGE SECTION]
                    list prowl's docs, built in for this version, or print a
-                   page or one section of it
+                   page, a section, a key or a setting
   prowl version    print the version, and the newer release when one is out
   prowl update     install the newest release over this prowl and print
                    what's new. A prowl from a package manager says which
@@ -136,7 +136,11 @@ func run(args []string) error {
 		if len(args) < 3 {
 			return fmt.Errorf("agent-tools needs a repo and a directory")
 		}
-		s, err := agent.ToolServer(cfg, args[1], args[2], slices.Contains(args[3:], "--local"))
+		var docs func(string) string
+		if slices.Contains(args[3:], "--chat") {
+			docs = core.DocsText
+		}
+		s, err := agent.ToolServer(cfg, args[1], args[2], slices.Contains(args[3:], "--local"), docs)
 		if err != nil {
 			return err
 		}
@@ -481,28 +485,37 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 	return nil
 }
 
-// showDocs lists the docs pages, or prints a page or one section of it.
+// showDocs lists the docs pages, or prints what a topic leads to, or a
+// page's section. A topic with no tag lists the sections that mention it.
 func showDocs(args []string) error {
-	switch len(args) {
-	case 0:
+	if len(args) == 0 {
 		for _, p := range core.Docs() {
 			fmt.Printf("%-12s %s\n", p.Name, p.Title)
 		}
-		fmt.Println("\nprowl docs PAGE [SECTION] prints a page, or one section of it.")
+		fmt.Println("\nprowl docs TOPIC prints a page, a section, a key or a setting, e.g. prowl docs stale_after.")
 		return nil
-	case 1:
-		p, ok := core.Doc(args[0])
-		if !ok {
-			return fmt.Errorf("no docs page %q: `prowl docs` lists them", args[0])
+	}
+	if len(args) > 1 {
+		if s, err := core.DocSection(args[0], strings.Join(args[1:], " ")); err == nil {
+			printMarkdown(s + "\n")
+			return nil
 		}
-		printMarkdown(p.Markdown)
+	}
+	topic := strings.Join(args, " ")
+	if md := core.DocTopic(topic); md != "" {
+		printMarkdown(md + "\n")
 		return nil
 	}
-	s, err := core.DocSection(args[0], strings.Join(args[1:], " "))
-	if err != nil {
-		return err
+	var sections []string
+	for _, h := range core.SearchDocs(topic) {
+		if s := "prowl docs " + h.Page + " " + core.DocAnchor(h.Heading); !slices.Contains(sections, s) {
+			sections = append(sections, s)
+		}
 	}
-	printMarkdown(s + "\n")
+	if len(sections) == 0 {
+		return fmt.Errorf("nothing in the docs about %q: `prowl docs` lists the pages", topic)
+	}
+	fmt.Printf("%q isn't a topic. These sections mention it:\n\n  %s\n", topic, strings.Join(sections, "\n  "))
 	return nil
 }
 

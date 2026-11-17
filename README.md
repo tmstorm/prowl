@@ -75,7 +75,7 @@ A few things worth doing next:
 - [Running prowl](docs/running.md): commands, background notifications, updates, uninstalling, logins
 - [Config](docs/config.md): every setting and its default
 
-`?` in prowl lists the keys. The same docs are built into prowl for the version you run: `?` then `d` opens them in the app, and `prowl docs [page [section]]` prints them.
+`?` in prowl lists the keys, and `K` explains what the cursor is on. The same docs are built into prowl for the version you run: `:help` (or `?` then `d`) opens them in the app, `:help stale_after` opens them at a topic, and `prowl docs` prints them (`prowl docs stale_after` one topic).
 
 ## Where it's going
 

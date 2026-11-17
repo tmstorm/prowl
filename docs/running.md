@@ -10,7 +10,7 @@
 - `prowl skill install [--agent claude|codex] [DIR]` installs the `prowl-findings` skill (see [Fixing findings with your own coding agent](ai-reviews.md#fixing-findings-with-your-own-coding-agent)); `prowl skill print` shows it.
 - `prowl edits [--since 30d] [--repo NAME]` shows how you edited AI reviews before posting them (see [Learning from your edits](ai-reviews.md#learning-from-your-edits)).
 - `prowl slack [--off]` signs in to Slack, or out with `--off` (see [Slack](slack.md)).
-- `prowl docs [PAGE [SECTION]]` lists these docs, or prints a page or one section of it. Piped, it prints the Markdown.
+- `prowl docs [TOPIC | PAGE SECTION]` lists these docs, or prints what a topic is about: a page, a section, a key or a setting, the same topics as `:help` (`prowl docs stale_after`, `prowl docs '<leader>cc'`). Piped, it prints the Markdown.
 - `prowl schema` prints the JSON Schema a review must match, for a `command` reviewer.
 - `prowl update` installs the newest release over this prowl and prints what's new (see [Updating](#updating)).
 - `prowl version` prints the version, and the newer release when one is out.

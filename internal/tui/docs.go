@@ -16,6 +16,7 @@ import (
 // docsPopup reads prowl's built-in docs: one page at a time with a cursor
 // line, links to follow, and a search over every page.
 type docsPopup struct {
+	prev           popup // what esc goes back to
 	pages          []core.DocPage
 	page, cur, top int
 	back           []docsSpot // where links were followed from, for backspace
@@ -47,6 +48,57 @@ func newDocsPopup() *docsPopup {
 	p.input.Placeholder = "search the docs"
 	p.input.Width = 50
 	return p
+}
+
+// openDocs opens the docs at a topic's tag. A tag with several places lists
+// them to pick from, and a topic with no tag is searched for.
+func (m *Model) openDocs(topic string) tea.Cmd {
+	p := newDocsPopup()
+	p.prev, m.popup = m.popup, p
+	if topic == "" {
+		return nil
+	}
+	tags := core.FindDocTag(topic)
+	if len(tags) == 1 {
+		s := p.spot(m, tags[0])
+		p.show(s.page, s.line)
+		return nil
+	}
+	p.searching = true
+	p.input.SetValue(topic)
+	p.search(m)
+	if len(tags) > 1 {
+		p.hits = nil
+		for _, t := range tags {
+			p.hits = append(p.hits, p.spot(m, t))
+		}
+	}
+	return p.input.Focus()
+}
+
+// spot is where a tag is in the viewer: its heading, or the first line of its
+// table row under that heading.
+func (p *docsPopup) spot(m *Model, t core.DocTag) docsSpot {
+	page := slices.IndexFunc(p.pages, func(d core.DocPage) bool { return d.Name == t.Page })
+	lines := p.lines(m, page)
+	at := headingLine(lines, t.Heading)
+	row := strings.Split(p.pages[page].Markdown, "\n")[t.Line]
+	if !strings.HasPrefix(row, "|") {
+		return docsSpot{page, at}
+	}
+	first := strings.Fields(linkLabel(strings.Split(row, "|")[1]))[0]
+	for i := at; i < len(lines); i++ {
+		l := strings.TrimSpace(xansi.Strip(lines[i]))
+		if strings.HasPrefix(l, first+" ") && strings.Contains(l, "│") {
+			return docsSpot{page, i}
+		}
+	}
+	return docsSpot{page, at}
+}
+
+// headingLine is the line of a rendered page that shows a heading, or 0.
+func headingLine(lines []string, heading string) int {
+	return max(slices.IndexFunc(lines, func(r string) bool { return strings.TrimLeft(strings.TrimSpace(xansi.Strip(r)), "# ") == heading }), 0)
 }
 
 func (p *docsPopup) width(m *Model) int  { return max(min(m.w-6, 110), 40) }
@@ -114,7 +166,7 @@ func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		p.input.SetValue("")
 		return p.input.Focus()
 	case "esc", "q":
-		m.popup = nil
+		m.popup = p.prev
 	}
 	return nil
 }
@@ -160,8 +212,7 @@ func (p *docsPopup) follow(m *Model) {
 	at := 0
 	if section, err := core.DocSection(name, anchor); anchor != "" && err == nil {
 		top, _, _ := strings.Cut(section, "\n")
-		heading := strings.TrimLeft(top, "# ")
-		at = max(slices.IndexFunc(p.lines(m, page), func(r string) bool { return strings.TrimLeft(strings.TrimSpace(xansi.Strip(r)), "# ") == heading }), 0)
+		at = headingLine(p.lines(m, page), strings.TrimLeft(top, "# "))
 	}
 	p.back = append(p.back, docsSpot{p.page, p.cur})
 	p.show(page, at)

@@ -459,7 +459,7 @@ func TestUpdateInstalled(t *testing.T) {
 	a = reopen(a)
 	a.want("prowl v0.2.0 is installed · <space>U restarts into it", "1 new feature · <space>N what's new")
 	a.keys("?")
-	a.want("prowl 0.1.0 · d opens prowl's docs")
+	a.want("prowl 0.1.0 · d or :help opens the docs")
 	a.keys("esc", "space", "N")
 	a.want("What's new in prowl v0.2.0", "released 2026-11-20", "feat(update): retry failed installs an hour later #9",
 		"fix: show the reviewer's note", "o opens the release on GitHub")
@@ -647,7 +647,7 @@ func TestDMAuthor(t *testing.T) {
 func TestDocsViewer(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	a.keys("?")
-	a.want("d opens prowl's docs")
+	a.want("d or :help opens the docs")
 	a.keys("d")
 	a.want("prowl docs · The inbox", "inbox · reviewing · ai-reviews")
 	a.keys("tab")
@@ -662,6 +662,52 @@ func TestDocsViewer(t *testing.T) {
 	a.want("prowl docs · The inbox")
 	a.keys("esc")
 	a.wantNot("prowl docs")
+}
+
+// :help opens the docs at a tag's heading or table row, completing the tag
+// with tab, and / doesn't complete tags. A tag with several places lists
+// them, and a topic with no tag is searched for.
+func TestHelpCommand(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.keys(":", "h st", "esc", "/", "h", "tab", "enter")
+	a.wantNot("h inbox", "pattern not found")
+	a.resize(160, 16)
+	a.keys(":", "help stale_a", "tab", "enter")
+	a.want("prowl docs · Config", "▌  stale_after")
+	a.wantNot("orgs", "theme")
+	a.keys("esc", ":", "h running-tests", "enter")
+	a.want("prowl docs · AI reviews", "▌Running tests")
+	a.keys("esc", ":", "help", "enter")
+	a.want("prowl docs · The inbox")
+	a.resize(160, 44)
+	a.keys("esc", ":", "h c", "enter")
+	a.want("comment on the line", "edit a draft reply")
+	a.wantNot("nothing found")
+	a.keys("down", "enter")
+	a.want("prowl docs · AI reviews", "▌  c ", "edit a draft reply")
+	a.keys("esc", ":", "help nothing like it", "enter")
+	a.want("prowl docs", "nothing found")
+}
+
+// K opens the docs at what the cursor is on: a PR's bucket, the PR pane's
+// tab or check, an option. esc goes back to where K was pressed.
+func TestDocsUnderCursor(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.resize(160, 16)
+	a.keys("K")
+	a.want("prowl docs · The inbox", "▌ needs review")
+	a.keys("esc", "l", "K")
+	a.want("prowl docs · Reading and reviewing a PR", "▌Overview")
+	a.keys("esc", "space", ",", "K")
+	a.want("prowl docs · Config", "▌  group_by")
+	a.keys("esc")
+	a.want("Options", "Group by")
+	for range 60 {
+		a.keys("K")
+		a.want("prowl docs")
+		a.wantNot("nothing found")
+		a.keys("esc", "j")
+	}
 }
 
 // Links in the docs show as [label] and follow from prose, from a table, and

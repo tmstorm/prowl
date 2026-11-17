@@ -497,7 +497,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 			return fail(err)
 		}
 	}
-	tools := ToolServerCommand(cfg, be, j.Repo, wt, j.Dir != "")
+	tools := ToolServerCommand(cfg, be, j.Repo, wt, j.Dir != "", false)
 	turn := func(input, session, phase string) (*result, string, error) {
 		_ = st.SetRunActivity(id, phase)
 		return be.Review(Turn{
@@ -781,15 +781,20 @@ var notifyTimeout = 8 * time.Second
 
 func notify(title, body string) { platform.Notify(title, body, notifyTimeout) }
 
+// canRun is whether a review of repo gets the run tool: the repo has an
+// image, and docker is installed.
+func canRun(cfg config.Config, repo string) bool {
+	_, err := exec.LookPath("docker")
+	return cfg.Agent.RunImage(repo) != "" && err == nil
+}
+
 // ToolServerCommand is the command that starts the tool server for a review
-// of repo in dir, or nil when the review gets no run tool: no image for the
-// repo, no docker, or an agent prowl can't give MCP servers. local is a
-// review of your own checkout.
-func ToolServerCommand(cfg config.Config, be Backend, repo, dir string, local bool) []string {
-	if be.Name() == "command" || cfg.Agent.RunImage(repo) == "" {
-		return nil
-	}
-	if _, err := exec.LookPath("docker"); err != nil {
+// of repo in dir, or nil when there are no tools for it: an agent prowl
+// can't give MCP servers, or a review with no run tool (no image for the
+// repo, or no docker). local is a review of your own checkout. chat is the
+// review's chat, which also gets the docs tool.
+func ToolServerCommand(cfg config.Config, be Backend, repo, dir string, local, chat bool) []string {
+	if be.Name() == "command" || (!chat && !canRun(cfg, repo)) {
 		return nil
 	}
 	exe, err := os.Executable()
@@ -799,6 +804,9 @@ func ToolServerCommand(cfg config.Config, be Backend, repo, dir string, local bo
 	args := []string{exe, "agent-tools", repo, dir}
 	if local {
 		args = append(args, "--local")
+	}
+	if chat {
+		args = append(args, "--chat")
 	}
 	return args
 }

@@ -115,6 +115,7 @@ func codexToolServer(toolServer []string) []string {
 	return []string{"-c", "mcp_servers.prowl.enabled=true", "-c", "mcp_servers.prowl.command=" + strconv.Quote(toolServer[0]),
 		"-c", "mcp_servers.prowl.args=[" + strings.Join(args, ",") + "]",
 		"-c", `mcp_servers.prowl.tools.run.approval_mode="approve"`,
+		"-c", `mcp_servers.prowl.tools.docs.approval_mode="approve"`,
 		"-c", "mcp_servers.prowl.tool_timeout_sec=" + strconv.Itoa(int(runTimeout.Seconds())+60)}
 }
 

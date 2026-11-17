@@ -241,6 +241,9 @@ echo '{"type":"result","session_id":"x","structured_output":{"summary":"Adds ret
 	a.waitFor("Adds retries to the uploader.")
 	a.want("AI summary · Haiku 5.5 · for abc1234")
 	a.before("AI summary", "the description")
+	a.keys("/", "Adds retries", "enter", "K")
+	a.want("prowl docs · AI reviews", "▌AI summary")
+	a.keys("esc")
 	f.PRs[0].HeadRefOid = "def5678"
 	f.PRs[0].UpdatedAt = time.Now()
 	a.refresh()
@@ -374,6 +377,8 @@ func TestPoints(t *testing.T) {
 	a.keys("enter", "4")
 	a.want("1 still open", "Points raised", "● open · axes[bot] a.go:40", "m is never made.", "✓ addressed · you")
 	a.before("● open", "✓ addressed")
+	a.keys("/", "m is never made", "enter", "K")
+	a.want("prowl docs · AI reviews", "▌Re-reviews and points raised")
 }
 
 // A local review shows under Mine as ⌂ with its branch, its Overview is the
@@ -438,6 +443,8 @@ func TestSuggestsClosing(t *testing.T) {
 	a = reopen(a)
 	a.keys("enter", "4")
 	a.want("suggests closing", "Suggests closing this PR", "<space>X, or event: close in <space>p", "Closing in favor of #9")
+	a.keys("/", "Closing in favor", "enter", "K")
+	a.want("prowl docs · AI reviews", "▌Closing or drafting")
 }
 
 // S on a diff line starts a suggested change holding that line; <leader>A
@@ -451,6 +458,9 @@ func TestSuggestAndAskForReview(t *testing.T) {
 	a.want("Comment on a.go:2", "```suggestion")
 	a.keys("esc")
 	a.want("pending comment saved")
+	a.keys("K")
+	a.want("prowl docs · Reading and reviewing a PR", "▌Inline comments and suggestions")
+	a.keys("esc")
 	a.keys("space", "A")
 	a.want("Ask for reviews on api#7")
 	a.keys("newcomer", "enter")

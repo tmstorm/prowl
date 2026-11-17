@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"io/fs"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -117,6 +118,143 @@ func DocSection(name, heading string) (string, error) {
 		return strings.TrimSpace(strings.Join(lines[h.line:end], "\n")), nil
 	}
 	return "", fmt.Errorf("no section %q in %s", heading, p.Name)
+}
+
+// DocTag is a place in the docs a topic leads to, like a tag in vim's help:
+// a page by its name, a heading by its text or anchor, or a table row by a
+// code span in its first column.
+type DocTag struct {
+	Tag     string // e.g. "slack", "Running tests", "running-tests", "stale_after"
+	Page    string
+	Heading string // the section it is in; a heading's is itself
+	Line    int    // its line in the page's Markdown
+}
+
+var docCode = regexp.MustCompile("`([^`]+)`")
+
+// DocTags are every tag in the docs, in reading order.
+func DocTags() []DocTag {
+	var out []DocTag
+	for _, p := range Docs() {
+		out = append(out, DocTag{Tag: p.Name, Page: p.Name, Heading: p.Title})
+		hs := headings(p.Markdown)
+		heading, fenced, rows := p.Title, false, false
+		for i, l := range strings.Split(p.Markdown, "\n") {
+			if strings.HasPrefix(l, "```") {
+				fenced = !fenced
+			}
+			if j := slices.IndexFunc(hs, func(h docHeading) bool { return h.line == i }); j >= 0 {
+				heading = hs[j].text
+				out = append(out, DocTag{Tag: heading, Page: p.Name, Heading: heading, Line: i})
+				if a := DocAnchor(heading); a != strings.ToLower(heading) {
+					out = append(out, DocTag{Tag: a, Page: p.Name, Heading: heading, Line: i})
+				}
+			}
+			if fenced || !strings.HasPrefix(l, "|") {
+				rows = false
+				continue
+			}
+			if strings.HasPrefix(l, "| ---") {
+				rows = true
+				continue
+			}
+			if !rows {
+				continue
+			}
+			first := strings.Split(l, "|")[1]
+			spans := docCode.FindAllStringSubmatch(first, -1)
+			if len(spans) == 0 {
+				spans = [][]string{{"", strings.TrimSpace(first)}}
+			}
+			for _, s := range spans {
+				out = append(out, DocTag{Tag: s[1], Page: p.Name, Heading: heading, Line: i})
+			}
+		}
+	}
+	return out
+}
+
+// Markdown is what a tag leads to: its heading's section, or its table row
+// under the table's header and the heading it is in.
+func (t DocTag) Markdown() string {
+	p, _ := Doc(t.Page)
+	lines := strings.Split(p.Markdown, "\n")
+	if !strings.HasPrefix(lines[t.Line], "|") {
+		s, _ := DocSection(t.Page, t.Heading)
+		return s
+	}
+	start := t.Line
+	for start > 0 && strings.HasPrefix(lines[start-1], "|") {
+		start--
+	}
+	return "## " + t.Heading + "\n\n" + lines[start] + "\n" + lines[start+1] + "\n" + lines[t.Line]
+}
+
+// FindDocTag is where a topic leads: the places of the tag that is the topic,
+// in the same case when one is and in any case otherwise, or else of the
+// shortest tag that starts with it. Nothing means no tag fits.
+func FindDocTag(topic string) []DocTag {
+	topic = strings.TrimSpace(topic)
+	if topic == "" {
+		return nil
+	}
+	tags := DocTags()
+	var exact, folded []DocTag
+	best := ""
+	for _, t := range tags {
+		switch {
+		case t.Tag == topic:
+			exact = append(exact, t)
+		case strings.EqualFold(t.Tag, topic):
+			folded = append(folded, t)
+		case strings.HasPrefix(strings.ToLower(t.Tag), strings.ToLower(topic)) && (best == "" || len(t.Tag) < len(best)):
+			best = t.Tag
+		}
+	}
+	out := exact
+	if len(out) == 0 {
+		out = folded
+	}
+	if len(out) == 0 && best != "" {
+		out = slices.DeleteFunc(tags, func(t DocTag) bool { return t.Tag != best })
+	}
+	return slices.CompactFunc(out, func(a, b DocTag) bool { return a.Page == b.Page && a.Line == b.Line })
+}
+
+// DocTopic is the Markdown a topic leads to, each place of its tag in turn,
+// or "" when no tag fits.
+func DocTopic(topic string) string {
+	var parts []string
+	for _, t := range FindDocTag(topic) {
+		parts = append(parts, t.Markdown())
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// DocsText is what the docs say about a topic, for an agent to read: what
+// its tag leads to, or else the lines that mention it and their sections. An
+// empty topic lists the pages.
+func DocsText(topic string) string {
+	if strings.TrimSpace(topic) == "" {
+		var b strings.Builder
+		for _, p := range Docs() {
+			fmt.Fprintf(&b, "%s: %s\n", p.Name, p.Title)
+		}
+		return b.String()
+	}
+	if md := DocTopic(topic); md != "" {
+		return md
+	}
+	hits := SearchDocs(topic)
+	if len(hits) == 0 {
+		return fmt.Sprintf("Nothing in prowl's docs mentions %q.", topic)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "No topic %q. Lines that mention it, as page › section: line:\n\n", topic)
+	for _, h := range hits[:min(len(hits), 30)] {
+		fmt.Fprintf(&b, "%s › %s: %s\n", h.Page, h.Heading, h.Line)
+	}
+	return b.String()
 }
 
 // DocHit is a line of the docs that matches a search.

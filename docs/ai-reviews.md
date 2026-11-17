@@ -25,15 +25,15 @@ Agent actions live under `<leader>c`:
 
 | Key | Does |
 | --- | --- |
-| `cc` | review with every reviewer |
-| `cC` | review with one agent you pick |
-| `cp` | run a [review profile](#review-profiles) |
-| `cr` | ask the reviewer to revise |
-| `ci` | chat with the reviewer |
-| `cs` | update the findings from a chat |
-| `ca` | write an [AI summary](#ai-summary) |
-| `ch` | copy a fix-these-findings prompt |
-| `cd` | discard the review |
+| `<leader>cc` | review with every reviewer |
+| `<leader>cC` | review with one agent you pick |
+| `<leader>cp` | run a [review profile](#review-profiles) |
+| `<leader>cr` | ask the reviewer to revise |
+| `<leader>ci` | chat with the reviewer |
+| `<leader>cs` | update the findings from a chat |
+| `<leader>ca` | write an [AI summary](#ai-summary) |
+| `<leader>ch` | copy a fix-these-findings prompt |
+| `<leader>cd` | discard the review |
 
 Revise, chat, sync and discard act on the agent whose section the cursor is in (the main agent otherwise), and always continue that agent's own session. Discarding a review brings back that reviewer's previous run, if it has one.
 
@@ -99,7 +99,7 @@ Until they are sent, the review's icon in the inbox is yellow, the AI review tab
 
 `<leader>cr` sends the agent a follow-up instruction, such as "drop the second finding". It answers in a sentence or two, and the exchange shows under Notes.
 
-`<leader>ci` opens the review's own session (`claude --resume` or `codex resume`) in a floating window, with everything the reviewer read and thought still in context, so you can ask it about its findings the way you would in a terminal. `ctrl+\` hides the window and leaves the session running; `<leader>ci` brings it back. When you end the session, prowl offers to update the findings from the conversation (`<leader>cs` does the same later). Set `chat_mode = "fullscreen"` to have prowl step aside instead of drawing a window.
+`<leader>ci` opens the review's own session (`claude --resume` or `codex resume`) in a floating window, with everything the reviewer read and thought still in context, so you can ask it about its findings the way you would in a terminal. It can also read these docs, so it can answer how prowl works, such as why a PR is under re-check. `ctrl+\` hides the window and leaves the session running; `<leader>ci` brings it back. When you end the session, prowl offers to update the findings from the conversation (`<leader>cs` does the same later). Set `chat_mode = "fullscreen"` to have prowl step aside instead of drawing a window.
 
 The chat runs with your agent's normal permissions inside the PR's throwaway worktree; for a local review, that is your own checkout. A `command` agent has no session, so it has no chat, and each revise sends the whole context again with the earlier review.
 

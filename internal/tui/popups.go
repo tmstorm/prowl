@@ -454,7 +454,7 @@ func (p *helpPopup) mode() mode { return modeNormal }
 func (p *helpPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	m.popup = nil
 	if k.String() == "d" {
-		m.popup = newDocsPopup()
+		return m.openDocs("")
 	}
 	return nil
 }
@@ -479,6 +479,7 @@ func (p *helpPopup) view(m *Model) string {
 		k("zz zt zb", "center / top / bottom"),
 		k("/ n N", "search, next, previous"),
 		k("?", "this help"),
+		k("K", "docs for what's under the cursor"),
 		k("← → ↑ ↓", "panes and rows, like h l k j"),
 		"",
 		sSection.Render("Panes"),
@@ -541,7 +542,7 @@ func (p *helpPopup) view(m *Model) string {
 		}
 		rows = append(rows, fit(a, colW)+fit(b, colW))
 	}
-	return popBox("Keys", strings.Join(rows, "\n")+"\n\n"+sDim.Render("prowl "+core.BuildVersion()+" · d opens prowl's docs · any other key closes"), w, pal.Accent)
+	return popBox("Keys", strings.Join(rows, "\n")+"\n\n"+sDim.Render("prowl "+core.BuildVersion()+" · d or :help opens the docs · any other key closes"), w, pal.Accent)
 }
 
 // ---- repo picker (telescope-ish)

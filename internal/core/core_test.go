@@ -429,8 +429,9 @@ func TestChat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(spec.Args, " ") != "claude --resume s1 --setting-sources user" || spec.Dir != wt || spec.Quit == "" {
-		t.Fatalf("chat: %q in %s, quit %q", spec.Args, spec.Dir, spec.Quit)
+	if args := strings.Join(spec.Args, " "); !strings.HasPrefix(args, "claude --resume s1 --setting-sources user --mcp-config") ||
+		!strings.Contains(args, `"args":["agent-tools","o/api",`+strconv.Quote(wt)+`,"--chat"]`) || !strings.Contains(args, "--allowedTools mcp__prowl__run,mcp__prowl__docs") || spec.Dir != wt || spec.Quit == "" {
+		t.Fatalf("a chat gets the docs tool without a run image: %q in %s, quit %q", spec.Args, spec.Dir, spec.Quit)
 	}
 
 	bin := t.TempDir()
@@ -442,7 +443,7 @@ func TestChat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if args := strings.Join(spec.Args, " "); !strings.Contains(args, `"args":["agent-tools","o/api",`+strconv.Quote(wt)+`]`) || !strings.Contains(args, "--allowedTools mcp__prowl__run") {
+	if args := strings.Join(spec.Args, " "); !strings.Contains(args, `"args":["agent-tools","o/api",`+strconv.Quote(wt)+`,"--chat"]`) || !strings.Contains(args, "--allowedTools mcp__prowl__run") {
 		t.Fatalf("a chat about a PR review gets the run tool on its worktree: %s", args)
 	}
 }
