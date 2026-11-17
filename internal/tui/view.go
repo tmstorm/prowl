@@ -438,12 +438,15 @@ func (m *Model) tipLines(w int) []string {
 	}
 	lines := []string{sBorder.Render("┄┄ ") + sDim.Render("prowl") + sBorder.Render(" "+strings.Repeat("┄", max(w-9, 0)))}
 	for _, l := range wrap(strings.ReplaceAll(m.tip, "<leader>", leader), w-2) {
-		l = strings.TrimRight(l, " ")
+		l = strings.ReplaceAll(strings.TrimRight(l, " "), "\u00a0", " ")
+		line := " "
 		if rest, ok := strings.CutPrefix(l, breakingTip); ok {
-			lines = append(lines, " "+sRed.Bold(true).Render(breakingTip)+sPink.Render(rest))
-			continue
+			line, l = line+sRed.Bold(true).Render(breakingTip), rest
 		}
-		lines = append(lines, " "+sPink.Render(l))
+		if at := featuresTip.FindStringIndex(l); at != nil {
+			line, l = line+sPink.Render(l[:at[0]])+sGreen.Render(l[at[0]:at[1]]), l[at[1]:]
+		}
+		lines = append(lines, line+sPink.Render(l))
 	}
 	return lines
 }

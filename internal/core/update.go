@@ -84,6 +84,7 @@ type Release struct {
 	Installed bool   // prowl installed Latest itself; a restart runs it
 	Command   string // what updates prowl when it can't do it itself; "" when it can
 	Breaking  bool   // the newest release's notes list breaking changes
+	Features  int    // how many features the newest release's notes list
 }
 
 // Newer reports whether a newer release than the running one is out.
@@ -96,12 +97,27 @@ func (r Release) Newer() bool {
 func (co *Core) Release(exe string) Release {
 	last, _ := co.st.Release()
 	r := Release{Running: releaseVersion(), Latest: last.Tag, Notes: last.Notes, URL: last.URL,
-		Breaking: strings.Contains(last.Notes, "BREAKING CHANGES")}
+		Breaking: strings.Contains(last.Notes, "BREAKING CHANGES"), Features: features(last.Notes)}
 	if r.Running != "" {
 		r.Installed = semver.IsValid(last.Installed) && semver.Compare(last.Installed, r.Running) > 0
 		r.Command = updateCommand(exe)
 	}
 	return r
+}
+
+// features counts the changes release-please lists under Features in notes.
+func features(notes string) int {
+	n, listing := 0, false
+	for l := range strings.Lines(notes) {
+		l = strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(l, "#"):
+			listing = l == "### Features"
+		case listing && (strings.HasPrefix(l, "* ") || strings.HasPrefix(l, "- ")):
+			n++
+		}
+	}
+	return n
 }
 
 // updateCommand is what updates the prowl at exe, or "" when prowl owns its

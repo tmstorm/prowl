@@ -58,7 +58,7 @@ prowl asks GitHub once a day whether a newer release is out. What happens next d
 - **With `go install`**, it tells you to run `go install github.com/tmstorm/prowl@latest`.
 - **A build from source** never checks.
 
-The first time a new version starts, the legend offers its release notes, and `<leader>N` shows them at any time. `check_updates = false` turns the daily check off. `auto_update = false` keeps the check but leaves installing to you, with `prowl update` or `<leader>U`.
+The first time a new version starts, the legend offers its release notes and counts the features it adds, and `<leader>N` shows the notes at any time. `check_updates = false` turns the daily check off. `auto_update = false` keeps the check but leaves installing to you, with `prowl update` or `<leader>U`.
 
 Each release's `checksums.txt` is signed with prowl's release key, and prowl installs nothing that doesn't match a signed checksum. To check a download yourself, use [minisign](https://jedisct1.github.io/minisign/) with the key in [`minisign.pub`](../minisign.pub):
 
