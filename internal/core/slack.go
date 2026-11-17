@@ -25,6 +25,14 @@ func (co *Core) UseSlack(c *slack.Client) {
 	co.slack = c
 }
 
+// SlackSignedIn says who you're signed in to Slack as, e.g. "sam in Acme",
+// once a sync has asked.
+func (co *Core) SlackSignedIn() string {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	return co.slackWho
+}
+
 // SlackErr is why the last sync couldn't read Slack, or nil.
 func (co *Core) SlackErr() error {
 	co.mu.Lock()
@@ -49,7 +57,7 @@ func (co *Core) syncSlack(sl *slack.Client, cfg config.Config, kept []store.Slac
 			return nil, err
 		}
 		co.mu.Lock()
-		co.slackMe = id.UserID
+		co.slackMe, co.slackWho = id.UserID, id.User+" in "+id.Team
 		co.mu.Unlock()
 		_, _ = co.loadSlackUsers(sl)
 	}
@@ -418,4 +426,67 @@ func slackName(users []slack.User, id string) string {
 		return id
 	}
 	return cmp.Or(users[i].Display, users[i].RealName, users[i].Handle)
+}
+
+// ChannelActivity is a channel you're in and how many PR links of your orgs
+// were posted in it lately.
+type ChannelActivity struct {
+	slack.Channel
+	Links       int
+	Recommended bool // enough links to be worth watching
+}
+
+// Recent PR links decide which channels prowl recommends: at least
+// recommendLinks in the last activityWindow.
+const (
+	activityWindow = 14 * 24 * time.Hour
+	recommendLinks = 5
+)
+
+// SlackActivity lists the channels you're in, the busiest with PR links of
+// your orgs first, and how many such links reached you in DMs. It searches
+// Slack once per session.
+func (co *Core) SlackActivity() ([]ChannelActivity, int, error) {
+	co.mu.Lock()
+	sl, cfg, cached, dms := co.slack, co.cfg, co.activity, co.dmLinks
+	co.mu.Unlock()
+	if sl == nil {
+		return nil, 0, errors.New("not signed in to Slack: run `prowl slack`")
+	}
+	if cached != nil {
+		return cached, dms, nil
+	}
+	ctx := context.Background()
+	channels, err := sl.Channels(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	shares, err := sl.Shares(ctx, time.Now().Add(-activityWindow))
+	if err != nil {
+		return nil, 0, err
+	}
+	links := map[string]int{}
+	dms = 0
+	for _, s := range shares {
+		owner, _, _ := strings.Cut(s.Repo, "/")
+		if len(cfg.Orgs) > 0 && !slices.ContainsFunc(cfg.Orgs, func(o string) bool { return strings.EqualFold(o, owner) }) {
+			continue
+		}
+		if s.DM {
+			dms++
+		} else {
+			links[s.Channel]++
+		}
+	}
+	out := make([]ChannelActivity, 0, len(channels))
+	for _, ch := range channels {
+		out = append(out, ChannelActivity{Channel: ch, Links: links[ch.ID], Recommended: links[ch.ID] >= recommendLinks})
+	}
+	slices.SortStableFunc(out, func(a, b ChannelActivity) int {
+		return cmp.Or(cmp.Compare(b.Links, a.Links), cmp.Compare(a.Name, b.Name))
+	})
+	co.mu.Lock()
+	co.activity, co.dmLinks = out, dms
+	co.mu.Unlock()
+	return out, dms, nil
 }

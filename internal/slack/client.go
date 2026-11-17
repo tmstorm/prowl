@@ -290,6 +290,43 @@ func (c *Client) Users(ctx context.Context) ([]User, error) {
 	return out, nil
 }
 
+// Channel is a Slack channel you're in.
+type Channel struct {
+	ID, Name string
+	Private  bool
+}
+
+// Channels lists the channels you're in, public and private, without
+// archived ones.
+func (c *Client) Channels(ctx context.Context) ([]Channel, error) {
+	var out []Channel
+	cursor := ""
+	for range 20 {
+		var res struct {
+			Channels []struct {
+				ID        string `json:"id"`
+				Name      string `json:"name"`
+				IsPrivate bool   `json:"is_private"`
+			} `json:"channels"`
+			Meta struct {
+				NextCursor string `json:"next_cursor"`
+			} `json:"response_metadata"`
+		}
+		err := c.call(ctx, "users.conversations", url.Values{"types": {"public_channel,private_channel"},
+			"exclude_archived": {"true"}, "limit": {"200"}, "cursor": {cursor}}, &res)
+		if err != nil {
+			return nil, err
+		}
+		for _, ch := range res.Channels {
+			out = append(out, Channel{ID: ch.ID, Name: ch.Name, Private: ch.IsPrivate})
+		}
+		if cursor = res.Meta.NextCursor; cursor == "" {
+			break
+		}
+	}
+	return out, nil
+}
+
 // DM sends text to a person in a direct message, as you.
 func (c *Client) DM(ctx context.Context, user, text string) error {
 	var res struct {

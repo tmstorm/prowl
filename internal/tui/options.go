@@ -40,6 +40,8 @@ type option struct {
 	choicesFn   func(c *config.Config) []string // choices worked out when cycled
 	get         func(c *config.Config) string
 	set         func(c *config.Config, v string) error
+	// open opens a popup for the option instead of the editor.
+	open func(m *Model, p *optionsPopup, o option) tea.Cmd
 	// state and turn make a switch of something that isn't a config value.
 	state func(m *Model) bool
 	turn  func(m *Model, on bool) tea.Cmd
@@ -84,7 +86,7 @@ func durationOpt(section, title, label, help string, field func(c *config.Config
 }
 
 // optSections are the headings of the options menu, in order.
-var optSections = []string{"Inbox", "Appearance", "Review agent", "GitHub", "Editor & Slack", "Updates"}
+var optSections = []string{"Inbox", "Appearance", "Review agent", "GitHub", "Editor", "Slack", "Updates"}
 
 func isCommandAgent(c *config.Config) bool { return c.Agent.Main() == "command" }
 
@@ -241,12 +243,35 @@ var options = []option{
 	durationOpt("GitHub", "Check every", "poll_interval", "How often to check GitHub, here and in prowl watch.", func(c *config.Config) *config.Duration { return &c.PollInterval }),
 	durationOpt("GitHub", "Notifications stay", "notify_timeout", "How long desktop notifications stay on screen.", func(c *config.Config) *config.Duration { return &c.NotifyTimeout }),
 
-	// Editor & Slack
-	{section: "Editor & Slack", title: "Editor", label: "editor", empty: "$VISUAL, $EDITOR or vi", help: "For reviews and long text. Empty uses $VISUAL, then $EDITOR, then vi (notepad on Windows).", kind: optText,
+	// Editor
+	{section: "Editor", title: "Editor", label: "editor", empty: "$VISUAL, $EDITOR or vi", help: "For reviews and long text. Empty uses $VISUAL, then $EDITOR, then vi (notepad on Windows).", kind: optText,
 		get: func(c *config.Config) string { return c.Editor },
 		set: func(c *config.Config, v string) error { c.Editor = strings.TrimSpace(v); return nil }},
-	mapOpt("Editor & Slack", "Slack names", "slack_names", "# GitHub login = \"their Slack user ID\" (a mention), or a name to print as it is\n# some-login = \"U0123ABCD\"\n",
-		func(c *config.Config) *map[string]string { return &c.SlackNames }),
+
+	// Slack
+	{section: "Slack", title: "Channels", label: "slack_channels", help: "The channels and DMs whose PR links show in the inbox as shared.", kind: optEditor,
+		open: func(m *Model, p *optionsPopup, _ option) tea.Cmd { return m.openChannels(p) },
+		get:  func(c *config.Config) string { return strings.Join(c.SlackChannels, ", ") },
+		set:  func(c *config.Config, v string) error { c.SlackChannels = splitList(v); return nil }},
+	{section: "Slack", title: "After review", label: "slack_after_review", help: "react keeps an emoji on the share in step with your review; reply posts the Slack line in its thread when you submit from prowl.",
+		kind: optChoice, choices: []string{"react", "reply", "off"},
+		get: func(c *config.Config) string { return c.SlackAfterReview },
+		set: func(c *config.Config, v string) error { c.SlackAfterReview = v; return nil }},
+	emojiOpt("Reviewing", "reviewing", "While prowl holds an AI review or your inline comments for it.", func(r *config.SlackReactions) *string { return &r.Reviewing }),
+	emojiOpt("Approved", "approved", "Once you approve.", func(r *config.SlackReactions) *string { return &r.Approved }),
+	emojiOpt("Changes requested", "changes_requested", "Once you request changes.", func(r *config.SlackReactions) *string { return &r.ChangesRequested }),
+	emojiOpt("Commented", "commented", "Once you review with comments.", func(r *config.SlackReactions) *string { return &r.Commented }),
+	func() option {
+		o := mapOpt("Slack", "Slack names", "slack_names", "# GitHub login = \"their Slack user ID\" (a mention), or a name to print as it is\n# some-login = \"U0123ABCD\"\n",
+			func(c *config.Config) *map[string]string { return &c.SlackNames })
+		o.open = func(m *Model, p *optionsPopup, o option) tea.Cmd {
+			if !m.core.SlackConnected() {
+				return m.editOption(p, o)
+			}
+			return m.matchSlackNames(namesProposedMsg{back: p})
+		}
+		return o
+	}(),
 	{section: "Updates", title: "Check for updates", label: "check_updates", help: "Asks GitHub once a day whether a newer prowl is out, and says so under the legend.", kind: optBool,
 		get: func(c *config.Config) string { return fmt.Sprint(c.CheckUpdates) },
 		set: func(c *config.Config, v string) error { c.CheckUpdates = v == "true"; return nil }},
@@ -304,6 +329,20 @@ func quoteList(xs []string) string {
 }
 
 // mapOpt edits a string-to-string table in your editor.
+// emojiOpt is the Slack emoji prowl reacts with for one review state.
+func emojiOpt(title, key, help string, field func(r *config.SlackReactions) *string) option {
+	return option{section: "Slack", title: title + " emoji", label: "slack_reactions." + key, help: help + " A Slack emoji name, without colons.", kind: optText,
+		get: func(c *config.Config) string { return *field(&c.SlackReactions) },
+		set: func(c *config.Config, v string) error {
+			v = strings.Trim(strings.TrimSpace(v), ":")
+			if v == "" {
+				return fmt.Errorf("%s: name an emoji", title)
+			}
+			*field(&c.SlackReactions) = v
+			return nil
+		}}
+}
+
 func mapOpt(section, title, label, header string, field func(c *config.Config) *map[string]string) option {
 	return option{section: section, title: title, label: label, help: "Opens your editor.", kind: optEditor,
 		get: func(c *config.Config) string {
@@ -479,8 +518,8 @@ func (p *optionsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 			m.popup = newReviewersPopup(m, p, o)
 			return nil
 		case optEditor:
-			if o.label == "slack_names" && m.core.SlackConnected() {
-				return m.matchSlackNames(namesProposedMsg{back: p})
+			if o.open != nil {
+				return o.open(m, p, o)
 			}
 			return m.editOption(p, o)
 		}
@@ -538,6 +577,11 @@ func (p *optionsPopup) value(m *Model, o option, sel bool) string {
 		switch o.label {
 		case "slack_names":
 			first = fmt.Sprintf("%d mapped", len(m.cfg.SlackNames))
+		case "slack_channels":
+			first = fmt.Sprintf("%d channels", len(m.cfg.SlackChannels))
+			if m.cfg.SlackDMs {
+				first += " + DMs"
+			}
 		case "type_colors":
 			first = fmt.Sprintf("%d set", len(m.cfg.TypeColors))
 		case "run_images":

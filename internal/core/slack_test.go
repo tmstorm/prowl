@@ -24,6 +24,7 @@ type fakeSlack struct {
 	matches string
 	users   string // users.list members, as JSON
 	emoji   string // reactions.get reactions, as JSON
+	rooms   string // users.conversations channels, as JSON
 	calls   []string
 }
 
@@ -61,6 +62,8 @@ func (f *fakeSlack) client(t *testing.T) *slack.Client {
 			fmt.Fprintf(w, `{"ok":true,"members":[%s]}`, f.users)
 		case "/conversations.open":
 			fmt.Fprint(w, `{"ok":true,"channel":{"id":"D9"}}`)
+		case "/users.conversations":
+			fmt.Fprintf(w, `{"ok":true,"channels":[%s]}`, f.rooms)
 		case "/reactions.get":
 			fmt.Fprintf(w, `{"ok":true,"message":{"reactions":[%s]}}`, f.emoji)
 		default:
@@ -253,5 +256,38 @@ func TestReactionsOnYours(t *testing.T) {
 	changes, _ = co.Refresh()
 	if it, _ := find(co.Inbox(), "o/api#3"); len(changes) != 1 || it.Reason != "awaiting reviewers · #reviews: Carol Diaz ❌, Bob ✅" {
 		t.Fatalf("after carol's change: %q, %v", it.Reason, changes)
+	}
+}
+
+// The channels you're in come busiest first by links to your orgs' PRs,
+// and the busy ones are recommended. DM links are counted on their own.
+func TestSlackActivity(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
+	co, _ := newCore(t, &ghtest.GitHub{})
+	cfg := config.Default()
+	cfg.Orgs = []string{"o"}
+	co.SetConfig(cfg)
+	sl := &fakeSlack{rooms: `{"id":"C3","name":"quiet"},{"id":"C2","name":"random"},{"id":"C1","name":"reviews","is_private":true}`}
+	co.UseSlack(sl.client(t))
+	var matches []string
+	for i := range 6 {
+		matches = append(matches, match(ts, "U2", "bob", "C1", "reviews", fmt.Sprintf("o/api/pull/%d", i)))
+	}
+	matches = append(matches,
+		match(ts, "U2", "bob", "C2", "random", "o/api/pull/9"), match(ts, "U2", "bob", "C2", "random", "o/web/pull/9"),
+		match(ts, "U2", "bob", "C2", "random", "elsewhere/lib/pull/1"), match(ts, "U2", "bob", "C2", "random", "elsewhere/lib/pull/2"),
+		match(ts, "U3", "carol", "D1", "", "o/api/pull/7"))
+	sl.set(strings.Join(matches, ","))
+
+	channels, dms, err := co.SlackActivity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, c := range channels {
+		got = append(got, fmt.Sprintf("%s %d %v", c.Name, c.Links, c.Recommended))
+	}
+	if strings.Join(got, ", ") != "reviews 6 true, random 2 false, quiet 0 false" || dms != 1 {
+		t.Fatalf("activity = %v, DMs %d", got, dms)
 	}
 }

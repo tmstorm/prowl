@@ -49,10 +49,13 @@ type Core struct {
 	reactions   map[string]string            // Slack reactions on your PRs, as of the last sync
 	slackShares map[string]store.SlackShare  // each shared PR's newest share by someone else
 
-	slack      *slack.Client // nil when you aren't signed in to Slack
-	slackErr   error         // why the last sync couldn't read Slack
-	slackMe    string        // your Slack user ID, once known; set under mu by a sync
-	slackUsers []slack.User  // the workspace's people, read once
+	slack      *slack.Client     // nil when you aren't signed in to Slack
+	slackErr   error             // why the last sync couldn't read Slack
+	slackMe    string            // your Slack user ID, once known; set under mu by a sync
+	slackUsers []slack.User      // the workspace's people, read once
+	slackWho   string            // who you are signed in as, e.g. "sam in Acme"
+	activity   []ChannelActivity // your channels and their PR links, read once
+	dmLinks    int               // PR links that reached you in DMs, with activity
 
 	updateStep  string    // what a running update is doing, "" when none runs
 	updateRetry time.Time // a failed background install waits until then to try again

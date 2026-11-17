@@ -87,6 +87,12 @@ func (co *Core) SlackConnected() bool {
 	return co.slack != nil
 }
 
+// OfferChannels reports whether to suggest picking Slack channels: while
+// signed in with none picked, the first time prowl asks.
+func (co *Core) OfferChannels() bool {
+	return co.SlackConnected() && len(co.Config().SlackChannels) == 0 && co.st.FirstTime("slack channels")
+}
+
 // OfferNames reports whether to look for teammates to match to Slack users
 // after the first sync: while signed in, until prowl has offered once.
 func (co *Core) OfferNames() bool { return co.SlackConnected() && !co.st.Shown("slack names") }

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/gh"
@@ -32,7 +33,7 @@ func slackNamesApp(t *testing.T) (*app, *fakeSlack) {
 		{Login: "bquill", Name: "Ben Quill"}, {Login: "lortiz-acme"}, {Login: "MiraJVance"}, {Login: "carafox"},
 	}}
 	a := newSlackApp(t, fake, sl.client(t), func(c *config.Config) {
-		c.Orgs = []string{"o"}
+		c.Orgs, c.SlackChannels = []string{"o"}, []string{"C1"}
 		c.SlackNames = map[string]string{"carafox": "U0CARA12345"}
 	})
 	return a, sl
@@ -115,5 +116,43 @@ func TestSlackNamesScroll(t *testing.T) {
 	a.wantNot("No match", "person00")
 	if after := help(); after != before {
 		t.Fatalf("the popup changed size: help on line %d, then %d", before, after)
+	}
+}
+
+// With no channels picked, the first sync points to the picker. It lists
+// DMs and your channels, busiest first with their recent PR links of your
+// orgs, recommends the busy ones without checking them, and filters as you
+// type; enter saves what's checked.
+func TestSlackChannels(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
+	var matches []string
+	for i := range 6 {
+		matches = append(matches, fmt.Sprintf(`{"ts":%q,"user":"U2","username":"bob","text":"<https://github.com/o/api/pull/%d>",
+"permalink":"https://x.slack.com/archives/C1/p1","channel":{"id":"C1","name":"reviews"}}`, ts, i))
+	}
+	matches = append(matches, fmt.Sprintf(`{"ts":%q,"user":"U2","username":"bob","text":"<https://github.com/o/api/pull/9>",
+"permalink":"https://x.slack.com/archives/C2/p1","channel":{"id":"C2","name":"random"}}`, ts))
+	sl := &fakeSlack{matches: strings.Join(matches, ","),
+		rooms: `{"id":"C3","name":"quiet"},{"id":"C2","name":"random"},{"id":"C1","name":"reviews","is_private":true}`}
+	a := newSlackApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, sl.client(t),
+		func(c *config.Config) { c.Orgs = []string{"o"} })
+	a.waitFor("Slack: pick the channels whose PR links you want in the inbox")
+
+	a.keys("space", ",", "G", "k", "k", "k", "k", "k", "k", "k", "k")
+	a.want("slack_channels", "0 channels + DMs")
+	a.keys("enter")
+	a.want("Slack channels", "signed in as sam in Acme", "[x] Direct messages",
+		"#reviews private", "6 PR links in 14 days · recommended", "#random", "1 PR link in 14 days", "#quiet", "no PR links lately")
+	a.before("#reviews", "#random", "#quiet")
+	a.wantNot("[x] #reviews")
+
+	a.keys("rev")
+	a.wantNot("#random", "#quiet")
+	a.keys("down", " ", "up", " ", "enter")
+	a.want("watching 1 Slack channel")
+	a.wantNot("and your DMs")
+	b, _ := os.ReadFile(config.Path())
+	if !strings.Contains(string(b), `slack_channels = ["C1"]`) || !strings.Contains(string(b), "slack_dms = false") {
+		t.Fatalf("not saved:\n%s", b)
 	}
 }

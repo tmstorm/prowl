@@ -341,9 +341,9 @@ func (a *app) clickFirst(text string) {
 // fakeSlack is a Slack workspace for the TUI: search finds matches and
 // users.list lists users (both as JSON), and every post is recorded.
 type fakeSlack struct {
-	mu             sync.Mutex
-	matches, users string
-	posted         []string
+	mu                    sync.Mutex
+	matches, users, rooms string // rooms: users.conversations channels
+	posted                []string
 }
 
 func (f *fakeSlack) client(t *testing.T) *slack.Client {
@@ -353,7 +353,9 @@ func (f *fakeSlack) client(t *testing.T) *slack.Client {
 		defer f.mu.Unlock()
 		switch r.URL.Path {
 		case "/auth.test":
-			fmt.Fprint(w, `{"ok":true,"user_id":"U1"}`)
+			fmt.Fprint(w, `{"ok":true,"user":"sam","team":"Acme","user_id":"U1"}`)
+		case "/users.conversations":
+			fmt.Fprintf(w, `{"ok":true,"channels":[%s]}`, f.rooms)
 		case "/search.messages":
 			fmt.Fprintf(w, `{"ok":true,"messages":{"paging":{"pages":1},"matches":[%s]}}`, f.matches)
 		case "/users.list":

@@ -195,3 +195,24 @@ func TestReactions(t *testing.T) {
 		t.Fatalf("Reactions = %v, %v", got, err)
 	}
 }
+
+// Channels follows the pages of the channels you're in.
+func TestChannels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.Form.Get("types") != "public_channel,private_channel" || r.Form.Get("exclude_archived") != "true" {
+			fmt.Fprint(w, `{"ok":false,"error":"bad_request"}`)
+			return
+		}
+		if r.Form.Get("cursor") == "" {
+			fmt.Fprint(w, `{"ok":true,"channels":[{"id":"C1","name":"reviews"}],"response_metadata":{"next_cursor":"n"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"ok":true,"channels":[{"id":"G1","name":"team","is_private":true}]}`)
+	}))
+	defer srv.Close()
+	got, err := slack.NewWith("xoxp-1", srv.URL+"/").Channels(context.Background())
+	if err != nil || fmt.Sprint(got) != "[{C1 reviews false} {G1 team true}]" {
+		t.Fatalf("Channels = %v, %v", got, err)
+	}
+}

@@ -326,7 +326,11 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 		m.askIcons()
 	}
 	var offerNames tea.Cmd
-	if !m.synced && m.core.OfferNames() {
+	switch {
+	case m.synced:
+	case m.core.OfferChannels():
+		m.tip = "Slack: pick the channels whose PR links you want in the inbox: <leader>, → Slack channels"
+	case m.core.OfferNames():
 		offerNames = m.matchSlackNames(namesProposedMsg{tip: true})
 	}
 	m.synced = true
@@ -698,6 +702,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case namesProposedMsg:
 		return m, m.namesProposed(msg)
+
+	case channelsMsg:
+		m.channelsRead(msg)
+		return m, nil
 
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress {

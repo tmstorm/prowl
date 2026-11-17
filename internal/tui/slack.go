@@ -120,16 +120,17 @@ func newNamesPopup(m *Model, msg namesProposedMsg) *namesPopup {
 }
 
 // window is the height lines of lines that keep line at in view, scrolling
-// only when it would leave it, so the popup keeps its size as you move. The
-// line above at, often its heading, stays in view too.
-func (p *namesPopup) window(lines []string, at, height int) []string {
+// only when it would leave it, so a popup keeps its size as you move. The
+// line above at, often its heading, stays in view too. top is the first
+// line shown, kept between calls.
+func window(lines []string, at, height int, top *int) []string {
 	if len(lines) <= height {
 		return lines
 	}
-	p.top = min(p.top, max(at-1, 0))
-	p.top = max(p.top, at-height+1)
-	p.top = min(p.top, len(lines)-height)
-	return lines[p.top : p.top+height]
+	*top = min(*top, max(at-1, 0))
+	*top = max(*top, at-height+1)
+	*top = min(*top, len(lines)-height)
+	return lines[*top : *top+height]
 }
 
 func (p *namesPopup) mode() mode {
@@ -349,11 +350,175 @@ func (p *namesPopup) view(m *Model) string {
 		}
 		lines = append(lines, row)
 	}
-	lines = p.window(lines, at, max(m.h-12, 6))
+	lines = window(lines, at, max(m.h-12, 6), &p.top)
 	if len(p.rows) == 0 {
 		lines = append(lines, sDim.Render(" Everyone in your orgs and inbox has a Slack user."))
 	}
 	help := sDim.Render(" space accept · a accept all · e pick · x remove · enter save · esc cancel · E edit as text") + "\n" +
 		sDim.Render(" A mapped teammate is @mentioned when prowl posts, and <leader>Y DMs them.")
 	return popBox("Slack names", strings.Join(lines, "\n")+"\n\n"+help, w, pal.Accent)
+}
+
+// channelsPopup picks the channels whose PR links show in the inbox, and
+// whether DMs count, with each channel's recent PR links to go by.
+type channelsPopup struct {
+	all     []core.ChannelActivity
+	dmLinks int
+	who     string // who you're signed in as
+	on      map[string]bool
+	dms     bool
+	input   textinput.Model
+	results []int // indexes into all; the DM row comes first and isn't one
+	cur     int   // 0 is the DM row
+	top     int
+	back    *optionsPopup
+}
+
+type channelsMsg struct {
+	channels []core.ChannelActivity
+	dmLinks  int
+	err      error
+	back     *optionsPopup
+}
+
+// openChannels reads your channels and their recent PR links, then opens
+// the channel picker.
+func (m *Model) openChannels(back *optionsPopup) tea.Cmd {
+	co := m.core
+	m.info("reading your Slack channels…")
+	return func() tea.Msg {
+		channels, dms, err := co.SlackActivity()
+		return channelsMsg{channels: channels, dmLinks: dms, err: err, back: back}
+	}
+}
+
+func (m *Model) channelsRead(msg channelsMsg) {
+	if msg.err != nil {
+		m.fail(msg.err.Error())
+		return
+	}
+	p := &channelsPopup{all: msg.channels, dmLinks: msg.dmLinks, who: m.core.SlackSignedIn(), on: map[string]bool{}, dms: m.cfg.SlackDMs, back: msg.back}
+	for _, id := range m.cfg.SlackChannels {
+		p.on[id] = true
+	}
+	p.input = textinput.New()
+	p.input.Prompt = sTitle.Render(" ") + " "
+	p.input.Placeholder = "channel"
+	p.input.Width = 40
+	p.input.Focus()
+	p.filter()
+	m.popup = p
+}
+
+func (p *channelsPopup) mode() mode { return modeInsert }
+
+func (p *channelsPopup) filter() {
+	q := strings.ToLower(p.input.Value())
+	p.results = p.results[:0]
+	for i, ch := range p.all {
+		if _, ok := fuzzy(q, strings.ToLower(ch.Name)); ok {
+			p.results = append(p.results, i)
+		}
+	}
+	p.cur = min(p.cur, len(p.results))
+}
+
+func (p *channelsPopup) forward(_ *Model, msg tea.Msg) tea.Cmd {
+	before := p.input.Value()
+	var cmd tea.Cmd
+	p.input, cmd = p.input.Update(msg)
+	if p.input.Value() != before {
+		p.filter()
+	}
+	return cmd
+}
+
+func (p *channelsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
+	switch k.String() {
+	case "down", "ctrl+n", "ctrl+j":
+		p.cur = min(p.cur+1, len(p.results))
+	case "up", "ctrl+p", "ctrl+k":
+		p.cur = max(p.cur-1, 0)
+	case " ", "tab":
+		if p.cur == 0 {
+			p.dms = !p.dms
+		} else {
+			id := p.all[p.results[p.cur-1]].ID
+			p.on[id] = !p.on[id]
+		}
+	case "enter":
+		return p.save(m)
+	case "esc":
+		m.popup = nil
+		if p.back != nil {
+			m.popup = p.back
+		}
+	default:
+		return p.forward(m, k)
+	}
+	return nil
+}
+
+func (p *channelsPopup) save(m *Model) tea.Cmd {
+	m.popup = nil
+	if p.back != nil {
+		m.popup = p.back
+	}
+	var ids []string
+	for _, ch := range p.all {
+		if p.on[ch.ID] {
+			ids = append(ids, ch.ID)
+		}
+	}
+	_, err := m.core.Update(func(c *config.Config) error {
+		c.SlackChannels, c.SlackDMs = ids, p.dms
+		return nil
+	})
+	if err != nil {
+		m.fail(err.Error())
+		return nil
+	}
+	m.tip = ""
+	note := fmt.Sprintf("watching %d Slack channel%s", len(ids), map[bool]string{true: "", false: "s"}[len(ids) == 1])
+	if p.dms {
+		note += " and your DMs"
+	}
+	m.info(note)
+	return m.configChanged()
+}
+
+func (p *channelsPopup) view(m *Model) string {
+	w := min(popWidth(m), 80)
+	box := func(on bool) string {
+		if on {
+			return sGreen.Render("[x]")
+		}
+		return sDim.Render("[ ]")
+	}
+	links := func(n int) string {
+		if n == 0 {
+			return sDim.Render("no PR links lately")
+		}
+		return sDim.Render(fmt.Sprintf("%d PR link%s in 14 days", n, map[bool]string{true: "", false: "s"}[n == 1]))
+	}
+	lines := []string{fit(" "+box(p.dms)+" "+fit(sBold.Render("Direct messages"), 28)+links(p.dmLinks), w-4)}
+	for _, i := range p.results {
+		ch := p.all[i]
+		name := "#" + ch.Name
+		if ch.Private {
+			name += sDim.Render(" private")
+		}
+		row := " " + box(p.on[ch.ID]) + " " + fit(name, 28) + links(ch.Links)
+		if ch.Recommended {
+			row += sGreen.Render(" · recommended")
+		}
+		lines = append(lines, fit(row, w-4))
+	}
+	lines[p.cur] = highlight(lines[p.cur], w-4, sTitle)
+	lines = window(lines, p.cur, max(m.h-14, 6), &p.top)
+	head := sDim.Render(" signed in as " + p.who)
+	help := sDim.Render(" type to filter · ↑↓ move · space check · enter save · esc cancel") + "\n" +
+		sDim.Render(" PR links in checked channels, and sent to you in DMs, show in the inbox as shared.")
+	return popBox("Slack channels", head+"\n"+p.input.View()+"\n"+sBorder.Render(strings.Repeat("─", w-4))+"\n"+
+		strings.Join(lines, "\n")+"\n\n"+help, w, pal.Accent)
 }
