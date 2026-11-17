@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/tmstorm/prowl/compare/v0.4.0...v0.5.0) (2026-11-17)
+
+
+### Features
+
+* **slack:** sign in to Slack from prowl's accounts ([#41](https://github.com/tmstorm/prowl/issues/41)) ([388fed1](https://github.com/tmstorm/prowl/commit/388fed11a8ecba6210655fd3656c86e1c4022731))
+
+
+### Bug Fixes
+
+* **slack:** renew the Slack token when it expires ([#39](https://github.com/tmstorm/prowl/issues/39)) ([c49c367](https://github.com/tmstorm/prowl/commit/c49c367cb91099a096044d05fd3656303e34cda0))
+* **tui:** keep status messages to one line ([#42](https://github.com/tmstorm/prowl/issues/42)) ([92ed04e](https://github.com/tmstorm/prowl/commit/92ed04e5fd5b953c5fa64350e8e7f201796c7fea))
+
 ## [0.4.0](https://github.com/tmstorm/prowl/compare/v0.3.0...v0.4.0) (2026-11-17)
 
 
