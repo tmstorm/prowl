@@ -53,6 +53,48 @@ func TestSearchDocs(t *testing.T) {
 	}
 }
 
+// A topic leads to its tag's places: a page, a heading by text or anchor, or
+// a table row, matching case when a tag does and the start of a tag when
+// none is the topic.
+func TestFindDocTag(t *testing.T) {
+	for _, tc := range []struct {
+		topic, page, heading, line string
+	}{
+		{"slack", "slack", "Slack", "# Slack"},
+		{"running-tests", "ai-reviews", "Running tests", "## Running tests"},
+		{"snoozing", "inbox", "Snoozing", "## Snoozing"},
+		{"stale_after", "config", "Inbox", "| `stale_after` |"},
+		{"stale", "config", "Inbox", "| `stale_after` |"},
+		{"<leader>cc", "ai-reviews", "Starting a review", "| `<leader>cc` |"},
+		{"re-check", "inbox", "Buckets", "| re-check |"},
+		{"H", "reviewing", "Moving around", "| `H`/`M`/`L` |"},
+		{"h", "reviewing", "Moving around", "| `h`, `esc`, `←` |"},
+		{"should_fix", "config", "Agent", "| `should_fix`, `nits` |"},
+	} {
+		tags := core.FindDocTag(tc.topic)
+		if len(tags) != 1 {
+			t.Errorf("FindDocTag(%q) = %+v, want one place", tc.topic, tags)
+			continue
+		}
+		p, _ := core.Doc(tags[0].Page)
+		line := strings.Split(p.Markdown, "\n")[tags[0].Line]
+		if tags[0].Page != tc.page || tags[0].Heading != tc.heading || !strings.HasPrefix(line, tc.line) {
+			t.Errorf("FindDocTag(%q) = %+v at %q", tc.topic, tags[0], line)
+		}
+	}
+	if tags := core.FindDocTag("c"); len(tags) < 2 {
+		t.Errorf("c means something in the diff and in the review tab: %+v", tags)
+	}
+	if tags := core.FindDocTag("nothing like it"); tags != nil {
+		t.Errorf("FindDocTag(nothing like it) = %+v", tags)
+	}
+	for _, tag := range core.DocTags() {
+		if !slices.ContainsFunc(core.FindDocTag(tag.Tag), func(d core.DocTag) bool { return d.Page == tag.Page && d.Line == tag.Line }) {
+			t.Errorf("%q doesn't lead to %s line %d", tag.Tag, tag.Page, tag.Line+1)
+		}
+	}
+}
+
 var docLink = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 
 // Every relative link in the docs reaches a page, a heading in it, or a file

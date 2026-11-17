@@ -25,15 +25,15 @@ Agent actions live under `<leader>c`:
 
 | Key | Does |
 | --- | --- |
-| `cc` | review with every reviewer |
-| `cC` | review with one agent you pick |
-| `cp` | run a [review profile](#review-profiles) |
-| `cr` | ask the reviewer to revise |
-| `ci` | chat with the reviewer |
-| `cs` | update the findings from a chat |
-| `ca` | write an [AI summary](#ai-summary) |
-| `ch` | copy a fix-these-findings prompt |
-| `cd` | discard the review |
+| `<leader>cc` | review with every reviewer |
+| `<leader>cC` | review with one agent you pick |
+| `<leader>cp` | run a [review profile](#review-profiles) |
+| `<leader>cr` | ask the reviewer to revise |
+| `<leader>ci` | chat with the reviewer |
+| `<leader>cs` | update the findings from a chat |
+| `<leader>ca` | write an [AI summary](#ai-summary) |
+| `<leader>ch` | copy a fix-these-findings prompt |
+| `<leader>cd` | discard the review |
 
 Revise, chat, sync and discard act on the agent whose section the cursor is in (the main agent otherwise), and always continue that agent's own session. Discarding a review brings back that reviewer's previous run, if it has one.
 
