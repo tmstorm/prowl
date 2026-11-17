@@ -174,6 +174,22 @@ func DocTags() []DocTag {
 	return out
 }
 
+// Markdown is what a tag leads to: its heading's section, or its table row
+// under the table's header and the heading it is in.
+func (t DocTag) Markdown() string {
+	p, _ := Doc(t.Page)
+	lines := strings.Split(p.Markdown, "\n")
+	if !strings.HasPrefix(lines[t.Line], "|") {
+		s, _ := DocSection(t.Page, t.Heading)
+		return s
+	}
+	start := t.Line
+	for start > 0 && strings.HasPrefix(lines[start-1], "|") {
+		start--
+	}
+	return "## " + t.Heading + "\n\n" + lines[start] + "\n" + lines[start+1] + "\n" + lines[t.Line]
+}
+
 // FindDocTag is where a topic leads: the places of the tag that is the topic,
 // in the same case when one is and in any case otherwise, or else of the
 // shortest tag that starts with it. Nothing means no tag fits.

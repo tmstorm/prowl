@@ -82,6 +82,12 @@ func TestFindDocTag(t *testing.T) {
 			t.Errorf("FindDocTag(%q) = %+v at %q", tc.topic, tags[0], line)
 		}
 	}
+	if md := core.FindDocTag("stale_after")[0].Markdown(); !strings.HasPrefix(md, "## Inbox\n\n| Setting |") || !strings.HasSuffix(md, "\n| `stale_after` | `24h` | a PR waiting on you longer than this turns yellow, and bold red at twice that |") {
+		t.Errorf("stale_after's Markdown = %q", md)
+	}
+	if md := core.FindDocTag("running-tests")[0].Markdown(); !strings.HasPrefix(md, "## Running tests\n") || strings.Contains(md, "\n## ") {
+		t.Errorf("running-tests' Markdown = %.60q…", md)
+	}
 	if tags := core.FindDocTag("c"); len(tags) < 2 {
 		t.Errorf("c means something in the diff and in the review tab: %+v", tags)
 	}

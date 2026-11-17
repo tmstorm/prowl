@@ -37,5 +37,5 @@ Notifications use `notify-send` on Linux, Notification Center on macOS and toast
 
 With no configuration, prowl shows every open PR that involves you across GitHub. To limit it to your work, set `orgs` (see [Config](config.md)).
 
-The rest of the docs are built into prowl for the version you run: `?` then `d` opens them, and `prowl docs` prints them. [Running prowl](running.md) covers its commands, background notifications, updating, uninstalling and logins.
+The rest of the docs are built into prowl for the version you run: `:help` (or `?` then `d`) opens them, and `prowl docs` prints them. [Running prowl](running.md) covers its commands, background notifications, updating, uninstalling and logins.
 
