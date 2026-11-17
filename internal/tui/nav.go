@@ -86,15 +86,19 @@ func (v *nav) scrollBy(d int) {
 	v.snap(sign(d))
 }
 
-// scrollView scrolls without moving the cursor unless it leaves the window (ctrl+e/y, mouse wheel).
+// scrollView scrolls without moving the cursor unless it comes within
+// scrolloff of the edge it is scrolling away from (ctrl+e/y, mouse wheel).
 func (v *nav) scrollView(d int) {
+	top := v.top
 	v.top += d
 	v.clampTop()
-	if v.cur < v.top {
-		v.cur = v.top
+	so := v.margin()
+	switch {
+	case v.top > top && v.cur < v.top+so:
+		v.cur = v.top + so
 		v.snap(1)
-	} else if v.cur >= v.top+v.h {
-		v.cur = v.top + v.h - 1
+	case v.top < top && v.cur > v.top+v.h-1-so:
+		v.cur = v.top + v.h - 1 - so
 		v.snap(-1)
 	}
 }
@@ -137,10 +141,7 @@ func (v *nav) clampTop() {
 
 // follow keeps the cursor inside the window with scrolloff rows of context.
 func (v *nav) follow() {
-	so := v.scrolloff
-	if so*2 >= v.h {
-		so = (v.h - 1) / 2
-	}
+	so := v.margin()
 	if v.cur < v.top+so {
 		v.top = v.cur - so
 	}
@@ -148,6 +149,14 @@ func (v *nav) follow() {
 		v.top = v.cur - v.h + 1 + so
 	}
 	v.clampTop()
+}
+
+// margin is scrolloff, capped so a short window still has a row to sit on.
+func (v *nav) margin() int {
+	if v.scrolloff*2 >= v.h {
+		return max((v.h-1)/2, 0)
+	}
+	return v.scrolloff
 }
 
 // percent returns a lualine-style progress label.

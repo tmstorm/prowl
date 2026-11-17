@@ -1,9 +1,12 @@
 package tui_test
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/gh"
@@ -63,4 +66,33 @@ func TestFocusModeHint(t *testing.T) {
 	}
 	a.click("+ back to inbox")
 	a.want("[0]", "+ full width")
+}
+
+// The wheel scrolls a PR three lines a notch, every notch.
+func TestWheelScrollsPR(t *testing.T) {
+	body := ""
+	for i := 1; i <= 80; i++ {
+		body += fmt.Sprintf("row %02d\n\n", i)
+	}
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}, Bodies: map[int]string{1: body}})
+	a.keys("enter")
+	a.want("row 01")
+	top := func() string {
+		for _, l := range a.lines() {
+			if i := strings.Index(l, "row "); i >= 0 {
+				return l[i : i+6]
+			}
+		}
+		return ""
+	}
+	seen := []string{}
+	for range 6 {
+		a.send(tea.MouseMsg{X: a.w - 10, Y: a.h / 2, Button: tea.MouseButtonWheelDown})
+		seen = append(seen, top())
+	}
+	for i := 1; i < len(seen); i++ {
+		if seen[i] <= seen[i-1] {
+			t.Fatalf("notch %d didn't scroll down: %v", i+1, seen)
+		}
+	}
 }
