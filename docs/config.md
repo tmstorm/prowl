@@ -28,7 +28,12 @@
 | `chat_mode` | `popup` | popup or fullscreen, for `<leader>ci` |
 | `editor` | `$VISUAL`, `$EDITOR`, then `vi` | the editor for reviews |
 | `bots` | `github-actions` | accounts treated as bots |
-| `[slack_names]` | none | GitHub login = name for Slack lines, e.g. `alice = "@Alice"` |
+| `slack_client_id` | none | client ID of your team's Slack app, for `prowl slack`; see [Slack](slack.md) |
+| `slack_channels` | none | Slack channel IDs whose PR links show in the inbox (`<leader>,` → Slack → Channels) |
+| `slack_dms` | `true` | PR links sent to you in Slack DMs show in the inbox too |
+| `slack_after_review` | `react` | on the message that shared a PR you reviewed: react, reply in its thread, or off |
+| `[slack_reactions]` | `eyes`, `white_check_mark`, `x`, `speech_balloon` | the emoji for reviewing, approved, changes requested and commented |
+| `[slack_names]` | none | GitHub login = Slack user ID (`U0123ABCD`, a mention) or a name to print, e.g. `alice = "@Alice"` |
 | `[agent] reviewers` | `claude` | the agents that review: claude, codex, command; the first is the main one |
 | `command`, `login_command`, `status_command` | none | the `command` agent and its login |
 | `skills` | none | skills every review must use |

@@ -3,9 +3,13 @@ package tui_test
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +21,7 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/ghtest"
+	"github.com/tmstorm/prowl/internal/slack"
 	"github.com/tmstorm/prowl/internal/store"
 	"github.com/tmstorm/prowl/internal/tui"
 )
@@ -46,6 +51,12 @@ type app struct {
 
 func newApp(t *testing.T, fake *fakeGitHub, configure ...func(*config.Config)) *app {
 	t.Helper()
+	return newSlackApp(t, fake, nil, configure...)
+}
+
+// newSlackApp is newApp signed in to Slack through sl.
+func newSlackApp(t *testing.T, fake *fakeGitHub, sl *slack.Client, configure ...func(*config.Config)) *app {
+	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	bin := t.TempDir() // no real gh, claude or codex: only the fakes
@@ -72,7 +83,7 @@ func newApp(t *testing.T, fake *fakeGitHub, configure ...func(*config.Config)) *
 		f(&cfg)
 	}
 	a := &app{t: t, gh: fake, st: st, cfg: cfg, w: 160, h: 44, late: make(chan tea.Msg, 1024)}
-	a.m = tui.New(start(t, cfg, c, st))
+	a.m = tui.New(start(t, cfg, c, st, sl))
 	a.send(tea.WindowSizeMsg{Width: a.w, Height: a.h})
 	a.queue = append(a.queue, a.m.Init())
 	a.settle()
@@ -80,8 +91,11 @@ func newApp(t *testing.T, fake *fakeGitHub, configure ...func(*config.Config)) *
 }
 
 // start runs a core for one TUI until the test ends.
-func start(t *testing.T, cfg config.Config, c *gh.Client, st *store.Store) *core.Core {
+func start(t *testing.T, cfg config.Config, c *gh.Client, st *store.Store, sl *slack.Client) *core.Core {
 	co := core.New(cfg, c, st)
+	if sl != nil {
+		co.UseSlack(sl)
+	}
 	ctx, stop := context.WithCancel(context.Background())
 	t.Cleanup(stop)
 	go co.Run(ctx)
@@ -288,7 +302,7 @@ func reopen(a *app) *app {
 		a.t.Fatal(err)
 	}
 	b := &app{t: a.t, gh: a.gh, st: a.st, cfg: a.cfg, w: a.w, h: a.h, late: make(chan tea.Msg, 1024)}
-	b.m = tui.New(start(a.t, a.cfg, c, a.st))
+	b.m = tui.New(start(a.t, a.cfg, c, a.st, nil))
 	b.send(tea.WindowSizeMsg{Width: b.w, Height: b.h})
 	b.queue = append(b.queue, b.m.Init())
 	b.settle()
@@ -322,4 +336,43 @@ func (a *app) clickFirst(text string) {
 		}
 	}
 	a.t.Fatalf("%q is not on screen:\n%s", text, a.screen())
+}
+
+// fakeSlack is a Slack workspace for the TUI: search finds matches and
+// users.list lists users (both as JSON), and every post is recorded.
+type fakeSlack struct {
+	mu                    sync.Mutex
+	matches, users, rooms string // rooms: users.conversations channels
+	posted                []string
+}
+
+func (f *fakeSlack) client(t *testing.T) *slack.Client {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		switch r.URL.Path {
+		case "/auth.test":
+			fmt.Fprint(w, `{"ok":true,"user":"sam","team":"Acme","user_id":"U1"}`)
+		case "/users.conversations":
+			fmt.Fprintf(w, `{"ok":true,"channels":[%s]}`, f.rooms)
+		case "/search.messages":
+			fmt.Fprintf(w, `{"ok":true,"messages":{"paging":{"pages":1},"matches":[%s]}}`, f.matches)
+		case "/users.list":
+			fmt.Fprintf(w, `{"ok":true,"members":[%s]}`, f.users)
+		case "/conversations.open":
+			fmt.Fprint(w, `{"ok":true,"channel":{"id":"D9"}}`)
+		default:
+			f.posted = append(f.posted, strings.TrimSpace(r.URL.Path+" "+r.Form.Get("channel")+" "+r.Form.Get("thread_ts")+" "+r.Form.Get("text")))
+			fmt.Fprint(w, `{"ok":true}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return slack.NewWith("xoxp-test", srv.URL+"/")
+}
+
+func (f *fakeSlack) posts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.posted)
 }

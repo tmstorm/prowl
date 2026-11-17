@@ -283,3 +283,59 @@ func TestCommentReviewIsFeedback(t *testing.T) {
 		t.Fatalf("a comment on top of your approval: %v (%s)", it.Bucket, it.Reason)
 	}
 }
+
+// A PR shared in Slack waits for you as Shared until you review it, and a
+// review request still wins, naming the share.
+func TestShared(t *testing.T) {
+	share := gh.Share{Channel: "reviews", From: "alice", At: at(3)}
+	cases := []struct {
+		name   string
+		build  func() gh.PR
+		bucket inbox.Bucket
+		reason string
+	}{
+		{"shared, not requested", func() gh.PR { return pr("alice") }, inbox.Shared, "shared in #reviews by alice"},
+		{"shared and requested", func() gh.PR {
+			p := pr("alice")
+			requestMe(&p)
+			return p
+		}, inbox.NeedsReview, "review requested · shared in #reviews by alice"},
+		{"shared, then approved", func() gh.PR {
+			p := pr("alice")
+			p.Reviews.Nodes = []gh.Review{review("me", "APPROVED", 4)}
+			return p
+		}, inbox.Approved, "you approved"},
+		{"shared draft", func() gh.PR {
+			p := pr("alice")
+			p.IsDraft = true
+			return p
+		}, inbox.Involved, "mentioned / commented"},
+	}
+	for _, c := range cases {
+		in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{c.build()}, Shared: map[string]gh.Share{"org/repo#1": share}}
+		got := inbox.Classify(in)[0]
+		if got.Bucket != c.bucket || got.Reason != c.reason {
+			t.Errorf("%s: got %s %q, want %s %q", c.name, got.Bucket, got.Reason, c.bucket, c.reason)
+		}
+	}
+	dm := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr("alice")}, Shared: map[string]gh.Share{"org/repo#1": {From: "bob", At: at(3)}}}
+	if got := inbox.Classify(dm)[0]; got.Bucket != inbox.Shared || got.Reason != "sent to you by bob" || !got.Since.Equal(at(3)) {
+		t.Errorf("DM: got %s %q since %v", got.Bucket, got.Reason, got.Since)
+	}
+	if !inbox.Shared.NeedsMe() {
+		t.Error("Shared doesn't count as needing you")
+	}
+}
+
+// Reactions on the Slack share of your PR join its reason; on someone
+// else's PR they don't.
+func TestSlackReactionsReason(t *testing.T) {
+	in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr("me")}, Reactions: map[string]string{"org/repo#1": "#reviews: Bob ✅"}}
+	if got := inbox.Classify(in)[0]; got.Reason != "awaiting reviewers · #reviews: Bob ✅" || got.SlackReactions != "#reviews: Bob ✅" {
+		t.Errorf("yours: %q, %q", got.Reason, got.SlackReactions)
+	}
+	in.PRs = []gh.PR{pr("alice")}
+	if got := inbox.Classify(in)[0]; got.SlackReactions != "" || got.Reason != "mentioned / commented" {
+		t.Errorf("someone else's: %q, %q", got.Reason, got.SlackReactions)
+	}
+}

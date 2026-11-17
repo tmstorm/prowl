@@ -14,6 +14,7 @@ It runs in the terminal today. The engine underneath is separate from the interf
 - **Reads like GitHub, minus the browser.** The conversation newest first, review threads, CI checks with the reason a check failed, and a syntax-highlighted diff, unified or side by side.
 - **Reviews with you.** Claude Code or Codex reviews the PR in a throwaway checkout, checks what other reviewers and bots already raised, and drafts replies to your threads. You edit the review in your own editor, and nothing reaches GitHub until you save it.
 - **Reviews your branch before the PR.** `prowl review` reviews the work in your checkout, committed or not, and a coding agent can call it on itself before it says it's done.
+- **Reads Slack for you.** A PR someone linked in your review channels or DMs waits in the inbox, and your emoji on their message follows your review.
 - **Keeps watch when you're not looking.** `prowl watch` sends a desktop notification when something needs you, and catches you up on what happened while it wasn't running.
 - **Keyboard first, mouse friendly.** Vim motions and a which-key leader menu, but the arrow keys, `?` for help and the mouse work just as well.
 
@@ -70,6 +71,7 @@ A few things worth doing next:
 - [The inbox](docs/inbox.md): how PRs are sorted, watching a repo, focusing
 - [Reading and reviewing](docs/reviewing.md): keys, the diff, comments and suggestions, approving, asking for reviews
 - [AI reviews](docs/ai-reviews.md): agents, models, profiles, severities, replies, closing or drafting, local reviews, hooks
+- [Slack](docs/slack.md): setting it up, shared PRs, reactions, posting and DMs
 - [Config](docs/config.md): every setting and its default
 
 `?` in prowl lists every key.
@@ -82,7 +84,6 @@ prowl is pre-1.0: the `0.x` releases may still change how things work. The engin
 - **A VS Code extension**, built on that core, for reviewing without leaving the editor.
 - **Re-review on push.** An option to start a re-review when an author pushes after your review, so it's ready before you open the PR.
 - **Any model for summaries.** An OpenAI-compatible endpoint setting (OpenAI, Anthropic, xAI, or your own Ollama or llama.cpp server), so summaries work without Claude Code or Codex.
-- **Slack.** A PR link shared in your channels lands in the inbox like a review request, and the status line posts to the thread instead of going through your clipboard.
 - **Packages:** AUR (`prowl-bin`) first, then Homebrew and Scoop, so installing is one package-manager command on every system.
 
 Being considered: merging from prowl. For now prowl stays review-only, and merging happens on GitHub where the repo's merge rules live.

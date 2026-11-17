@@ -340,6 +340,7 @@ var bucketTags = map[inbox.Bucket]string{
 	inbox.Activity: "activity", inbox.TeamRequest: "team", inbox.Mine: "mine",
 	inbox.WaitingOnAuthor: "waiting", inbox.Approved: "approved", inbox.Involved: "involved",
 	inbox.ReApprove: "re-approve", inbox.Unclaimed: "unclaimed", inbox.Watching: "watching", inbox.Recheck: "re-check", inbox.Local: "local",
+	inbox.Shared: "shared",
 }
 
 // legend explains the icons currently on screen, wrapped to at most two lines.
@@ -902,6 +903,10 @@ func (m *Model) detailPane(l layout, x int) string {
 	lines := []string{}
 	for _, hl := range d.header(m) {
 		lines = append(lines, " "+hl)
+	}
+	if link := d.item.SlackLink; link != "" {
+		reasonW := lipgloss.Width(d.item.Bucket.String() + ": " + d.item.Reason)
+		m.hits.add(x+2, 3, min(reasonW, w-4), 1, func(m *Model) tea.Cmd { return openURL(link) })
 	}
 	lines = append(lines, "")
 	for _, b := range d.body(m) {

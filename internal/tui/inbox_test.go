@@ -570,3 +570,40 @@ func TestAskIcons(t *testing.T) {
 	off.want("icons stay off; <space>, → Nerd Font icons turns them on")
 	off.wantNot("Do you see three icons here")
 }
+
+// A PR shared in Slack shows as shared, and <leader>y posts its Slack line
+// in the share's thread once you confirm.
+func TestPostSlackLine(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
+	sl := &fakeSlack{matches: fmt.Sprintf(`{"ts":%q,"user":"U2","username":"bob","text":"<https://github.com/o/api/pull/7>",
+"permalink":"https://x.slack.com/archives/C1/p1","channel":{"id":"C1","name":"reviews"}}`, ts)}
+	fake := &fakeGitHub{Others: []gh.PR{pr("api", 7, "fix: crash", "alice")}}
+	a := newSlackApp(t, fake, sl.client(t), func(c *config.Config) { c.SlackChannels = []string{"C1"} })
+	a.refresh()
+	a.waitFor("fix: crash")
+	a.want("shared in #reviews by bob")
+	a.keys("space", "y")
+	a.want("post in the #reviews thread: https://github.com/o/api/pull/7 Needs review · alice")
+	a.keys("y")
+	a.waitFor("posted in the #reviews thread")
+	if p := sl.posts(); len(p) != 1 || p[0] != "/chat.postMessage C1 "+ts+" https://github.com/o/api/pull/7 Needs review · alice · fix: crash" {
+		t.Fatalf("posted %q", p)
+	}
+}
+
+// <leader>Y DMs the author their PR's Slack line once you confirm. An author
+// with no Slack user yet opens the Slack names on them, and once you accept
+// one and save, the DM goes on.
+func TestDMAuthor(t *testing.T) {
+	sl := &fakeSlack{users: `{"id":"U0ALICE123","name":"alice","real_name":"Alice Archer"}`}
+	a := newSlackApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, sl.client(t))
+	a.keys("space", "Y")
+	a.want("Slack names", "alice", "Alice Archer", "login matches their Slack name")
+	a.keys(" ", "enter")
+	a.want("saved 1 Slack name", "DM alice: https://github.com/o/api/pull/7 Needs review · @Alice Archer")
+	a.keys("y")
+	a.waitFor("sent alice a DM")
+	if p := sl.posts(); len(p) != 1 || p[0] != "/chat.postMessage D9  https://github.com/o/api/pull/7 Needs review · <@U0ALICE123> · fix: crash" {
+		t.Fatalf("posted %q", p)
+	}
+}

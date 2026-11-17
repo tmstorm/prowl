@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/tmstorm/prowl/internal/store"
 )
@@ -62,5 +63,67 @@ func TestDataDirIsPrivate(t *testing.T) {
 	defer st.Close()
 	if fi, err := os.Stat(dir); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("data dir mode: %v %v", fi.Mode(), err)
+	}
+}
+
+// Shares are kept once per message and PR, newest first, until the PR closes,
+// a save keeps the reaction prowl set, and the last search survives a restart.
+func TestSlackShares(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := store.SlackShare{Channel: "C1", TS: "1.0", PRKey: "o/r#1", PRID: "PR1", ChannelName: "reviews", User: "U1", UserName: "alice", At: time.Unix(100, 0),
+		Link: "https://acme.slack.com/archives/C1/p1"}
+	newer := old
+	newer.TS, newer.At = "2.0", time.Unix(200, 0)
+	other := store.SlackShare{Channel: "D1", TS: "3.0", PRKey: "o/r#2", PRID: "PR2", User: "U2", UserName: "bob", At: time.Unix(150, 0)}
+	if err := st.SaveSlackShares([]store.SlackShare{old, newer, other, old}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.SlackShares()
+	if err != nil || len(got) != 3 || got[0].TS != "2.0" || got[1].PRKey != "o/r#2" || got[2] != old {
+		t.Fatalf("shares = %+v, %v", got, err)
+	}
+	_ = st.SetSlackReaction(got[0], "eyes")
+	_ = st.SaveSlackShares([]store.SlackShare{newer})
+	if got, _ := st.SlackShares(); got[0].MyReaction != "eyes" || got[1].MyReaction != "" {
+		t.Fatalf("reaction not kept through a save: %+v", got)
+	}
+	_ = st.DeleteSlackShares("o/r#1")
+	if got, _ := st.SlackShares(); len(got) != 1 || got[0].PRKey != "o/r#2" {
+		t.Fatalf("after delete: %+v", got)
+	}
+	if !st.SlackSearched().IsZero() {
+		t.Fatal("searched before any search")
+	}
+	_ = st.SetSlackSearched(time.Unix(300, 0))
+	st.Close()
+	st, _ = store.Open(dir)
+	defer st.Close()
+	if !st.SlackSearched().Equal(time.Unix(300, 0)) {
+		t.Fatalf("searched = %v", st.SlackSearched())
+	}
+}
+
+// prowl remembers that a Slack token is in the keyring until you sign out.
+func TestSlackSignedIn(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if st.SlackSignedIn() {
+		t.Fatal("signed in before signing in")
+	}
+	_ = st.SetSlackSignedIn(true)
+	_ = st.SetSlackSignedIn(true)
+	if !st.SlackSignedIn() {
+		t.Fatal("not signed in after signing in")
+	}
+	_ = st.SetSlackSignedIn(false)
+	if st.SlackSignedIn() {
+		t.Fatal("still signed in after signing out")
 	}
 }

@@ -29,17 +29,18 @@ const (
 	Watching  // a watched repo's PR someone else has, or a draft
 	Recheck   // pushed to since you approved, and your approval still counts
 	Local     // your branch, reviewed locally before it has a pull request
+	Shared    // linked in a Slack channel you watch, or sent to you, and you haven't reviewed
 )
 
 func (b Bucket) String() string {
 	return [...]string{
 		"needs review", "re-review", "addressed", "new activity", "team request",
 		"mine", "waiting on author", "approved", "involved", "re-approve",
-		"unclaimed", "watching", "re-check", "local",
+		"unclaimed", "watching", "re-check", "local", "shared",
 	}[b]
 }
 
-var urgency = []Bucket{NeedsReview, ReApprove, ReReview, Addressed, Activity, Recheck, TeamRequest, Mine, Local, Approved, WaitingOnAuthor, Involved, Unclaimed, Watching}
+var urgency = []Bucket{NeedsReview, Shared, ReApprove, ReReview, Addressed, Activity, Recheck, TeamRequest, Mine, Local, Approved, WaitingOnAuthor, Involved, Unclaimed, Watching}
 
 // Rank orders buckets by urgency; lower sorts first.
 func (b Bucket) Rank() int {
@@ -69,8 +70,15 @@ type Item struct {
 	LastReviewedOid string
 	MyLastReview    *gh.Review
 	UnresolvedCount int
-	ThreadCount     int    // review threads, resolved or not
-	ReviewStatus    string // approved | changes requested | needs review | needs rebase | draft
+	ThreadCount     int // review threads, resolved or not
+	// On your PR: who reacted on its Slack share, e.g. "#reviews: Bob ✅".
+	SlackReactions string
+	SlackLink      string // the Slack message that shared it
+	// On a PR you were asked to review: where it was shared too, as its reason
+	// ends, e.g. "shared in #reviews by bob".
+	SharedToo string
+
+	ReviewStatus string // approved | changes requested | needs review | needs rebase | draft
 }
 
 func Classify(in *gh.Inbox) []Item {
@@ -80,7 +88,17 @@ func Classify(in *gh.Inbox) []Item {
 	}
 	items := make([]Item, 0, len(in.PRs))
 	for _, pr := range in.PRs {
-		items = append(items, classify(pr, in.Viewer, teams, in.Bots, in.Watched[pr.Repository.NameWithOwner], in.RecheckAfterPush))
+		share, shared := in.Shared[pr.Key()]
+		it := classify(pr, in.Viewer, teams, in.Bots, in.Watched[pr.Repository.NameWithOwner], in.RecheckAfterPush)
+		if shared {
+			it = withShare(it, share)
+		}
+		it.SlackLink = in.SlackLinks[pr.Key()]
+		if r := in.Reactions[pr.Key()]; r != "" && it.Bucket == Mine {
+			it.Reason += " · " + r
+			it.SlackReactions = r
+		}
+		items = append(items, it)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].Bucket != items[j].Bucket {
@@ -357,6 +375,23 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 	}
 	if it.Since.IsZero() {
 		it.Since = pr.UpdatedAt
+	}
+	return it
+}
+
+// withShare moves a PR you haven't touched into Shared, or notes the share
+// on a review request.
+func withShare(it Item, share gh.Share) Item {
+	where := "sent to you by " + share.From
+	if share.Channel != "" {
+		where = "shared in #" + share.Channel + " by " + share.From
+	}
+	switch {
+	case it.Bucket == NeedsReview:
+		it.Reason += " · " + where
+		it.SharedToo = where
+	case it.MyLastReview == nil && !it.PR.IsDraft && slices.Contains([]Bucket{TeamRequest, Involved, Unclaimed, Watching}, it.Bucket):
+		it.Bucket, it.Since, it.Reason = Shared, share.At, where
 	}
 	return it
 }

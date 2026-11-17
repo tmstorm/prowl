@@ -21,6 +21,7 @@ import (
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/platform"
+	"github.com/tmstorm/prowl/internal/slack"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
@@ -32,19 +33,33 @@ type Core struct {
 
 	syncing sync.Mutex // one sync at a time
 
-	mu         sync.Mutex
-	cfg        config.Config
-	cfgMod     time.Time // the config file's mtime when last read or written
-	quiet      bool      // this process never notifies (prowl list)
-	accounts   []Account
-	inbox      Inbox
-	peek       map[string]bool  // repos (owner/name) whose open PRs are fetched this session
-	opened     map[string]prRef // PRs opened by link this session, kept through syncs
-	runs       map[string][]*store.Run
-	pending    map[string][]gh.DraftComment // your inline comments, by PR, until the next review
-	drafted    map[string]store.Review      // agent drafts on their way out, as prowl wrote them
-	unsent     map[string]Draft             // reviews that failed to post, by PR, until reopened
-	candidates map[string][]gh.Candidate    // who can review, by repo, for the session
+	mu          sync.Mutex
+	cfg         config.Config
+	cfgMod      time.Time // the config file's mtime when last read or written
+	quiet       bool      // this process never notifies (prowl list)
+	accounts    []Account
+	inbox       Inbox
+	peek        map[string]bool  // repos (owner/name) whose open PRs are fetched this session
+	opened      map[string]prRef // PRs opened by link this session, kept through syncs
+	runs        map[string][]*store.Run
+	pending     map[string][]gh.DraftComment // your inline comments, by PR, until the next review
+	drafted     map[string]store.Review      // agent drafts on their way out, as prowl wrote them
+	unsent      map[string]Draft             // reviews that failed to post, by PR, until reopened
+	shared      map[string]gh.Share          // PRs shared in Slack, as of the last sync
+	reactions   map[string]string            // Slack reactions on your PRs, as of the last sync
+	slackLinks  map[string]string            // the Slack message that shared each PR, as of the last sync
+	slackShares map[string]store.SlackShare  // each shared PR's newest share by someone else
+	candidates  map[string][]gh.Candidate    // who can review, by repo, for the session
+
+	slack      *slack.Client     // nil when you aren't signed in to Slack
+	slackErr   error             // why the last sync couldn't read Slack
+	slackMe    string            // your Slack user ID, once known; set under mu by a sync
+	slackUsers []slack.User      // the workspace's people, read once
+	slackWho   string            // who you are signed in as, e.g. "sam in Acme"
+	slackTeam  string            // your Slack workspace ID
+	slackApp   bool              // the Slack app opens slack:// links
+	activity   []ChannelActivity // your channels and their PR links, read once
+	dmLinks    int               // PR links that reached you in DMs, with activity
 
 	updateStep  string    // what a running update is doing, "" when none runs
 	updateRetry time.Time // a failed background install waits until then to try again
@@ -93,6 +108,7 @@ func New(cfg config.Config, c *gh.Client, st *store.Store) *Core {
 	if json.Unmarshal(data, &in) != nil {
 		return co
 	}
+	co.shared, co.reactions, co.slackLinks = in.Shared, in.Reactions, in.SlackLinks
 	items := co.classify(&in)
 	snoozed, _ := st.Snoozed(heads(items))
 	co.inbox = Inbox{Items: items, Snoozed: snoozed, Viewer: in.Viewer, Teams: in.Teams, At: at}
@@ -181,6 +197,7 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 		}
 	}
 	opened := slices.Collect(maps.Values(co.opened))
+	sl := co.slack
 	var known []string
 	for _, it := range co.inbox.Items {
 		if _, linked := co.opened[it.PR.Key()]; !linked && !it.PR.Local() {
@@ -189,15 +206,35 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	}
 	co.mu.Unlock()
 
+	var kept []store.SlackShare
+	if sl != nil {
+		kept, _ = co.st.SlackShares()
+	}
+	var keep []string
+	for _, s := range newestShares(cfg, co.slackMe, kept) {
+		keep = append(keep, s.PRID)
+	}
 	byLink := make([]*gh.PR, len(opened))
 	var fetching sync.WaitGroup
 	for i, o := range opened {
 		fetching.Go(func() { byLink[i], _ = co.gh.PR(o.repo, o.n) })
 	}
-	in, err := co.gh.FetchInbox(cfg.Orgs, cfg.WatchRepos, known)
+	var newlyShared []gh.PR
+	var slackErr error
+	if sl != nil {
+		fetching.Go(func() { newlyShared, slackErr = co.syncSlack(sl, cfg, kept) })
+	}
+	in, err := co.gh.FetchInbox(cfg.Orgs, cfg.WatchRepos, known, keep)
 	fetching.Wait()
 	if err != nil {
 		return nil, fmt.Errorf("refresh: %w", err)
+	}
+	var shares map[string]store.SlackShare
+	if sl != nil {
+		shares = co.withShares(in, cfg, newlyShared)
+		var err error
+		in.Reactions, err = co.reactionsOnYours(sl, cfg, in)
+		slackErr = errors.Join(slackErr, err)
 	}
 	if data, err := json.Marshal(in); err == nil {
 		_ = co.st.SaveInbox(data, time.Now())
@@ -228,8 +265,15 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	co.pruneLocals()
 	co.foldLocals(items, in.Viewer)
 	co.mu.Lock()
+	co.shared, co.slackShares, co.reactions, co.slackLinks = in.Shared, shares, in.Reactions, in.SlackLinks
 	co.inbox = Inbox{Items: co.withOpened(items, extra, in.Viewer), Snoozed: snoozed, Viewer: in.Viewer, Teams: in.Teams, At: time.Now()}
 	co.inbox.Items = co.withLocals(co.inbox.Items)
+	co.mu.Unlock()
+	if sl != nil && slackErr == nil {
+		slackErr = co.reconcileReactions(sl)
+	}
+	co.mu.Lock()
+	co.slackErr = slackErr
 	co.mu.Unlock()
 	return slices.DeleteFunc(changes, func(it inbox.Item) bool { _, ok := snoozed[it.PR.Key()]; return ok }), nil
 }
@@ -258,20 +302,21 @@ func (co *Core) withOpened(items []inbox.Item, prs []gh.PR, viewer string) []inb
 	if len(add) == 0 {
 		return items
 	}
-	extra := &gh.Inbox{Viewer: viewer, PRs: add, Bots: bots(co.cfg), RecheckAfterPush: co.cfg.RecheckAfterPush}
+	extra := &gh.Inbox{Viewer: viewer, PRs: add, Bots: bots(co.cfg), RecheckAfterPush: co.cfg.RecheckAfterPush, Shared: co.shared, Reactions: co.reactions, SlackLinks: co.slackLinks}
 	return append(items, inbox.Classify(extra)...)
 }
 
 // changed lists the PRs that need you (or are yours) and are new, moved
-// section, or were pushed to while addressed.
+// section, or were pushed to while addressed. A Slack share isn't one: Slack
+// already told you.
 func changed(items []inbox.Item, prev map[string]store.PRState) []inbox.Item {
 	var out []inbox.Item
 	for _, it := range items {
-		if !it.Bucket.NeedsMe() && it.Bucket != inbox.Mine {
+		if !it.Bucket.NeedsMe() && it.Bucket != inbox.Mine || it.Bucket == inbox.Shared {
 			continue
 		}
 		p, seen := prev[it.PR.Key()]
-		if !seen || p.Bucket != int(it.Bucket) || p.Reason != it.Reason ||
+		if !seen || p.Bucket != int(it.Bucket) || p.Reason != lastingReason(it) ||
 			(it.Bucket == inbox.Addressed && p.HeadOid != it.PR.HeadRefOid) {
 			out = append(out, it)
 		}
@@ -279,11 +324,17 @@ func changed(items []inbox.Item, prev map[string]store.PRState) []inbox.Item {
 	return out
 }
 
+// lastingReason is the reason that decides whether a PR changed: without
+// where it was shared too, since Slack told you about that already.
+func lastingReason(it inbox.Item) string {
+	return strings.TrimSuffix(it.Reason, " · "+it.SharedToo)
+}
+
 func states(items []inbox.Item) []store.PRState {
 	out := make([]store.PRState, 0, len(items))
 	for _, it := range items {
 		out = append(out, store.PRState{
-			Key: it.PR.Key(), Bucket: int(it.Bucket), Reason: it.Reason,
+			Key: it.PR.Key(), Bucket: int(it.Bucket), Reason: lastingReason(it),
 			HeadOid: it.PR.HeadRefOid, Title: it.PR.Title, URL: it.PR.URL,
 		})
 	}
@@ -302,7 +353,8 @@ func heads(items []inbox.Item) map[string]string {
 // are more than a few (the first sync ever, or catching up after a while).
 func Notify(changes []inbox.Item, timeout time.Duration) {
 	changes = slices.DeleteFunc(slices.Clone(changes), func(it inbox.Item) bool {
-		return it.Bucket == inbox.Mine && it.Reason != "new feedback on your PR" && it.Reason != "approved, ready to merge"
+		return it.Bucket == inbox.Mine && it.SlackReactions == "" &&
+			!strings.HasPrefix(it.Reason, "new feedback on your PR") && !strings.HasPrefix(it.Reason, "approved, ready to merge")
 	})
 	if len(changes) > 3 {
 		need := 0
@@ -332,6 +384,7 @@ func (co *Core) PruneClosed() {
 	co.mu.Lock()
 	open := heads(co.inbox.Items)
 	co.mu.Unlock()
+	co.pruneShares(open)
 	for _, key := range keys {
 		if _, ok := open[key]; ok {
 			continue
@@ -401,7 +454,7 @@ func (co *Core) reclassify(pr gh.PR) inbox.Item {
 		watched[r] = true
 	}
 	return inbox.Classify(&gh.Inbox{Viewer: co.inbox.Viewer, Teams: co.inbox.Teams, Watched: watched, Bots: bots(co.cfg),
-		RecheckAfterPush: co.cfg.RecheckAfterPush, PRs: []gh.PR{pr}})[0]
+		RecheckAfterPush: co.cfg.RecheckAfterPush, PRs: []gh.PR{pr}, Shared: co.shared, Reactions: co.reactions, SlackLinks: co.slackLinks})[0]
 }
 
 // ErrWatching is Watching's answer while another `prowl watch` runs.

@@ -41,9 +41,10 @@ type GitHub struct {
 	JobSteps     map[int64]string  // Actions job -> the step that failed
 	RejectReview map[int]bool      // review submissions (1 is the first) that fail with a server error
 	Repos        []string
-	Assignable   []string // logins who can be asked to review, in any repo
-	Teams        []string // the org's team slugs
-	Suggested    []string // logins GitHub suggests as reviewers, on any PR
+	Members      []gh.Person // the org's members
+	Assignable   []string    // logins who can be asked to review, in any repo
+	Teams        []string    // the org's team slugs
+	Suggested    []string    // logins GitHub suggests as reviewers, on any PR
 	Closed       map[string]bool
 	Release      *gh.Release      // the latest release of any repo; nil: none
 	Assets       map[int64][]byte // release asset -> its bytes
@@ -149,6 +150,8 @@ func (f *GitHub) graphql(q string, v map[string]any) any {
 		return map[string]any{"viewer": map[string]any{"login": f.Viewer}}
 	case strings.Contains(q, "teams(first") && strings.Contains(q, "userLogins"):
 		return map[string]any{"organization": map[string]any{"teams": map[string]any{"nodes": []any{}}}}
+	case strings.Contains(q, "membersWithRole(first"):
+		return map[string]any{"organization": map[string]any{"membersWithRole": map[string]any{"nodes": f.Members, "pageInfo": map[string]any{}}}}
 	case strings.Contains(q, "teams(first"):
 		var nodes []any
 		for _, t := range f.Teams {
@@ -218,7 +221,7 @@ func (f *GitHub) graphql(q string, v map[string]any) any {
 		repo := fmt.Sprintf("%s/%s", v["owner"], v["name"])
 		n := int(v["n"].(float64))
 		for _, pr := range append(append([]gh.PR{}, f.PRs...), f.Others...) {
-			if pr.Repository.NameWithOwner == repo && pr.Number == n {
+			if strings.EqualFold(pr.Repository.NameWithOwner, repo) && pr.Number == n {
 				pr.State = "OPEN"
 				if f.Closed[pr.Key()] {
 					pr.State = "MERGED"

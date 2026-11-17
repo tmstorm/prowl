@@ -142,6 +142,19 @@ type Inbox struct {
 	Viewer           string
 	Teams            []string // team slugs the viewer belongs to
 	PRs              []PR
+	Shared           map[string]Share // PR key -> its newest share in Slack, by someone else
+	// PR key -> who reacted on the Slack share of your PR, e.g. "#reviews: Bob ✅".
+	Reactions map[string]string
+	// PR key -> the Slack message that shared it: the newest by someone else,
+	// or on your PR the newest by anyone.
+	SlackLinks map[string]string
+}
+
+// Share is a PR link someone posted in Slack.
+type Share struct {
+	Channel string // e.g. "reviews"; empty for a DM
+	From    string // who posted it
+	At      time.Time
 }
 
 // searchLimit caps each inbox search; past it, PRs drop out of the inbox.
@@ -159,7 +172,9 @@ const maxBatches = 10
 // times slower, and the searches overlap. The PRs in known (node IDs, from
 // the last sync) are loaded while the searches run, so only the PRs that are
 // new wait for them. A known PR that no search finds any more is left out.
-func (c *Client) FetchInbox(orgs, watch, known []string) (*Inbox, error) {
+// The PRs in keep (node IDs, e.g. shared in Slack) are in the inbox whether a
+// search finds them or not, while they are open.
+func (c *Client) FetchInbox(orgs, watch, known, keep []string) (*Inbox, error) {
 	inbox := &Inbox{Watched: map[string]bool{}}
 	for _, r := range watch {
 		inbox.Watched[r] = true
@@ -191,7 +206,9 @@ func (c *Client) FetchInbox(orgs, watch, known []string) (*Inbox, error) {
 	wg.Go(func() { inbox.Viewer, inbox.Teams, errs[len(queries)] = c.viewerTeams(orgs) })
 	var loaded []PR
 	var loadErr error
-	wg.Go(func() { loaded, loadErr = c.loadPRs(known) })
+	wg.Go(func() {
+		loaded, loadErr = c.loadPRs(slices.Compact(slices.Sorted(slices.Values(slices.Concat(known, keep)))))
+	})
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("fetch inbox: %w", err)
@@ -205,7 +222,7 @@ func (c *Client) FetchInbox(orgs, watch, known []string) (*Inbox, error) {
 	}
 	var unique, missing []string
 	seen := map[string]bool{}
-	for _, list := range ids {
+	for _, list := range append(ids, keep) {
 		for _, id := range list {
 			if seen[id] {
 				continue
@@ -225,7 +242,7 @@ func (c *Client) FetchInbox(orgs, watch, known []string) (*Inbox, error) {
 		byID[pr.ID] = pr
 	}
 	for _, id := range unique {
-		if pr, ok := byID[id]; ok {
+		if pr, ok := byID[id]; ok && (pr.State == "OPEN" || !slices.Contains(keep, id)) {
 			inbox.PRs = append(inbox.PRs, pr)
 		}
 	}
@@ -588,6 +605,42 @@ func (c *Client) ResolveThread(threadID string, resolved bool) error {
 		q = `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }`
 	}
 	return c.gql.Do(q, map[string]any{"id": threadID}, nil)
+}
+
+// Person is a GitHub user as their profile shows them.
+type Person struct {
+	Login string `json:"login"`
+	Name  string `json:"name"`
+	Email string `json:"email"` // public email, often empty
+}
+
+// OrgMembers lists an org's members.
+func (c *Client) OrgMembers(org string) ([]Person, error) {
+	var out []Person
+	var after *string
+	for range 10 {
+		var resp struct {
+			Organization *struct {
+				MembersWithRole page[Person] `json:"membersWithRole"`
+			} `json:"organization"`
+		}
+		err := c.gql.Do(`query($org: String!, $after: String) { organization(login: $org) {
+  membersWithRole(first: 100, after: $after) { nodes { login name email } pageInfo { hasNextPage endCursor } } } }`,
+			map[string]any{"org": org, "after": after}, &resp)
+		if err != nil {
+			return nil, fmt.Errorf("members of %s: %w", org, err)
+		}
+		if resp.Organization == nil {
+			return nil, fmt.Errorf("org %s not found", org)
+		}
+		out = append(out, resp.Organization.MembersWithRole.Nodes...)
+		pi := resp.Organization.MembersWithRole.PageInfo
+		if !pi.HasNextPage {
+			break
+		}
+		after = &pi.EndCursor
+	}
+	return out, nil
 }
 
 // Candidate is someone who can be asked to review: a person, or a team as

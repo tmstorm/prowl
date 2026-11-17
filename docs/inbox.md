@@ -12,7 +12,7 @@ Titles that follow [Conventional Commits](https://www.conventionalcommits.org) a
 
 **Watching a repo.** prowl normally shows only PRs that involve you. Add a repo to `watch_repos` (or press `<leader>w` on one of its PRs) to see every open PR in it, for instance to drain a repo before a release. PRs you aren't part of go in the All tab, not Needs me: **unclaimed** when nobody was asked to review, **watching** when someone else has it or it's a draft. `<leader>fr` lists every repo in your orgs, not only those with PRs in your inbox. Focusing a repo you don't watch fetches all its open PRs for the rest of the session (`esc` stops), so `<leader>fr` → any repo works on release day without setting anything up. With a repo in focus, the summary line says where all its PRs stand: `api · 9 open · 2 need you · 1 unclaimed · 3 waiting on author · 2 approved, not merged · 1 draft`.
 
-**A PR shared in Slack.** When someone posts a link instead of requesting you, paste it into `ctrl+p` (a link, `owner/repo#N` or `repo#N` all work). prowl fetches the PR and opens it, and it stays in your inbox for the session. `<leader>R` requests you as a reviewer on GitHub, so the author sees it and it stays for good.
+**A PR shared in Slack.** Signed in to Slack, prowl finds the links people post in your channels and DMs, and those PRs wait under shared until you review them; see [Slack](slack.md). Without Slack, paste a link into `ctrl+p` (a link, `owner/repo#N` or `repo#N` all work). prowl fetches the PR and opens it, and it stays in your inbox for the session. `<leader>R` requests you as a reviewer on GitHub, so the author sees it and it stays for good.
 
 `<leader>g` switches between grouping by status (below) and grouping by repo, where each repo header says how many of its PRs need you. `<leader>fr` picks one repo to focus on, for when you are trying to get one repo merged up; `esc` in the inbox shows all repos again.
 
@@ -21,6 +21,7 @@ Each PR gets one bucket based on your own history with it:
 | Bucket | Meaning |
 | --- | --- |
 | needs review | you were asked and haven't reviewed |
+| shared | linked in a Slack channel you watch, or sent to you in a DM, and you haven't reviewed it ([Slack](slack.md)) |
 | re-review | you reviewed, then were asked again |
 | addressed | you requested changes, and the author has since pushed or replied in your threads |
 | new activity | replies since your last comment, or new commits after you approved |

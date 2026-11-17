@@ -169,7 +169,8 @@ func (co *Core) AgentDraft(key string) (Draft, error) {
 // it. For an agent draft that posted a review, the
 // findings that went out are marked posted, and the draft and what you
 // posted are kept so `prowl edits` and later reviews can learn from your
-// changes.
+// changes. A review on a PR shared in Slack then shows there, as
+// slack_after_review says.
 func (co *Core) Submit(key string, d Draft) (Submitted, error) {
 	out, err := co.submit(key, d)
 	if err != nil && !out.Review {
@@ -203,6 +204,7 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 	if event == "CLOSE" || event == "DRAFT" {
 		event, then = "COMMENT", d.Event
 	}
+	reviewed := ""
 	main, earlier := byCommit(d, pr.HeadRefOid)
 	if event == "APPROVE" && main.commit != pr.HeadRefOid {
 		if len(main.comments) > 0 {
@@ -235,6 +237,9 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 		}
 		out.URL = u
 		co.reviewed(key, event, main.commit)
+		if then == "" {
+			reviewed = event
+		}
 	}
 	out.Review = true
 	co.mu.Lock()
@@ -266,6 +271,13 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 	for i, r := range d.Replies {
 		if failed[i] == nil {
 			failed[i] = co.markReplied(r.RunID, r.ThreadID, r.Body)
+		}
+	}
+	if reviewed != "" {
+		note, err := co.afterReview(key, reviewed)
+		out.Slack = note
+		if err != nil {
+			failed = append(failed, fmt.Errorf("slack: %w", err))
 		}
 	}
 	switch then {
@@ -327,6 +339,7 @@ func (co *Core) MarkReady(key string) error {
 type Submitted struct {
 	URL    string
 	Review bool
+	Slack  string // what prowl did on the PR's Slack share, e.g. "reacted :white_check_mark: in #reviews"
 }
 
 // SetReplyExcluded leaves a drafted thread reply out of what gets sent, or

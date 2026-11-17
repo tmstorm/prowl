@@ -219,7 +219,8 @@ type errMsg struct{ err error }
 type infoMsg string
 type submittedMsg struct {
 	key, event string
-	posted     bool // your review went out, even if err says a reply didn't
+	posted     bool   // your review went out, even if err says a reply didn't
+	slack      string // what prowl did on the PR's Slack share, if anything
 	err        error
 }
 
@@ -324,7 +325,22 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 	if !m.synced && m.core.AskNerdFont() {
 		m.askIcons()
 	}
+	var offerNames tea.Cmd
+	switch {
+	case m.synced:
+	case m.core.OfferChannels():
+		m.tip = "Slack: pick the channels whose PR links you want in the inbox: <leader>, → Slack channels"
+	case m.core.OfferNames():
+		offerNames = m.matchSlackNames(namesProposedMsg{tip: true})
+	}
 	m.synced = true
+	if err := m.core.SlackErr(); err != nil {
+		msg := err.Error()
+		if !strings.HasPrefix(msg, "slack") {
+			msg = "slack: " + msg
+		}
+		m.fail(msg)
+	}
 	selKey := m.selectionKey()
 	m.setInbox(m.core.Inbox())
 	m.loadRuns()
@@ -340,7 +356,7 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 	if d := m.current(); d != nil {
 		reload = d.ensureLoaded(m.core)
 	}
-	return tea.Batch(m.schedulePreview(), reload, m.setTitle())
+	return tea.Batch(m.schedulePreview(), reload, m.setTitle(), offerNames)
 
 }
 
@@ -682,6 +698,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case submittedMsg:
 		return m, m.submitted(msg)
+
+	case slackPostedMsg:
+		if msg.err != nil {
+			m.fail(msg.err.Error())
+		} else {
+			m.info(msg.done)
+		}
+		return m, nil
+
+	case namesProposedMsg:
+		return m, m.namesProposed(msg)
+
+	case channelsMsg:
+		m.channelsRead(msg)
+		return m, nil
 
 	case candidatesMsg:
 		if msg.err != nil {
@@ -1316,8 +1347,10 @@ var leaderKeys = []leaderKey{
 	{cat: "Inbox", key: "z", desc: "show snoozed"},
 	{cat: "Inbox", key: "w", desc: "watch / unwatch repo"},
 	{cat: "Inbox", key: "r", desc: "refresh"},
-	{cat: "Share", key: "y", desc: "copy slack line"},
-	{cat: "Share", key: "o", desc: "open in browser"},
+	{cat: "Share", key: "y", desc: "post / copy slack line"},
+	{cat: "Share", key: "Y", desc: "DM the author"},
+	{cat: "Share", key: "o", desc: "open in GitHub"},
+	{cat: "Share", key: "O", desc: "open in Slack"},
 	{cat: "prowl", key: ",", desc: "options"},
 	{cat: "prowl", key: "U", desc: "update prowl"},
 	{cat: "prowl", key: "N", desc: "what's new"},
@@ -1404,12 +1437,22 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 	case "y":
 		if onGitHub() {
-			return m.copySlack(*it)
+			return m.postSlack(*it)
+		}
+	case "Y":
+		if onGitHub() {
+			return m.dmAuthor(*it)
 		}
 	case "o":
 		if onGitHub() {
 			return openURL(it.PR.URL)
 		}
+	case "O":
+		if it.SlackLink == "" {
+			m.info("nobody shared this PR in a Slack channel you watch")
+			return nil
+		}
+		return openURL(it.SlackLink)
 	case "s":
 		if need() {
 			m.popup = newSnooze(*it)
@@ -1707,13 +1750,64 @@ func (m *Model) searchLines() []string {
 // ---- actions
 
 func (m *Model) copySlack(it inbox.Item) tea.Cmd {
-	line := slack.Line(it, m.cfg.SlackNames)
+	line := m.core.SlackLine(it, false)
 	if err := slack.Copy(line); err != nil {
 		m.fail(err.Error())
 		return nil
 	}
 	m.info("yanked: " + ansi.Strip(line))
 	return nil
+}
+
+// postSlack posts the Slack line in the thread of the message that shared
+// the PR, once you confirm, or copies it when no message did.
+func (m *Model) postSlack(it inbox.Item) tea.Cmd {
+	where := m.core.SharedIn(it.PR.Key())
+	if where == "" {
+		return m.copySlack(it)
+	}
+	line := m.core.SlackLine(it, true)
+	co, key := m.core, it.PR.Key()
+	m.mode = modeConfirm
+	m.confirm = &confirm{prompt: "post in the " + where + " thread: " + ansi.Strip(line) + " [y/N]", yes: func() tea.Cmd {
+		return func() tea.Msg {
+			where, err := co.PostInThread(key, line)
+			return slackPostedMsg{done: "posted in the " + where + " thread", err: err}
+		}
+	}}
+	return nil
+}
+
+// dmAuthor sends the PR's author its Slack line in a DM, once you confirm.
+// An author with no Slack user yet opens the Slack names to pick one.
+func (m *Model) dmAuthor(it inbox.Item) tea.Cmd {
+	login := it.PR.AuthorLogin()
+	if !slack.IsUserID(m.cfg.SlackNames[login]) {
+		key := it.PR.Key()
+		cmd := m.matchSlackNames(namesProposedMsg{focus: login, then: func(m *Model) tea.Cmd {
+			i := slices.IndexFunc(m.items, func(it inbox.Item) bool { return it.PR.Key() == key })
+			if i < 0 || !slack.IsUserID(m.cfg.SlackNames[login]) {
+				return nil
+			}
+			return m.dmAuthor(m.items[i])
+		}})
+		m.info("no Slack user for " + login + " yet: matching names…")
+		return cmd
+	}
+	line := m.core.SlackLine(it, false)
+	co := m.core
+	m.mode = modeConfirm
+	m.confirm = &confirm{prompt: "DM " + login + ": " + ansi.Strip(line) + " [y/N]", yes: func() tea.Cmd {
+		return func() tea.Msg {
+			return slackPostedMsg{done: "sent " + login + " a DM", err: co.DMAuthor(it)}
+		}
+	}}
+	return nil
+}
+
+type slackPostedMsg struct {
+	done string
+	err  error
 }
 
 func (m *Model) askApprove(it inbox.Item) tea.Cmd {
@@ -1732,12 +1826,13 @@ func (m *Model) submit(it inbox.Item, d core.Draft) tea.Cmd {
 	m.info("submitting " + strings.ToLower(strings.ReplaceAll(d.Event, "_", " ")) + "…")
 	return func() tea.Msg {
 		sent, err := co.Submit(key, d)
-		return submittedMsg{key: key, event: d.Event, posted: sent.Review, err: err}
+		return submittedMsg{key: key, event: d.Event, posted: sent.Review, slack: sent.Slack, err: err}
 	}
 }
 
 // submitted shows a posted review: the PR in its new section, the findings
-// that went out, and a Slack line on the clipboard.
+// that went out, and what prowl did on the PR's Slack share, or else a Slack
+// line on the clipboard.
 func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 	if dt := m.details[msg.key]; dt != nil {
 		dt.pending = m.core.Pending(msg.key)
@@ -1757,8 +1852,11 @@ func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 	m.applyPR(prRefreshedMsg{key: msg.key})
 	note := map[string]string{"APPROVE": "approved", "REQUEST_CHANGES": "requested changes", "COMMENT": "commented",
 		"CLOSE": "closed", "DRAFT": "made it a draft", "NOTE": "commented in the conversation"}[msg.event]
+	if msg.slack != "" {
+		note += " · " + msg.slack
+	}
 	for _, it := range m.items {
-		if msg.event == "CLOSE" || msg.event == "DRAFT" || msg.event == "NOTE" {
+		if msg.slack != "" || msg.event == "CLOSE" || msg.event == "DRAFT" || msg.event == "NOTE" {
 			break
 		}
 		if it.PR.Key() != msg.key {
@@ -1768,7 +1866,7 @@ func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 		cp.MyLastReview = &gh.Review{State: map[string]string{
 			"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED",
 		}[msg.event]}
-		if err := slack.Copy(slack.Line(cp, m.cfg.SlackNames)); err == nil {
+		if err := slack.Copy(m.core.SlackLine(cp, false)); err == nil {
 			note += " · slack line yanked"
 		}
 	}

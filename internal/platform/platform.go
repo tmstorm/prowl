@@ -36,13 +36,34 @@ func Notify(title, body string, timeout time.Duration) {
 	}
 }
 
-// Open opens a URL in the default browser.
+// SlackApp reports whether the Slack desktop app is installed to open
+// slack:// links, so a message can open there instead of in the browser.
+func SlackApp() bool {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", "-Ra", "Slack").Run() == nil
+	case "windows":
+		return exec.Command("reg", "query", `HKCR\slack`).Run() == nil
+	}
+	out, err := exec.Command("xdg-mime", "query", "default", "x-scheme-handler/slack").Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
+// Open opens a URL in the default browser, or another app's link (such as
+// slack://) in that app. On Linux such a link goes through gio when it's
+// there: KDE's xdg-open turns slack://channel into slack:///channel, which
+// Slack doesn't follow.
 func Open(url string) error {
 	switch runtime.GOOS {
 	case "darwin":
 		return Spawn(exec.Command("open", url))
 	case "windows":
 		return Spawn(exec.Command("rundll32", "url.dll,FileProtocolHandler", url))
+	}
+	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+		if _, err := exec.LookPath("gio"); err == nil {
+			return Spawn(exec.Command("gio", "open", url))
+		}
 	}
 	return Spawn(exec.Command("xdg-open", url))
 }

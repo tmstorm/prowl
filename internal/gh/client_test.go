@@ -58,7 +58,7 @@ func TestFetchInboxPages(t *testing.T) {
 		}
 		return reply(200, `{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}`)
 	})
-	in, err := c.FetchInbox([]string{"o"}, nil, nil)
+	in, err := c.FetchInbox([]string{"o"}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestFetchInboxKnown(t *testing.T) {
 			}
 			return reply(200, `{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}`)
 		})
-		in, err := cl.FetchInbox(nil, nil, []string{"A", "GONE"})
+		in, err := cl.FetchInbox(nil, nil, []string{"A", "GONE"}, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
@@ -120,6 +120,28 @@ func TestFetchInboxKnown(t *testing.T) {
 		if got := strings.Join(loads, " "); got != c.loads {
 			t.Errorf("%s: loaded %s, want %s", c.name, got, c.loads)
 		}
+	}
+}
+
+// A kept PR is in the inbox though no search finds it, until it closes.
+func TestFetchInboxKeep(t *testing.T) {
+	cl := fake(t, func(r *http.Request) *http.Response {
+		b, _ := io.ReadAll(r.Body)
+		q := string(b)
+		switch {
+		case strings.Contains(q, "{ viewer {"):
+			return reply(200, `{"data":{"viewer":{"login":"me"}}}`)
+		case strings.Contains(q, "nodes(ids:"):
+			return reply(200, `{"data":{"nodes":[{"id":"S","number":2,"state":"OPEN"},{"id":"X","number":3,"state":"MERGED"}]}}`)
+		}
+		return reply(200, `{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}`)
+	})
+	in, err := cl.FetchInbox(nil, nil, nil, []string{"S", "X"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(in.PRs) != 1 || in.PRs[0].ID != "S" {
+		t.Errorf("got %+v, want only the open kept PR", in.PRs)
 	}
 }
 
