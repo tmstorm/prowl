@@ -19,6 +19,7 @@ import (
 
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/inbox"
+	"github.com/tmstorm/prowl/internal/platform"
 )
 
 // agentTitle names the configured review agent in the UI ("Claude", "Codex").
@@ -80,7 +81,7 @@ func (m *Model) openChat(it inbox.Item, reviewer string) tea.Cmd {
 	cmd := exec.Command(spec.Args[0], spec.Args[1:]...)
 	cmd.Dir, cmd.Env = spec.Dir, spec.Env
 	if m.cfg.ChatMode == "fullscreen" || runtime.GOOS == "windows" {
-		return tea.ExecProcess(cmd, func(err error) tea.Msg { return chatExitMsg{key, err} })
+		return tea.Exec(platform.TerminalCmd{Cmd: cmd}, func(err error) tea.Msg { return chatExitMsg{key, err} })
 	}
 
 	w, h := m.chatSize()

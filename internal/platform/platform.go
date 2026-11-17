@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -87,6 +88,16 @@ func (t *terminal) Write(p []byte) (int, error) {
 	defer t.mu.Unlock()
 	return t.File.Write(p)
 }
+
+// TerminalCmd runs a command on the terminal itself, for an editor or an
+// agent's session started from the TUI. Bubble Tea hands a command the
+// writer the TUI draws through, Terminal, and exec.Cmd puts a pipe between a
+// command and a writer that isn't a file, so the editor would draw into it.
+type TerminalCmd struct{ *exec.Cmd }
+
+func (c TerminalCmd) SetStdin(r io.Reader)  { c.Stdin = r }
+func (c TerminalCmd) SetStdout(io.Writer)   { c.Stdout = Terminal.File }
+func (c TerminalCmd) SetStderr(w io.Writer) { c.Stderr = w }
 
 // Copy puts text on the clipboard of the machine you are sitting at. It
 // tries each tool the session can reach: wl-copy on Wayland, xclip or xsel
