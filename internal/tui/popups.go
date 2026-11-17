@@ -460,6 +460,10 @@ func (p *helpPopup) view(m *Model) string {
 	w := min(popWidth(m), 84)
 	colW := (w - 4) / 2
 	k := func(key, desc string) string { return fit(sOrange.Render(key), 11) + desc }
+	finder := "^p " + leader + leader
+	if leaderPress == "," {
+		finder = "^p"
+	}
 	col1 := []string{
 		sSection.Render("Motions"),
 		k("j k", "down / up"),
@@ -480,7 +484,7 @@ func (p *helpPopup) view(m *Model) string {
 		k("l enter", "open PR pane"),
 		k("+", "PR pane full width / back"),
 		k("h esc q", "back to inbox"),
-		k("^p "+leader+leader, "find a PR, or paste a link"),
+		k(finder, "find a PR, or paste a link"),
 		k("o", "open in GitHub (the check, on one)"),
 		k("yy yu", "copy Slack line / PR URL"),
 		k("R "+leader+"r", "refresh"),

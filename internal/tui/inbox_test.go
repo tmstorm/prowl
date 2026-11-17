@@ -347,7 +347,8 @@ func TestSnoozedInSummary(t *testing.T) {
 }
 
 // The leader is configurable: with "," it opens the action menu, space
-// doesn't, hints show ",", and ",," still opens the options.
+// doesn't, hints show ",", and ",," still opens the options, so the help
+// doesn't offer it for the finder.
 func TestLeaderKey(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, func(c *config.Config) { c.Leader = "," })
 	a.keys("enter", "4")
@@ -359,6 +360,9 @@ func TestLeaderKey(t *testing.T) {
 	a.want("approve api#7?")
 	a.keys("esc", ",", ",")
 	a.want("Options")
+	a.keys("esc", "?")
+	a.want("find a PR")
+	a.wantNot("^p ,,")
 }
 
 // <leader>O with nothing selected says so instead of crashing.
