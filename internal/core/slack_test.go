@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -55,7 +58,7 @@ func (f *fakeSlack) client(t *testing.T) *slack.Client {
 		defer f.mu.Unlock()
 		switch r.URL.Path {
 		case "/auth.test":
-			fmt.Fprint(w, `{"ok":true,"user":"me","user_id":"U1"}`)
+			fmt.Fprint(w, `{"ok":true,"user":"me","user_id":"U1","team":"Acme","team_id":"T1"}`)
 		case "/search.messages":
 			fmt.Fprintf(w, `{"ok":true,"messages":{"paging":{"pages":1},"matches":[%s]}}`, f.matches)
 		case "/users.list":
@@ -290,5 +293,30 @@ func TestSlackActivity(t *testing.T) {
 	}
 	if strings.Join(got, ", ") != "reviews 6 true, random 2 false, quiet 0 false" || dms != 1 {
 		t.Fatalf("activity = %v, DMs %d", got, dms)
+	}
+}
+
+// With the Slack app installed, a share links to its message in the app,
+// which skips the browser.
+func TestSlackAppLink(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the Slack app is found through xdg-mime on Linux")
+	}
+	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
+	co, _ := newCore(t, &ghtest.GitHub{Others: []gh.PR{ghtest.PR("api", 7, "feat: shared", "alice")}})
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "xdg-mime"), []byte("#!/bin/sh\necho slack.desktop\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	cfg := config.Default()
+	cfg.SlackChannels = []string{"C1"}
+	co.SetConfig(cfg)
+	sl := &fakeSlack{}
+	co.UseSlack(sl.client(t))
+	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
+	it, _ := find(refresh(t, co), "o/api#7")
+	if want := "slack://channel?id=C1&message=" + ts + "&team=T1"; it.SlackLink != want {
+		t.Fatalf("link = %q, want %q", it.SlackLink, want)
 	}
 }

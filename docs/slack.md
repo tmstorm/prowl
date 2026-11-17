@@ -54,7 +54,7 @@ With `"reply"`, submitting a review from prowl posts its Slack line in the share
 
 - `<leader>y` posts the PR's Slack line in the thread of the message that shared it, after you confirm. For a PR nobody shared, it copies the line.
 - `<leader>Y` sends the line to the PR's author in a DM, after you confirm. If prowl doesn't know the author's Slack user yet, Slack names opens on them first.
-- `<leader>O` opens the message that shared the PR. In the PR pane, the reason ("shared in #reviews by bob") links to it too: click it, or ctrl-click it in terminals that open links.
+- `<leader>O` opens the message that shared the PR. In the PR pane, the reason ("shared in #reviews by bob") links to it too: click it, or ctrl-click it in terminals that open links. With the Slack desktop app installed, the message opens there; without it, in your browser. On Linux, if Slack only flashes its taskbar icon, remove `-s` from the `Exec=` line of its `slack.desktop` entry: Slack ignores links it's handed with that flag.
 - `yy` copies the line and `yu` copies the PR's link, as before.
 
 A line posted from prowl mentions an author you matched in Slack names. A copied line names them by their Slack display name.

@@ -36,6 +36,19 @@ func Notify(title, body string, timeout time.Duration) {
 	}
 }
 
+// SlackApp reports whether the Slack desktop app is installed to open
+// slack:// links, so a message can open there instead of in the browser.
+func SlackApp() bool {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", "-Ra", "Slack").Run() == nil
+	case "windows":
+		return exec.Command("reg", "query", `HKCR\slack`).Run() == nil
+	}
+	out, err := exec.Command("xdg-mime", "query", "default", "x-scheme-handler/slack").Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
 // Open opens a URL in the default browser.
 func Open(url string) error {
 	switch runtime.GOOS {

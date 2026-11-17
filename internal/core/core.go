@@ -55,6 +55,8 @@ type Core struct {
 	slackMe    string            // your Slack user ID, once known; set under mu by a sync
 	slackUsers []slack.User      // the workspace's people, read once
 	slackWho   string            // who you are signed in as, e.g. "sam in Acme"
+	slackTeam  string            // your Slack workspace ID
+	slackApp   bool              // the Slack app opens slack:// links
 	activity   []ChannelActivity // your channels and their PR links, read once
 	dmLinks    int               // PR links that reached you in DMs, with activity
 

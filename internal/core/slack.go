@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -14,15 +15,30 @@ import (
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/inbox"
+	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/slack"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
 // UseSlack reads the PR links shared in Slack on each sync, as you.
 func (co *Core) UseSlack(c *slack.Client) {
+	app := platform.SlackApp()
 	co.mu.Lock()
 	defer co.mu.Unlock()
-	co.slack = c
+	co.slack, co.slackApp = c, app
+}
+
+// slackLink opens a share's message: in the Slack app when it's installed,
+// which goes straight there, else its permalink, which goes through the
+// browser. A reply in a thread opens the thread's first message.
+func (co *Core) slackLink(s store.SlackShare) string {
+	co.mu.Lock()
+	app, team := co.slackApp, co.slackTeam
+	co.mu.Unlock()
+	if !app || team == "" {
+		return s.Link
+	}
+	return "slack://channel?" + url.Values{"team": {team}, "id": {s.Channel}, "message": {cmp.Or(s.ThreadTS, s.TS)}}.Encode()
 }
 
 // SlackSignedIn says who you're signed in to Slack as, e.g. "sam in Acme",
@@ -57,7 +73,7 @@ func (co *Core) syncSlack(sl *slack.Client, cfg config.Config, kept []store.Slac
 			return nil, err
 		}
 		co.mu.Lock()
-		co.slackMe, co.slackWho = id.UserID, id.User+" in "+id.Team
+		co.slackMe, co.slackWho, co.slackTeam = id.UserID, id.User+" in "+id.Team, id.TeamID
 		co.mu.Unlock()
 		_, _ = co.loadSlackUsers(sl)
 	}
@@ -184,7 +200,7 @@ func (co *Core) withShares(in *gh.Inbox, cfg config.Config, newlyShared []gh.PR)
 	in.Shared, in.SlackLinks = map[string]gh.Share{}, map[string]string{}
 	for key, s := range shares {
 		in.Shared[key] = gh.Share{Channel: s.ChannelName, From: s.UserName, At: s.At}
-		in.SlackLinks[key] = s.Link
+		in.SlackLinks[key] = co.slackLink(s)
 	}
 	return shares
 }
@@ -375,7 +391,7 @@ func (co *Core) reactionsOnYours(sl *slack.Client, cfg config.Config, in *gh.Inb
 		key, ok := yours[strings.ToLower(s.PRKey)]
 		if _, seen := newest[key]; ok && !seen && watchedShare(cfg, s.Channel, s.ChannelName == "") {
 			newest[key] = s
-			in.SlackLinks[key] = s.Link
+			in.SlackLinks[key] = co.slackLink(s)
 		}
 	}
 	e := cfg.SlackReactions
