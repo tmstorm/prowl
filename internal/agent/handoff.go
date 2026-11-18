@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
@@ -29,7 +30,7 @@ var severityRank = map[string]int{"must-fix": 0, "should-fix": 1, "nit": 2}
 func Combine(runs []*store.Run, all bool) []store.Finding {
 	var out []store.Finding
 	for _, r := range runs {
-		if r.Status != "done" && r.Status != "posted" {
+		if !r.Finished() {
 			continue
 		}
 		earlier := len(out)
@@ -68,13 +69,9 @@ func FindingsMarkdown(runs []*store.Run, notes map[string][]store.LogEntry, key,
 		}
 	}
 	if at != nil {
-		head := at.HeadOid
-		if len(head) > 8 {
-			head = head[:8]
-		}
-		fmt.Fprintf(&b, "Reviewed at commit %s", head)
+		fmt.Fprintf(&b, "Reviewed at commit %s", gh.Short(at.HeadOid))
 		if !at.FinishedAt.IsZero() {
-			fmt.Fprintf(&b, " on %s", at.FinishedAt.Format("2006-01-02 15:04"))
+			fmt.Fprintf(&b, " on %s", day(at.FinishedAt))
 		}
 		b.WriteString(".")
 		if currentHead != "" && at.HeadOid != "" && currentHead != at.HeadOid {
