@@ -13,12 +13,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/tmstorm/prowl/docs"
-	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
-	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/platform"
-	"github.com/tmstorm/prowl/internal/slack"
 )
 
 type filter int
@@ -174,9 +171,8 @@ func applyConfig(cfg config.Config) {
 	colorRepos = cfg.ColorRepos
 	typeColors = cfg.TypeColors
 	playful = cfg.Playful
-	agentTitle = agent.Title(cfg.Agent.Main())
+	agentTitle = core.ReviewerTitle(cfg.Agent.Main())
 	reviewerOrder = cfg.Agent.Reviewers
-	botLogins = cfg.BotSet()
 	repoTrim = cfg.RepoPrefix
 }
 
@@ -1658,7 +1654,7 @@ func (m *Model) threadAction(key string) tea.Cmd {
 		return nil
 	}
 	d := m.current()
-	var t *gh.Thread
+	var t *core.Thread
 	if d != nil && m.focus == fDetail {
 		t = d.threadAtCursor()
 	}
@@ -1669,19 +1665,19 @@ func (m *Model) threadAction(key string) tea.Cmd {
 	co, key2, id := m.core, d.item.Key, t.ID
 	switch key {
 	case "r":
-		if t.IsResolved {
+		if t.Resolved {
 			m.info("already resolved")
 			return nil
 		}
-		t.IsResolved = true
+		t.Resolved = true
 		d.dirty = true
 		return func() tea.Msg { return threadDoneMsg{key2, "resolved thread", co.Resolve(id, true)} }
 	case "u":
-		if !t.IsResolved {
+		if !t.Resolved {
 			m.info("thread isn't resolved")
 			return nil
 		}
-		t.IsResolved = false
+		t.Resolved = false
 		d.dirty = true
 		return func() tea.Msg { return threadDoneMsg{key2, "unresolved thread", co.Resolve(id, false)} }
 	case "c":
@@ -1871,11 +1867,11 @@ func (m *Model) postSlack(it core.PR) tea.Cmd {
 // An author with no Slack user yet opens the Slack names to pick one.
 func (m *Model) dmAuthor(it core.PR) tea.Cmd {
 	login := it.Author
-	if !slack.IsUserID(m.cfg.SlackNames[login]) {
+	if !m.core.HasSlackUser(login) {
 		key := it.Key
 		cmd := m.matchSlackNames(namesProposedMsg{focus: login, then: func(m *Model) tea.Cmd {
 			i := slices.IndexFunc(m.items, func(it core.PR) bool { return it.Key == key })
-			if i < 0 || !slack.IsUserID(m.cfg.SlackNames[login]) {
+			if i < 0 || !m.core.HasSlackUser(login) {
 				return nil
 			}
 			return m.dmAuthor(m.items[i])

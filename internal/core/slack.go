@@ -466,7 +466,8 @@ func slackName(users []slack.User, id string) string {
 // ChannelActivity is a channel you're in and how many PR links of your orgs
 // were posted in it lately.
 type ChannelActivity struct {
-	slack.Channel
+	ID, Name    string
+	Private     bool
 	Links       int
 	Recommended bool // enough links to be worth watching
 }
@@ -516,7 +517,7 @@ func (co *Core) SlackActivity() ([]ChannelActivity, int, error) {
 	}
 	out := make([]ChannelActivity, 0, len(channels))
 	for _, ch := range channels {
-		out = append(out, ChannelActivity{Channel: ch, Links: links[ch.ID], Recommended: links[ch.ID] >= recommendLinks})
+		out = append(out, ChannelActivity{ID: ch.ID, Name: ch.Name, Private: ch.Private, Links: links[ch.ID], Recommended: links[ch.ID] >= recommendLinks})
 	}
 	slices.SortStableFunc(out, func(a, b ChannelActivity) int {
 		return cmp.Or(cmp.Compare(b.Links, a.Links), cmp.Compare(a.Name, b.Name))

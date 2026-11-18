@@ -7,8 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/core"
 )
 
 // ciLog is the end of a failed check's log, as gl loads it.
@@ -34,7 +33,7 @@ const summaryLines = 8
 // (required ones first), running ones a line each, the rest folded into one
 // line.
 func (d *detail) checksRows(a *rowAdder, w int, section func(string)) {
-	var failed, running, rest []gh.Check
+	var failed, running, rest []core.Check
 	for _, c := range d.det.Checks {
 		switch c.State {
 		case "FAIL":
@@ -48,7 +47,7 @@ func (d *detail) checksRows(a *rowAdder, w int, section func(string)) {
 	if len(d.det.Checks) == 0 {
 		return
 	}
-	slices.SortStableFunc(failed, func(x, y gh.Check) int {
+	slices.SortStableFunc(failed, func(x, y core.Check) int {
 		switch {
 		case x.Required == y.Required:
 			return 0
@@ -137,7 +136,7 @@ func (d *detail) checksRows(a *rowAdder, w int, section func(string)) {
 }
 
 // logRows shows a failed Actions check's log once gl has loaded it.
-func (d *detail) logRows(a *rowAdder, c gh.Check, w int) {
+func (d *detail) logRows(a *rowAdder, c core.Check, w int) {
 	if c.JobID == 0 {
 		return
 	}
@@ -161,11 +160,11 @@ func (d *detail) logRows(a *rowAdder, c gh.Check, w int) {
 	}
 }
 
-func lenLoc(an gh.Annotation) int { return len(fmt.Sprintf("%s:%d", an.Path, an.Line)) }
+func lenLoc(an core.Annotation) int { return len(fmt.Sprintf("%s:%d", an.Path, an.Line)) }
 
 // checkLine is a check's name, workflow, whether it is required, and how
 // long it ran or has been running.
-func checkLine(c gh.Check) string {
+func checkLine(c core.Check) string {
 	s := sBold.Render(c.Name)
 	if c.Workflow != "" && c.Workflow != c.Name {
 		s += sDim.Render(" · " + c.Workflow)
@@ -194,7 +193,7 @@ func span(d time.Duration) string {
 }
 
 // checkAtCursor is the check whose rows the overview cursor is on.
-func (d *detail) checkAtCursor() *gh.Check {
+func (d *detail) checkAtCursor() *core.Check {
 	v := &d.navs[tabOverview]
 	rows := d.rows[tabOverview]
 	if d.det == nil || v.cur >= len(rows) {

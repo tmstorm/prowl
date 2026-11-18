@@ -24,9 +24,15 @@ const authEvery = 30 * time.Minute
 // in.
 type Account struct {
 	Key, Title string
-	Missing    error      // why it can't be used, e.g. not installed
-	Auth       agent.Auth // as of the last check; Known is false before one
+	Missing    error // why it can't be used, e.g. not installed
+	Auth       Auth  // as of the last check; Known is false before one
 }
+
+// Auth is whether an account is logged in.
+type Auth = agent.Auth
+
+// Agents are the review agents prowl can run.
+func Agents() []string { return agent.Names() }
 
 // Accounts are GitHub, every agent prowl can log in to, and Slack, as of the
 // last CheckAuth.

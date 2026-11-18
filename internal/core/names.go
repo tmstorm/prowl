@@ -20,8 +20,8 @@ import (
 // NameMatch proposes the Slack user for a GitHub login.
 type NameMatch struct {
 	Login string
-	User  slack.User // zero when nothing matched
-	Why   string     // e.g. "same name"
+	User  SlackUser // zero when nothing matched
+	Why   string    // e.g. "same name"
 }
 
 // ProposeNames guesses the Slack user of everyone in your orgs, and every
@@ -29,7 +29,7 @@ type NameMatch struct {
 // least: the same email, the same name, a login that holds their Slack name
 // or handle, then whoever posts most of their PRs in Slack. A Slack user is
 // proposed for one login at most.
-func (co *Core) ProposeNames() ([]NameMatch, []slack.User, error) {
+func (co *Core) ProposeNames() ([]NameMatch, []SlackUser, error) {
 	co.mu.Lock()
 	sl, err := co.slackFor()
 	cfg, viewer, me := co.cfg, co.inbox.Viewer, co.slackMe
@@ -77,7 +77,30 @@ func (co *Core) ProposeNames() ([]NameMatch, []slack.User, error) {
 			posted[a][s.User]++
 		}
 	}
-	return matchNames(people, users, posted, viewer, me), users, nil
+	out := make([]SlackUser, 0, len(users))
+	for _, u := range users {
+		out = append(out, slackUserOf(u))
+	}
+	return matchNames(people, users, posted, viewer, me), out, nil
+}
+
+// SlackUser is a person in your Slack workspace.
+type SlackUser struct {
+	ID       string
+	Handle   string // e.g. "alice"
+	RealName string
+	Display  string // the display name, often empty
+}
+
+func slackUserOf(u slack.User) SlackUser {
+	return SlackUser{ID: u.ID, Handle: u.Handle, RealName: u.RealName, Display: u.Display}
+}
+
+// HasSlackUser reports whether slack_names maps login to a Slack user.
+func (co *Core) HasSlackUser(login string) bool {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	return slack.IsUserID(co.cfg.SlackNames[login])
 }
 
 // SlackConnected reports whether you're signed in to Slack.
@@ -136,7 +159,7 @@ func matchNames(people []gh.Person, users []slack.User, posted map[string]map[st
 				}
 			}
 			if len(hits) == 1 {
-				found[p.Login] = NameMatch{Login: p.Login, User: hits[0], Why: sig.why}
+				found[p.Login] = NameMatch{Login: p.Login, User: slackUserOf(hits[0]), Why: sig.why}
 				taken[hits[0].ID] = true
 			}
 		}

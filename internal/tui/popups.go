@@ -14,10 +14,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
-	"github.com/tmstorm/prowl/internal/gh"
 )
 
 func popBox(title string, body string, w int, color string) string {
@@ -43,7 +41,7 @@ type textPopup struct {
 	agent    string // popRefine: who revises
 	item     core.PR
 	sel      []diffLine
-	thread   *gh.Thread
+	thread   *core.Thread
 	replyRun int64 // popReply: the review run whose drafted reply this is, 0 for your own
 	ta       textarea.Model
 }
@@ -165,8 +163,8 @@ func (p *textPopup) view(m *Model) string {
 			line = p.thread.OriginalLine
 		}
 		title = fmt.Sprintf("Reply on %s:%d", p.thread.Path, line)
-		if n := len(p.thread.Comments.Nodes); n > 0 {
-			last := p.thread.Comments.Nodes[n-1]
+		if n := len(p.thread.Comments); n > 0 {
+			last := p.thread.Comments[n-1]
 			for _, l := range renderMarkdown(last.Body, w-6) {
 				ctx = append(ctx, sDim.Render("┃ ")+l)
 				if len(ctx) >= 6 {
@@ -742,7 +740,7 @@ type agentPicker struct {
 
 func newAgentPicker(m *Model, it core.PR) *agentPicker {
 	p := &agentPicker{item: it}
-	for _, n := range agent.Names() {
+	for _, n := range core.Agents() {
 		p.names = append(p.names, n)
 		p.errs = append(p.errs, m.core.CheckAgent(n))
 		if n == m.cfg.Agent.Main() {
@@ -773,7 +771,7 @@ func (p *agentPicker) view(m *Model) string {
 	w := min(popWidth(m), 64)
 	var rows []string
 	for i, n := range p.names {
-		row := " " + fit(sBold.Render(agent.Title(n)), 10) + sDim.Render(n)
+		row := " " + fit(sBold.Render(core.ReviewerTitle(n)), 10) + sDim.Render(n)
 		if n == m.cfg.Agent.Main() {
 			row += sDim.Render(" · default")
 		}

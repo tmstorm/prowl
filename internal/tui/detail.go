@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/tmstorm/prowl/internal/core"
-	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/platform"
 )
 
@@ -23,9 +22,6 @@ const (
 )
 
 var tabNames = []string{"Overview", "Diff", "AI review"}
-
-// botLogins are the bots setting: accounts dimmed and folded in activity.
-var botLogins map[string]bool
 
 // reviewerOrder is the configured reviewers, the order agents' sections are
 // shown in.
@@ -74,7 +70,7 @@ type detail struct {
 	tab  int
 	w, h int // text width and body height
 
-	det        *gh.Detail
+	det        *core.Detail
 	detErr     error
 	loadingDet bool
 	stale      bool // det is older than what GitHub has; refetch when shown
@@ -109,7 +105,7 @@ type detail struct {
 
 type detailMsg struct {
 	key string
-	det *gh.Detail
+	det *core.Detail
 	err error
 }
 
@@ -360,7 +356,7 @@ func (d *detail) handleDetail(msg detailMsg) {
 	if msg.det != nil {
 		d.item.Body = msg.det.Body
 		for _, f := range msg.det.Files {
-			d.viewed[f.Path] = f.ViewerViewedState
+			d.viewed[f.Path] = f.Viewed
 		}
 	}
 	d.dirty = true
@@ -423,8 +419,8 @@ func (d *detail) fileFolded(path string) bool {
 }
 
 // read reports whether something created at t has already been seen.
-func (d *detail) read(t time.Time, author *gh.Actor) bool {
-	if author != nil && author.Login == d.me {
+func (d *detail) read(t time.Time, author core.Actor) bool {
+	if author.Login != "" && author.Login == d.me {
 		return true
 	}
 	seen := d.seen()
@@ -523,12 +519,8 @@ func (a *rowAdder) begin(block, thread string, folded bool) {
 
 func (a *rowAdder) end() { a.block, a.thread, a.head = "", "", false }
 
-func author(a *gh.Actor) string {
-	if a == nil {
-		return "ghost"
-	}
-	return a.Login
-}
+// short is a commit ID cut to seven characters, as GitHub shows it.
+func short(oid string) string { return oid[:min(len(oid), 7)] }
 
 func firstLine(s string, w int) string {
 	s = strings.TrimSpace(htmlComment.ReplaceAllString(s, ""))
@@ -545,7 +537,7 @@ func foldGlyph(folded bool) string {
 	return sTitle.Render("▾ ")
 }
 
-func (d *detail) newMark(t time.Time, a *gh.Actor) string {
+func (d *detail) newMark(t time.Time, a core.Actor) string {
 	if d.read(t, a) {
 		return ""
 	}
@@ -563,7 +555,7 @@ func (d *detail) summaryRows(a *rowAdder, w int) {
 	default:
 		folded := d.folded("summary", false)
 		a.begin("summary", "", folded)
-		head := " " + foldGlyph(folded) + sSection.Render("AI summary") + sDim.Render(" · "+modelName(d.summary.Model)+" · for "+gh.Short(d.summary.HeadOid))
+		head := " " + foldGlyph(folded) + sSection.Render("AI summary") + sDim.Render(" · "+modelName(d.summary.Model)+" · for "+short(d.summary.HeadOid))
 		if d.summary.HeadOid != d.item.HeadOid {
 			head += sYellow.Render(" · new commits since, " + leader + "ca to refresh")
 		}
@@ -637,10 +629,10 @@ func (d *detail) buildOverview() []brow {
 		return a.rows
 	}
 	section("Reviewers")
-	latest := map[string]gh.Review{}
+	latest := map[string]core.PRReview{}
 	var order []string
 	for _, r := range d.det.Reviews {
-		n := author(r.Author)
+		n := r.Author.Login
 		prev, ok := latest[n]
 		if !ok {
 			order = append(order, n)
@@ -686,7 +678,7 @@ func (d *detail) buildOverview() []brow {
 
 	unresolved := 0
 	for _, t := range d.det.Threads {
-		if !t.IsResolved {
+		if !t.Resolved {
 			unresolved++
 		}
 	}
@@ -725,21 +717,21 @@ func fileState(s string) string {
 
 // threadRows renders a review thread. In the overview it includes the code it
 // refers to; in the diff the code is already on screen.
-func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
-	if len(t.Comments.Nodes) == 0 {
+func (d *detail) threadRows(t *core.Thread, w int, withCode bool) []brow {
+	if len(t.Comments) == 0 {
 		return nil
 	}
 	id := "thread:" + t.ID
 	allRead := true
-	for _, c := range t.Comments.Nodes {
+	for _, c := range t.Comments {
 		if !d.read(c.CreatedAt, c.Author) {
 			allRead = false
 		}
 	}
-	f := d.folded(id, t.IsResolved || allRead)
+	f := d.folded(id, t.Resolved || allRead)
 	bar := sYellow.Render("┃ ")
 	state := sYellow.Render("unresolved")
-	if t.IsResolved {
+	if t.Resolved {
 		bar, state = sDim.Render("┃ "), sDim.Render("resolved")
 	}
 	ind := "  "
@@ -756,22 +748,22 @@ func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
 	if withCode {
 		loc = sBlue.Render(fmt.Sprintf("%s:%d", t.Path, line)) + " "
 	}
-	if t.IsOutdated {
+	if t.Outdated {
 		state += sDim.Render(" · outdated")
 	}
-	last := t.Comments.Nodes[len(t.Comments.Nodes)-1]
+	last := t.Comments[len(t.Comments)-1]
 	newest := ""
-	for _, c := range t.Comments.Nodes {
+	for _, c := range t.Comments {
 		if m := d.newMark(c.CreatedAt, c.Author); m != "" {
 			newest = m
 		}
 	}
-	head := ind + foldGlyph(f) + loc + state + sDim.Render(" · "+count(len(t.Comments.Nodes), "comment")) + newest
+	head := ind + foldGlyph(f) + loc + state + sDim.Render(" · "+count(len(t.Comments), "comment")) + newest
 	if r, _ := d.draftReply(t.ID); r != nil && !r.Excluded {
 		head += sYellow.Render(" · ↩ draft reply")
 	}
 	if f {
-		head += sDim.Render("  " + author(last.Author) + ": " + firstLine(last.Body, w))
+		head += sDim.Render("  " + last.Author.Login + ": " + firstLine(last.Body, w))
 	}
 	a.add(head)
 	if f {
@@ -779,8 +771,8 @@ func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
 	}
 	inner := ind + "  " + bar
 	cw := w - lipgloss.Width(inner)
-	if withCode && t.Comments.Nodes[0].DiffHunk != "" {
-		hunk := parseDiff("diff --git a/x b/" + t.Path + "\n" + t.Comments.Nodes[0].DiffHunk)
+	if withCode && t.Comments[0].DiffHunk != "" {
+		hunk := parseDiff("diff --git a/x b/" + t.Path + "\n" + t.Comments[0].DiffHunk)
 		var code []diffLine
 		for _, l := range hunk {
 			if l.commentable() {
@@ -794,8 +786,8 @@ func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
 			a.add(inner + renderDiffLine(l, cw))
 		}
 	}
-	for _, c := range t.Comments.Nodes {
-		a.add(inner + sBold.Render(author(c.Author)) + sDim.Render(" "+agoText(c.CreatedAt)) + d.newMark(c.CreatedAt, c.Author))
+	for _, c := range t.Comments {
+		a.add(inner + sBold.Render(c.Author.Login) + sDim.Render(" "+agoText(c.CreatedAt)) + d.newMark(c.CreatedAt, c.Author))
 		for _, l := range renderMarkdown(c.Body, cw-2) {
 			a.add(inner + "  " + l)
 		}
@@ -1232,7 +1224,7 @@ func (d *detail) docsTopic() string {
 }
 
 // threadAtCursor returns the review thread under the cursor, if any.
-func (d *detail) threadAtCursor() *gh.Thread {
+func (d *detail) threadAtCursor() *core.Thread {
 	if d.det == nil || d.tab == tabReview {
 		return nil
 	}

@@ -843,23 +843,6 @@ func (co *Core) item(key string) (inbox.Item, bool) {
 	return co.inbox.Items[i], true
 }
 
-// Detail fetches what a PR page shows: the description, activity, review
-// threads and changed files.
-func (co *Core) Detail(key string) (*gh.Detail, error) {
-	if l, err := co.local(key); err == nil {
-		return localDetail(l), nil
-	}
-	repo, n, err := parseKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("detail: %w", err)
-	}
-	det, err := co.gh.FetchDetail(repo, n)
-	if err != nil {
-		return nil, fmt.Errorf("detail %s: %w", key, err)
-	}
-	return det, nil
-}
-
 // Diff fetches a PR's diff, or with sinceReview only what changed since
 // your last review.
 func (co *Core) Diff(key string, sinceReview bool) (string, error) {

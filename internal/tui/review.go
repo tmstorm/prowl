@@ -10,9 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/core"
-	"github.com/tmstorm/prowl/internal/gh"
 )
 
 func (d *detail) buildReview() []brow {
@@ -96,7 +94,7 @@ func (d *detail) agentSection(run *core.Review, cur []*core.Review) []brow {
 		case "draft":
 			head += sYellow.Render(" · suggests a draft")
 		}
-		head += sDim.Render(" · at " + gh.Short(run.HeadOid) + " · " + ranText(run))
+		head += sDim.Render(" · at " + short(run.HeadOid) + " · " + ranText(run))
 		if run.Origin == "local" {
 			head += sDim.Render(" · in your checkout, before the PR")
 		}
@@ -151,7 +149,7 @@ func (d *detail) agentSection(run *core.Review, cur []*core.Review) []brow {
 				case "you":
 					who = sPink.Render("you")
 				case "agent":
-					who = sTitle.Render(strings.ToLower(agent.Title(run.Agent)))
+					who = sTitle.Render(strings.ToLower(core.ReviewerTitle(run.Agent)))
 				}
 				for i, l := range wrap(e.Text, d.w-14) {
 					if i == 0 {
@@ -252,7 +250,7 @@ func (d *detail) historyRows(current *core.Review) []brow {
 				excluded++
 			}
 		}
-		line := "    " + foldGlyph(rf) + sDim.Render(ranText(r)+" · at "+gh.Short(r.HeadOid)+" · ") + runState(r)
+		line := "    " + foldGlyph(rf) + sDim.Render(ranText(r)+" · at "+short(r.HeadOid)+" · ") + runState(r)
 		if r.Model != "" {
 			line += sDim.Render(" · " + modelName(r.Model))
 		}
@@ -355,7 +353,7 @@ func (d *detail) reviewStatus(m *Model) string {
 	if len(cur) == 0 {
 		var names []string
 		for _, n := range m.cfg.Agent.Reviewers {
-			names = append(names, agent.Title(n))
+			names = append(names, core.ReviewerTitle(n))
 		}
 		return sDim.Render("idle · " + leader + "cc runs " + strings.Join(names, " and "))
 	}
@@ -413,7 +411,7 @@ func (d *detail) replyRows(a *rowAdder, run *core.Review) {
 		}
 		head, body := r.To+" wrote:", r.Last
 		if last != nil {
-			head, body = author(last.Author)+", "+agoText(last.CreatedAt)+":", last.Body
+			head, body = last.Author.Login+", "+agoText(last.CreatedAt)+":", last.Body
 		}
 		add("      " + sPink.Render(head))
 		quote := renderMarkdown(body, d.w-10)
@@ -440,16 +438,16 @@ const quotedLines = 12
 // threadEnds are the first comment of a draft reply's thread, when you
 // wrote it, and its latest comment, from the PR as last loaded; nil when
 // the thread isn't loaded.
-func (d *detail) threadEnds(r core.ThreadReply) (opener, last *gh.Comment) {
+func (d *detail) threadEnds(r core.ThreadReply) (opener, last *core.Comment) {
 	if d.det == nil {
 		return nil, nil
 	}
 	for _, t := range d.det.Threads {
-		if t.ID != r.ThreadID || len(t.Comments.Nodes) == 0 {
+		if t.ID != r.ThreadID || len(t.Comments) == 0 {
 			continue
 		}
-		cms := t.Comments.Nodes
-		if author(cms[0].Author) == d.me && len(cms) > 1 {
+		cms := t.Comments
+		if cms[0].Author.Login == d.me && len(cms) > 1 {
 			opener = &cms[0]
 		}
 		return opener, &cms[len(cms)-1]
@@ -473,7 +471,7 @@ func (d *detail) draftReply(threadID string) (*core.ThreadReply, int64) {
 // replyPopup opens the reply box for a thread, filled with the agent's
 // draft when there is one.
 func (m *Model) replyPopup(d *detail, threadID string) tea.Cmd {
-	var t *gh.Thread
+	var t *core.Thread
 	if d.det != nil {
 		for i := range d.det.Threads {
 			if d.det.Threads[i].ID == threadID {

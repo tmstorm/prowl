@@ -14,7 +14,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tmstorm/prowl/docs"
-	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 )
@@ -274,8 +273,8 @@ func optionTopic(key string) string {
 
 // modelOption is the model setting for one reviewer, listed per agent.
 func modelOption(name string) option {
-	return option{section: "Review agent", title: agent.Title(name) + " model", key: "models." + name, kind: optChoice,
-		help:      "The models " + agent.Title(name) + " itself offers. Default follows its own setting.",
+	return option{section: "Review agent", title: core.ReviewerTitle(name) + " model", key: "models." + name, kind: optChoice,
+		help:      "The models " + core.ReviewerTitle(name) + " itself offers. Default follows its own setting.",
 		choicesFn: func(c *config.Config) []string { return core.Models(*c, name) },
 		get:       func(c *config.Config) string { return c.Agent.Model(name) },
 		set:       func(c *config.Config, v string) error { c.Agent.SetModel(name, v); return nil }}
@@ -283,7 +282,7 @@ func modelOption(name string) option {
 
 // summaryModelOption is the AI summary model for one reviewer.
 func summaryModelOption(name string) option {
-	return option{section: "Review agent", title: agent.Title(name) + " summary model", key: "summary_models." + name, kind: optChoice,
+	return option{section: "Review agent", title: core.ReviewerTitle(name) + " summary model", key: "summary_models." + name, kind: optChoice,
 		help:      "Model for AI summaries (<leader>ca). Default is the review model; a small, fast one is plenty.",
 		choicesFn: func(c *config.Config) []string { return core.Models(*c, name) },
 		get:       func(c *config.Config) string { return c.Agent.SummaryModels[name] },
@@ -571,7 +570,7 @@ func (p *optionsPopup) value(m *Model, o option, sel bool) string {
 	case optPick:
 		var names []string
 		for _, n := range splitList(val) {
-			names = append(names, agent.Title(n))
+			names = append(names, core.ReviewerTitle(n))
 		}
 		return "  " + strings.Join(names, sDim.Render(" + ")) + sDim.Render(" ✎")
 	case optEditor:
@@ -677,7 +676,7 @@ func newReviewersPopup(m *Model, back *optionsPopup, o option) *reviewersPopup {
 		p.names = append(p.names, n)
 		p.on[n] = true
 	}
-	for _, n := range agent.Names() {
+	for _, n := range core.Agents() {
 		if !p.on[n] {
 			p.names = append(p.names, n)
 		}
@@ -735,7 +734,7 @@ func (p *reviewersPopup) view(m *Model) string {
 		if p.on[n] {
 			box = sGreen.Render("[x]")
 		}
-		row := " " + box + " " + fit(sBold.Render(agent.Title(n)), 9) + sDim.Render(n)
+		row := " " + box + " " + fit(sBold.Render(core.ReviewerTitle(n)), 9) + sDim.Render(n)
 		if n == main {
 			row += sTitle.Render("  main")
 		}
