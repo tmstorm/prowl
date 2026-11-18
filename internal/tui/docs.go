@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	xansi "github.com/charmbracelet/x/ansi"
 
@@ -25,7 +24,7 @@ type docsPopup struct {
 	yanking        bool       // y pressed once: a second y copies the line
 	back           []docsSpot // where links were followed from, for backspace
 	searching      bool
-	input          textinput.Model
+	input          filterInput
 	hits           []docsSpot
 	hit            int
 }
@@ -46,12 +45,7 @@ func linkLabel(md string) string {
 }
 
 func newDocsPopup() *docsPopup {
-	p := &docsPopup{pages: core.Docs()}
-	p.input = textinput.New()
-	p.input.Prompt = sTitle.Render(" ") + " "
-	p.input.Placeholder = "search the docs"
-	p.input.Width = 50
-	return p
+	return &docsPopup{pages: core.Docs(), input: newFilterInput("search the docs", 50)}
 }
 
 // openDocs opens the docs at a topic's tag. A tag with several places lists
@@ -160,13 +154,11 @@ func (p *docsPopup) yank(m *Model) {
 	}
 }
 
-func (p *docsPopup) forward(_ *Model, msg tea.Msg) tea.Cmd {
+func (p *docsPopup) forward(m *Model, msg tea.Msg) tea.Cmd {
 	if !p.searching {
 		return nil
 	}
-	var cmd tea.Cmd
-	p.input, cmd = p.input.Update(msg)
-	return cmd
+	return p.input.update(msg, func() { p.search(m) })
 }
 
 func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
@@ -307,13 +299,7 @@ func (p *docsPopup) updateSearch(m *Model, k tea.KeyMsg) tea.Cmd {
 			p.show(p.hits[p.hit].page, p.hits[p.hit].line)
 		}
 	default:
-		before := p.input.Value()
-		var cmd tea.Cmd
-		p.input, cmd = p.input.Update(k)
-		if p.input.Value() != before {
-			p.search(m)
-		}
-		return cmd
+		return p.forward(m, k)
 	}
 	return nil
 }

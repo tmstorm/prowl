@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -667,6 +668,15 @@ func TestDocsViewer(t *testing.T) {
 	a.want("prowl docs · The inbox")
 	a.keys("esc")
 	a.wantNot("prowl docs")
+}
+
+// A search pasted from the clipboard with ctrl+v finds lines as typing does.
+func TestDocsSearchPaste(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Bins: map[string]string{"wl-paste": "printf Snoozing"}})
+	a.keys("?", "d", "/")
+	a.send(tea.KeyMsg{Type: tea.KeyCtrlV})
+	a.keys("enter")
+	a.want("▌Snoozing")
 }
 
 // :help opens the docs at a tag's heading or table row, completing the tag

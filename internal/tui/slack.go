@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tmstorm/prowl/internal/config"
@@ -34,7 +33,7 @@ type namesPopup struct {
 	lineRow []int // per line: index into rows, or -1 for a heading
 	users   []slack.User
 	picking bool // choosing a Slack user for the current row
-	input   textinput.Model
+	input   filterInput
 	results []slack.User
 	pick    nav
 	back    *optionsPopup        // the options to return to, if they were open
@@ -121,10 +120,7 @@ func newNamesPopup(m *Model, msg namesProposedMsg) *namesPopup {
 	}
 	p.skip = func(i int) bool { return p.lineRow[i] < 0 }
 	p.scrolloff = 1
-	p.input = textinput.New()
-	p.input.Prompt = sTitle.Render(" ") + " "
-	p.input.Placeholder = "Slack name"
-	p.input.Width = 40
+	p.input = newFilterInput("Slack name", 40)
 	return p
 }
 
@@ -207,10 +203,6 @@ func (p *namesPopup) updatePick(m *Model, k tea.KeyMsg) tea.Cmd {
 	case "esc":
 		p.picking = false
 		p.input.Blur()
-	case "down", "ctrl+n", "ctrl+j":
-		p.pick.move(1)
-	case "up", "ctrl+p", "ctrl+k":
-		p.pick.move(-1)
 	case "enter":
 		p.picking = false
 		p.input.Blur()
@@ -219,7 +211,7 @@ func (p *namesPopup) updatePick(m *Model, k tea.KeyMsg) tea.Cmd {
 			r.user, r.why, r.accept, r.clear = p.results[p.pick.cur], "picked", true, false
 		}
 	default:
-		return p.forward(m, k)
+		return p.input.key(&p.pick, k, p.filter)
 	}
 	return nil
 }
@@ -228,13 +220,7 @@ func (p *namesPopup) forward(_ *Model, msg tea.Msg) tea.Cmd {
 	if !p.picking {
 		return nil
 	}
-	before := p.input.Value()
-	var cmd tea.Cmd
-	p.input, cmd = p.input.Update(msg)
-	if p.input.Value() != before {
-		p.filter()
-	}
-	return cmd
+	return p.input.update(msg, p.filter)
 }
 
 func (p *namesPopup) filter() {
@@ -370,7 +356,7 @@ type channelsPopup struct {
 	who     string // who you're signed in as
 	on      map[string]bool
 	dms     bool
-	input   textinput.Model
+	input   filterInput
 	results []int // indexes into all; the DM row comes first and isn't one
 	nav           // row 0 is the DM row
 	back    *optionsPopup
@@ -403,11 +389,7 @@ func (m *Model) channelsRead(msg channelsMsg) {
 	for _, id := range m.cfg.SlackChannels {
 		p.on[id] = true
 	}
-	p.input = textinput.New()
-	p.input.Prompt = sTitle.Render(" ") + " "
-	p.input.Placeholder = "channel"
-	p.input.Width = 40
-	p.input.Focus()
+	p.input = newFilterInput("channel", 40)
 	p.filter()
 	m.popup = p
 }
@@ -424,22 +406,10 @@ func (p *channelsPopup) filter() {
 	}
 }
 
-func (p *channelsPopup) forward(_ *Model, msg tea.Msg) tea.Cmd {
-	before := p.input.Value()
-	var cmd tea.Cmd
-	p.input, cmd = p.input.Update(msg)
-	if p.input.Value() != before {
-		p.filter()
-	}
-	return cmd
-}
+func (p *channelsPopup) forward(_ *Model, msg tea.Msg) tea.Cmd { return p.input.update(msg, p.filter) }
 
 func (p *channelsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
-	case "down", "ctrl+n", "ctrl+j":
-		p.move(1)
-	case "up", "ctrl+p", "ctrl+k":
-		p.move(-1)
 	case " ", "tab":
 		if p.cur == 0 {
 			p.dms = !p.dms
@@ -455,7 +425,7 @@ func (p *channelsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 			m.popup = p.back
 		}
 	default:
-		return p.forward(m, k)
+		return p.input.key(&p.nav, k, p.filter)
 	}
 	return nil
 }

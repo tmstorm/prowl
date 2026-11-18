@@ -238,7 +238,7 @@ func (p *snoozePopup) view(m *Model) string {
 // ---- fuzzy finder (telescope-ish)
 
 type finder struct {
-	input   textinput.Model
+	input   filterInput
 	results []int  // indexes into m.items
 	remote  *prRef // a pasted link or ref to a PR not in the inbox
 	nav            // with remote set, row 0 is the "open from GitHub" row
@@ -294,28 +294,15 @@ func (f *finder) offset() int {
 }
 
 func newFinder(m *Model) *finder {
-	ti := textinput.New()
-	ti.Prompt = sTitle.Render(" ") + " "
-	ti.Placeholder = "repo, title, author, number, or paste a PR link"
-	ti.Width = popWidth(m) - 8
-	ti.Focus()
-	f := &finder{input: ti}
+	f := &finder{input: newFilterInput("repo, title, author, number, or paste a PR link", popWidth(m)-8)}
 	f.filter(m)
 	return f
 }
 
 func (f *finder) mode() mode { return modeInsert }
 
-// forward updates the query, searching again when it changed: typed, pasted,
-// or read from the clipboard (ctrl+v), which arrives as its own message.
 func (f *finder) forward(m *Model, msg tea.Msg) tea.Cmd {
-	before := f.input.Value()
-	var cmd tea.Cmd
-	f.input, cmd = f.input.Update(msg)
-	if f.input.Value() != before {
-		f.filter(m)
-	}
-	return cmd
+	return f.input.update(msg, func() { f.filter(m) })
 }
 
 // finderHit is a finder result and its fuzzy score.
@@ -372,16 +359,48 @@ func fuzzy(q, s string) (int, bool) {
 	return score, qi == len(qr)
 }
 
+// filterInput is a picker's query: what you type filters its list, and the
+// arrow keys or ctrl+n/p/j/k move it.
+type filterInput struct{ textinput.Model }
+
+func newFilterInput(placeholder string, width int) filterInput {
+	ti := textinput.New()
+	ti.Prompt = sTitle.Render(" ") + " "
+	ti.Placeholder = placeholder
+	ti.Width = width
+	ti.Focus()
+	return filterInput{ti}
+}
+
+// key moves v, or types k into the query.
+func (f *filterInput) key(v *nav, k tea.KeyMsg, filter func()) tea.Cmd {
+	switch k.String() {
+	case "down", "ctrl+n", "ctrl+j":
+		v.move(1)
+		return nil
+	case "up", "ctrl+p", "ctrl+k":
+		v.move(-1)
+		return nil
+	}
+	return f.update(k, filter)
+}
+
+// update runs filter when msg changed the query: typed, pasted, or read
+// from the clipboard (ctrl+v), which arrives as its own message.
+func (f *filterInput) update(msg tea.Msg, filter func()) tea.Cmd {
+	before := f.Value()
+	var cmd tea.Cmd
+	f.Model, cmd = f.Model.Update(msg)
+	if f.Value() != before {
+		filter()
+	}
+	return cmd
+}
+
 func (f *finder) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
 	case "esc", "ctrl+c":
 		m.popup = nil
-		return nil
-	case "down", "ctrl+n", "ctrl+j":
-		f.move(1)
-		return nil
-	case "up", "ctrl+p", "ctrl+k":
-		f.move(-1)
 		return nil
 	case "enter":
 		m.popup = nil
@@ -407,7 +426,7 @@ func (f *finder) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		m.focus = fList
 		return m.schedulePreview()
 	}
-	return f.forward(m, k)
+	return f.input.key(&f.nav, k, func() { f.filter(m) })
 }
 
 func (f *finder) view(m *Model) string {
@@ -542,7 +561,7 @@ func (p *helpPopup) view(m *Model) string {
 
 type repoPicker struct {
 	kind    string // "repo" or "type"
-	input   textinput.Model
+	input   filterInput
 	all     []repoCount
 	results []repoCount
 	nav
@@ -555,11 +574,6 @@ type repoCount struct {
 }
 
 func newRepoPicker(m *Model) *repoPicker {
-	ti := textinput.New()
-	ti.Prompt = sTitle.Render(" ") + " "
-	ti.Placeholder = "repo"
-	ti.Width = 50
-	ti.Focus()
 	counts := map[string]*repoCount{}
 	for _, it := range m.items {
 		nwo := it.PR.Repository.NameWithOwner
@@ -581,7 +595,7 @@ func newRepoPicker(m *Model) *repoPicker {
 	for _, c := range counts {
 		names[c.name]++
 	}
-	p := &repoPicker{kind: "repo", input: ti}
+	p := &repoPicker{kind: "repo", input: newFilterInput("repo", 50)}
 	for _, c := range counts {
 		if names[c.name] > 1 {
 			c.name = c.nwo
@@ -604,15 +618,7 @@ func newRepoPicker(m *Model) *repoPicker {
 
 func (p *repoPicker) mode() mode { return modeInsert }
 
-func (p *repoPicker) forward(_ *Model, msg tea.Msg) tea.Cmd {
-	before := p.input.Value()
-	var cmd tea.Cmd
-	p.input, cmd = p.input.Update(msg)
-	if p.input.Value() != before {
-		p.filter()
-	}
-	return cmd
-}
+func (p *repoPicker) forward(_ *Model, msg tea.Msg) tea.Cmd { return p.input.update(msg, p.filter) }
 
 func (p *repoPicker) filter() {
 	q := strings.ToLower(p.input.Value())
@@ -629,12 +635,6 @@ func (p *repoPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
 	case "esc", "ctrl+c":
 		m.popup = nil
-		return nil
-	case "down", "ctrl+n", "ctrl+j":
-		p.move(1)
-		return nil
-	case "up", "ctrl+p", "ctrl+k":
-		p.move(-1)
 		return nil
 	case "enter":
 		m.popup = nil
@@ -663,7 +663,7 @@ func (p *repoPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		}
 		return tea.Batch(m.schedulePreview(), fetch)
 	}
-	return p.forward(m, k)
+	return p.input.key(&p.nav, k, p.filter)
 }
 
 func (p *repoPicker) view(m *Model) string {
@@ -704,11 +704,6 @@ func (p *repoPicker) view(m *Model) string {
 
 // newTypePicker lists the conventional commit types in the inbox, in sort order.
 func newTypePicker(m *Model) *repoPicker {
-	ti := textinput.New()
-	ti.Prompt = sTitle.Render(" ") + " "
-	ti.Placeholder = "type"
-	ti.Width = 50
-	ti.Focus()
 	counts := map[string]*repoCount{}
 	for _, it := range m.items {
 		n := titleType(it.PR.Title)
@@ -721,7 +716,7 @@ func newTypePicker(m *Model) *repoPicker {
 		}
 	}
 	order := m.cfg.Types()
-	p := &repoPicker{kind: "type", input: ti}
+	p := &repoPicker{kind: "type", input: newFilterInput("type", 50)}
 	for _, c := range counts {
 		p.all = append(p.all, *c)
 	}
@@ -872,7 +867,7 @@ func (p *profilePicker) list(*Model) (*nav, int) {
 type reviewerPicker struct {
 	item    inbox.Item
 	all     []reviewerRow
-	input   textinput.Model
+	input   filterInput
 	results []int // indexes into all
 	nav
 }
@@ -951,11 +946,7 @@ func newReviewerPicker(m *Model, it inbox.Item, candidates, suggested []gh.Candi
 			}
 		}
 	}
-	p.input = textinput.New()
-	p.input.Prompt = sTitle.Render(" ") + " "
-	p.input.Placeholder = "name, login or org/team"
-	p.input.Width = 40
-	p.input.Focus()
+	p.input = newFilterInput("name, login or org/team", 40)
 	p.filter()
 	return p
 }
@@ -972,22 +963,10 @@ func (p *reviewerPicker) filter() {
 	}
 }
 
-func (p *reviewerPicker) forward(_ *Model, msg tea.Msg) tea.Cmd {
-	before := p.input.Value()
-	var cmd tea.Cmd
-	p.input, cmd = p.input.Update(msg)
-	if p.input.Value() != before {
-		p.filter()
-	}
-	return cmd
-}
+func (p *reviewerPicker) forward(_ *Model, msg tea.Msg) tea.Cmd { return p.input.update(msg, p.filter) }
 
 func (p *reviewerPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
-	case "down", "ctrl+n", "ctrl+j":
-		p.move(1)
-	case "up", "ctrl+p", "ctrl+k":
-		p.move(-1)
 	case " ", "tab":
 		if p.cur < len(p.results) {
 			r := &p.all[p.results[p.cur]]
@@ -998,7 +977,7 @@ func (p *reviewerPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	case "esc", "ctrl+c":
 		m.popup = nil
 	default:
-		return p.forward(m, k)
+		return p.input.key(&p.nav, k, p.filter)
 	}
 	return nil
 }
