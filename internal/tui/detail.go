@@ -1716,7 +1716,7 @@ func (d *detail) docsTopic() string {
 			return "Checks"
 		}
 	}
-	return []string{"Overview", "The diff", "The review tab"}[d.tab]
+	return []string{"Overview", "The diff", "Findings"}[d.tab]
 }
 
 // threadAtCursor returns the review thread under the cursor, if any.

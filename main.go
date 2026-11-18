@@ -36,53 +36,29 @@ import (
 const usage = `prowl — PR review queue
 
 usage:
-  prowl            open the TUI
-  prowl watch      poll GitHub and send desktop notifications (run as a user service)
-  prowl list       print what needs you (for scripts / status bars)
+  prowl                 open the TUI
+  prowl watch           send desktop notifications as PRs need you
   prowl service install | uninstall
-                   run prowl watch at login, in the background: a systemd
-                   user service on Linux, a launchd agent on macOS, a
-                   startup entry on Windows
+                        run prowl watch at login
+  prowl list            print what needs you
   prowl review [--detach] [--agent NAME[:PROFILE]]
-                   review the branch checked out here, committed or not, before
-                   it has a pull request, and print the findings. Exits 2 when
-                   a finding is must-fix (for agent hooks). --detach runs it in
-                   the background; it shows under Mine in prowl either way.
+                        review the branch checked out here; exits 2 on a must-fix
   prowl findings [PR] [--all] [--prompt] [--agent NAME[:PROFILE]]
-                   print the AI reviews' findings, combined, and each reviewer's
-                   note, as markdown, for you or the coding agent in your checkout. PR is a number, owner/repo#N,
-                   or omitted for the current branch's PR (its local review
-                   when it has none). --prompt wraps them in
-                   instructions to verify and fix. --agent limits it to one agent
-                   (with its profiles), or to one profile of it.
-  prowl skill install [--agent claude|codex] [DIR]
-                   install the prowl-findings skill (default: Claude Code's,
-                   ~/.claude/skills/prowl-findings), so the agent in your
-                   checkout can act on review findings when you ask it to.
-  prowl skill print
-                   show the skill
+                        print a PR's AI review findings
+  prowl skill install [--agent claude|codex] [DIR] | print
+                        the prowl-findings skill for your coding agent
   prowl edits [--since 30d] [--repo NAME]
-                   show how you edited agent reviews before posting them:
-                   each rewrite as draft and posted, what you dropped and
-                   added. Feed it to a style guide or a writing skill.
-  prowl slack [--off]
-                   sign in to Slack, so PR links shared there show in the
-                   inbox. --off signs out.
+                        how you edited AI reviews before posting them
+  prowl slack [--off]   sign in to Slack, or out
   prowl docs [TOPIC | PAGE SECTION]
-                   list prowl's docs, built in for this version, or print a
-                   page, a section, a key or a setting
-  prowl version    print the version, and the newer release when one is out
-  prowl update     install the newest release over this prowl and print
-                   what's new. A prowl from a package manager says which
-                   command updates it instead.
+                        read these docs
+  prowl schema          the JSON Schema a command reviewer's review matches
+  prowl version         print the version, and the newer release when one is out
+  prowl update          install the newest release
   prowl uninstall [--purge] [--yes]
-                   remove what prowl put on this machine: the background
-                   service, its worktrees and refs in your checkouts, the
-                   prowl-findings skill and, when prowl installed itself, the
-                   binary. --purge also removes the config and data. A
-                   package manager's prowl says which command removes it.
-  prowl schema     print the JSON Schema a review must match (for
-                   [agent] reviewers = ["command"])
+                        remove what prowl put on this machine
+
+prowl docs cli explains every command.
 `
 
 func main() {

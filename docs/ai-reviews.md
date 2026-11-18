@@ -4,7 +4,7 @@ prowl runs reviews with the coding agents you already use, one or several. A rev
 
 ## Agents
 
-List the agents in `[agent] reviewers` (or Reviewers in `<leader>,`), main agent first:
+List the agents in `[agent] reviewers` (or Reviewers in the options), main agent first:
 
 ```toml
 [agent]
@@ -19,37 +19,15 @@ reviewers = ["claude", "codex"]
 
 ## Starting a review
 
-`<leader>cc` starts every reviewer at once, in the background. prowl checks the PR out into a worktree under `~/.local/share/prowl/worktrees`, using your existing clone from `repo_roots` when there is one. The review tab shows what each agent is doing while it runs, and you get a desktop notification when it finishes.
+A review starts every reviewer at once, in the background. prowl checks the PR out into a worktree under `~/.local/share/prowl/worktrees`, using your existing clone from `repo_roots` when there is one. The review shows what each agent is doing while it runs, and you get a desktop notification when it finishes.
 
-Agent actions live under `<leader>c`:
+You can also review with one agent you pick, run a [review profile](#review-profiles), write an [AI summary](#ai-summary), or copy a fix-these-findings prompt. Revising, chatting, updating the findings from a chat and discarding act on one reviewer, and always continue that reviewer's own session. Discarding a review brings back that reviewer's previous run, if it has one. The keys are in [Agent keys](tui.md#agent-keys).
 
-| Key | Does |
-| --- | --- |
-| `<leader>cc` | review with every reviewer |
-| `<leader>cC` | review with one agent you pick |
-| `<leader>cp` | run a [review profile](#review-profiles) |
-| `<leader>cr` | ask the reviewer to revise |
-| `<leader>ci` | chat with the reviewer |
-| `<leader>cs` | update the findings from a chat |
-| `<leader>ca` | write an [AI summary](#ai-summary) |
-| `<leader>ch` | copy a fix-these-findings prompt |
-| `<leader>cd` | discard the review |
+## Findings
 
-Revise, chat, sync and discard act on the agent whose section the cursor is in (the main agent otherwise), and always continue that agent's own session. Discarding a review brings back that reviewer's previous run, if it has one.
+Each reviewer gets a section with its findings, notes, the points others raised and draft replies. Every finding starts included in what gets posted; you can exclude any of them, keep only the must-fix ones, or include them all again.
 
-## The review tab
-
-Each reviewer gets a folding section with its findings, notes, the points others raised and draft replies.
-
-| Key | Does |
-| --- | --- |
-| `x`, `enter` | include or exclude the finding or draft reply |
-| `m` | keep only must-fix findings |
-| `u` | include every finding again |
-| `]f`/`[f` | next or previous finding |
-| `c` | edit a draft reply and send it now |
-
-The agent leaves you a note after a review when it has something for you alone: what it couldn't check, doubts, or a question. Notes show under the reviewer's section, with your `<leader>cr` exchanges, and are never posted.
+The agent leaves you a note after a review when it has something for you alone: what it couldn't check, doubts, or a question. Notes show under the reviewer's section, with your exchanges when you ask it to revise, and are never posted.
 
 ## Guidelines and skills
 
@@ -57,27 +35,27 @@ Reviews follow the repo's own rules. prowl finds `AGENTS.md`, `CLAUDE.md`, `CONT
 
 `[agent] context_dirs` adds directories the agent may read, such as a local clone of your org's standards repo. A GitHub link in the guidelines to `github.com/<the PR's owner>/<a context dir's name>/...` is read from that clone.
 
-List skills every review must use in `[agent] skills`. Claude Code and Codex load their own skills, so prowl names them in the prompt. When a skill is installed only for another agent (a Claude skill while Codex reviews), or the agent is a `command`, prowl puts the skill's text into the prompt instead. The review tab shows which guidelines and skills a review followed.
+List skills every review must use in `[agent] skills`. Claude Code and Codex load their own skills, so prowl names them in the prompt. When a skill is installed only for another agent (a Claude skill while Codex reviews), or the agent is a `command`, prowl puts the skill's text into the prompt instead. The review says which guidelines and skills it followed.
 
 ## Several reviewers
 
-With more than one agent in `reviewers`, their reviews share the AI review tab, one section per agent, in the order you listed them. When two agents flag the same spot (same file, within a few lines), each finding says `also found by …`; agreement is a good sign the problem is real. A profile's run counts as its own reviewer here, so "Claude · adversarial" can agree with plain Claude.
+With more than one agent in `reviewers`, their reviews show together, one section per agent, in the order you listed them. When two agents flag the same spot (same file, within a few lines), each finding says `also found by …`; agreement is a good sign the problem is real. A profile's run counts as its own reviewer here, so "Claude · adversarial" can agree with plain Claude.
 
-`<leader>p` posts one GitHub review made of every included finding. A problem two reviewers raised is posted once, at the higher of their two severities, and the main agent's summary is the body. The authors get one review, not one per agent.
+Posting makes one GitHub review of every included finding. A problem two reviewers raised is posted once, at the higher of their two severities, and the main agent's summary is the body. The authors get one review, not one per agent.
 
 ## Models
 
-Models are per agent, under `[agent.models]`. In `<leader>,`, each agent's model option lists what it offers: Claude Code's aliases (`opus`, `sonnet`, `haiku`, `fable`, which always mean the latest of each), or the models in Codex's own catalog. Any other model ID works when you set it in the file. A missing model uses the agent's default.
+Models are per agent, under `[agent.models]`. In the options, each agent's model lists what it offers: Claude Code's aliases (`opus`, `sonnet`, `haiku`, `fable`, which always mean the latest of each), or the models in Codex's own catalog. Any other model ID works when you set it in the file. A missing model uses the agent's default.
 
 ## Severities
 
 Every finding is must-fix (blocks the merge), should-fix (a real problem that doesn't block it) or a nit. Must-fix findings are always reported; `should_fix` and `nits` under `[agent]` turn the other two off, and the agent can't return a severity you turned off.
 
-`review_instructions` replaces prowl's instructions for what to look for and how to write it, e.g. to add team conventions. The config file shows the built-in text commented out, and Options opens it in your editor. Severities and the review format stay fixed.
+`review_instructions` replaces prowl's instructions for what to look for and how to write it, e.g. to add team conventions. The config file shows the built-in text commented out, and the options open it in your editor. Severities and the review format stay fixed.
 
 ## Verification
 
-Each review runs in two turns: the review, then a verification pass that re-checks every finding against the code and drops what it can't confirm and what was already raised. The review tab shows the counts ("verified 9 → 5"). If the verification turn fails, the review keeps the unverified findings.
+Each review runs in two turns: the review, then a verification pass that re-checks every finding against the code and drops what it can't confirm and what was already raised. The review shows the counts ("verified 9 → 5"). If the verification turn fails, the review keeps the unverified findings.
 
 Findings about the PR itself, such as its description, go in the review body instead of on a line.
 
@@ -91,21 +69,21 @@ Instead it checks what was raised. Every unsettled point on the PR (unresolved t
 
 When you are in a review thread and someone else answered last, for example the author replying to your inline comment, the agent reads the whole thread, resolved or not. Where you have something to say back, a short confirmation or the one question still open, it drafts a reply. Drafts show under the reviewer's section as Draft replies, and the thread is marked `↩ draft reply`.
 
-Draft replies go out with the review: `<leader>p` lists them in the editor, and once the review is posted each is sent in its thread. `x` on one leaves it out (or puts it back), the same way as findings. To send one right away, `c` on it (or `<leader>tc` on the thread) opens it in the reply box to edit, and `ctrl+s` sends it.
+Draft replies go out with the review: posting lists them in the editor, and once the review is posted each is sent in its thread. You can leave one out the same way as a finding, or edit one and send it right away.
 
-Until they are sent, the review's icon in the inbox is yellow, the AI review tab counts them (`(3 · ↩2)`), and the desktop notification for a finished review says so: `docs#97: 3 findings, 1 must-fix · 2 replies to send`. Nothing is sent without you, and `prowl edits` keeps each draft beside what you sent.
+Until they are sent, the review's icon in the inbox is yellow, the AI review counts them (`(3 · ↩2)`), and the desktop notification for a finished review says so: `docs#97: 3 findings, 1 must-fix · 2 replies to send`. Nothing is sent without you, and `prowl edits` keeps each draft beside what you sent.
 
 ## Revising and chatting
 
-`<leader>cr` sends the agent a follow-up instruction, such as "drop the second finding". It answers in a sentence or two, and the exchange shows under Notes.
+Revising sends the agent a follow-up instruction, such as "drop the second finding". It answers in a sentence or two, and the exchange shows under Notes.
 
-`<leader>ci` opens the review's own session (`claude --resume` or `codex resume`) in a floating window, with everything the reviewer read and thought still in context, so you can ask it about its findings the way you would in a terminal. It can also read these docs, so it can answer how prowl works, such as why a PR is under re-check. `ctrl+\` hides the window and leaves the session running; `<leader>ci` brings it back. When you end the session, prowl offers to update the findings from the conversation (`<leader>cs` does the same later). Set `chat_mode = "fullscreen"` to have prowl step aside instead of drawing a window.
+Chatting opens the review's own session (`claude --resume` or `codex resume`), with everything the reviewer read and thought still in context, so you can ask it about its findings the way you would in a terminal. It can also read these docs, so it can answer how prowl works, such as why a PR is under re-check. When you end the session, prowl offers to update the findings from the conversation, and you can do that later too. The TUI shows the chat in a floating window; see [The chat window](tui.md#the-chat-window).
 
 The chat runs with your agent's normal permissions inside the PR's throwaway worktree; for a local review, that is your own checkout. A `command` agent has no session, so it has no chat, and each revise sends the whole context again with the earlier review.
 
 ## Posting
 
-`<leader>p` opens the review in your editor with the summary as the body and the included findings listed as inline comments. Nothing is posted until you save it. The review goes out as request changes when an included finding is must-fix, and as a comment otherwise; the editor's `event:` line shows which, and you can change it.
+Posting the AI review opens it in your editor with the summary as the body and the included findings listed as inline comments. Nothing is posted until you save it. The review goes out as request changes when an included finding is must-fix, and as a comment otherwise; the editor's `event:` line shows which, and you can change it.
 
 Each finding is posted starting with its severity and title (`**must-fix:** Title`), and a rule it cites follows as `_Per AGENTS.md: wrap errors_`.
 
@@ -113,7 +91,7 @@ Each finding is posted starting with its severity and title (`**must-fix:** Titl
 
 Now and then a PR shouldn't be reviewed as it is. When it is superseded, a duplicate, the wrong approach or abandoned, the agent suggests closing it; when it isn't ready for review yet, it suggests making it a draft. The suggestion shows in the reviewer's section head and above its findings, with the reason written as the comment you would post, and in the notification.
 
-It is only a suggestion: in the `<leader>p` editor, change `event:` to `close` or `draft` to post the review and then close the PR or make it a draft. `<leader>X` closes a PR with a comment and `<leader>D` makes it a draft (or ready for review again) without a review; both start from the agent's reason when it suggested one.
+It is only a suggestion: when posting, change `event:` to `close` or `draft` to post the review and then close the PR or make it a draft. Closing a PR with a comment, or making it a draft, without a review starts from the agent's reason too.
 
 ## History
 
@@ -121,11 +99,11 @@ Each agent's section ends with a History fold: its earlier runs on this PR, and 
 
 ## AI summary
 
-Descriptions are often thin. `<leader>ca` has your main agent write a summary at the top of the PR's Overview: what the PR does in two or three sentences (and where the description gets it wrong), the notable changes by file, and what deserves a careful look. It is one agent turn with the diff in the prompt, so it takes seconds; give it a small model with `[agent.summary_models]` (e.g. `claude = "haiku"`). A summary notes when the PR has moved on since it was written. Set `auto_summary = true` under `[agent]` to have one written for each PR as it first needs you.
+Descriptions are often thin. An AI summary is your main agent's summary at the top of the PR's overview: what the PR does in two or three sentences (and where the description gets it wrong), the notable changes by file, and what deserves a careful look. It is one agent turn with the diff in the prompt, so it takes seconds; give it a small model with `[agent.summary_models]` (e.g. `claude = "haiku"`). A summary notes when the PR has moved on since it was written. Set `auto_summary = true` under `[agent]` to have one written for each PR as it first needs you.
 
 ## Review profiles
 
-A profile is a named way to review: extra instructions, and optionally its own reviewers and skills. Without `reviewers`, it runs on the main agent. `<leader>cp` picks one and runs it, and its findings get their own section in the AI review tab (e.g. "Codex · adversarial"), next to the plain review rather than replacing it. "adversarial" is built in: it reviews the change as someone trying to break it. Profiles are useful on your own PRs as a check before you ask for review, since nothing is posted until you choose to. Add your own, or replace the built-in one by name:
+A profile is a named way to review: extra instructions, and optionally its own reviewers and skills. Without `reviewers`, it runs on the main agent. Its findings get their own section (e.g. "Codex · adversarial"), next to the plain review rather than replacing it. "adversarial" is built in: it reviews the change as someone trying to break it. Profiles are useful on your own PRs as a check before you ask for review, since nothing is posted until you choose to. Add your own, or replace the built-in one by name:
 
 ```toml
 [[agent.profiles]]
@@ -136,7 +114,7 @@ reviewers = ["codex"]
 
 ## Running tests
 
-By default a review only reads. To let it run the tests, give the repo a container image under `[agent.run_images]` (or Run images in `<leader>,`):
+By default a review only reads. To let it run the tests, give the repo a container image under `[agent.run_images]` (or Run images in the options):
 
 ```toml
 [agent.run_images]
@@ -144,7 +122,7 @@ By default a review only reads. To let it run the tests, give the repo a contain
 "acme/web" = "node:22"
 ```
 
-The key is `owner/name`, and `"*"` covers every other repo. The image needs the repo's toolchain. Claude Code and Codex then get a `run` tool from prowl. It runs a shell command at the root of the repo in a fresh Docker container on a copy of the code, with nothing else of yours: no home directory, no environment, no credentials, and no Linux capabilities. It does have the network, which module downloads need, so a PR's tests can reach what your machine can reach over it. A PR's tests are someone else's code, so they never run on your machine directly, and nothing they change reaches your disk. The agent runs the tests to check the change and its findings, treats a failure the change causes as a finding, and says in its note what it ran. On a re-review it runs only the tests for what changed since your last review, with the repo's usual checks such as the race detector. The chat (`<leader>ci`) gets the same tool. The `command` agent doesn't.
+The key is `owner/name`, and `"*"` covers every other repo. The image needs the repo's toolchain. Claude Code and Codex then get a `run` tool from prowl. It runs a shell command at the root of the repo in a fresh Docker container on a copy of the code, with nothing else of yours: no home directory, no environment, no credentials, and no Linux capabilities. It does have the network, which module downloads need, so a PR's tests can reach what your machine can reach over it. A PR's tests are someone else's code, so they never run on your machine directly, and nothing they change reaches your disk. The agent runs the tests to check the change and its findings, treats a failure the change causes as a finding, and says in its note what it ran. On a re-review it runs only the tests for what changed since your last review, with the repo's usual checks such as the race detector. The chat gets the same tool. The `command` agent doesn't.
 
 This is opt-in. Without an image for the repo, or without `docker` on your PATH, reviews only read. It costs:
 
@@ -163,7 +141,7 @@ When you post an AI review, prowl keeps the draft it put in your editor next to 
 
 By default the review only reads. With a run image set (see [Running tests](#running-tests)), it can run your tests too. Each run works on a copy of your checkout, so it can't touch work you haven't committed.
 
-The review shows in prowl under Mine as a local item (`⌂`) with the branch, its overview and diff, and the usual AI review tab: revise, chat, discard, re-run with `<leader>cc`. Nothing about it is on GitHub, so approving or posting from it is off. Running it again on the same branch starts from what changed since the last review. `prowl findings` in the checkout prints it while the branch has no PR. Once you open a PR for the branch (a draft counts), the local review moves to it: its runs show in the PR's AI review tab, marked as from your checkout before the PR, and the next review of the PR starts from what changed since. They can still be posted; to chat with or revise one, start a new review on the PR, since its session lives in your checkout. A local review goes away when you discard it, or when its branch or checkout is gone.
+The review shows in prowl under Mine as a local item (`⌂`) with the branch, its overview and diff, and its AI review, which you can revise, chat with, discard or run again. Nothing about it is on GitHub, so approving or posting from it is off. Running it again on the same branch starts from what changed since the last review. `prowl findings` in the checkout prints it while the branch has no PR. Once you open a PR for the branch (a draft counts), the local review moves to it: its runs show in the PR's AI review, marked as from your checkout before the PR, and the next review of the PR starts from what changed since. They can still be posted; to chat with or revise one, start a new review on the PR, since its session lives in your checkout. A local review goes away when you discard it, or when its branch or checkout is gone.
 
 To have a coding agent review its own work, either add a line like this to the repo's `AGENTS.md` (any agent):
 
@@ -191,6 +169,6 @@ On your own PRs, an AI review is often more useful as a to-do list than as comme
 
 - Install the skill once with `prowl skill install` for Claude Code, or `prowl skill install --agent codex` for Codex. After that, asking the agent in a checkout to "fix the review findings" (or "what did the review say?") is enough: it runs `prowl findings` (or `prowl review` when you ask for a review before a PR), checks each finding against the code, fixes the ones that hold up, says why it left the others, and drafts text for findings about the PR description. It never commits, pushes or posts. The skill's source is [`internal/skill/SKILL.md`](../internal/skill/SKILL.md).
 - Without the skill, tell any agent to run `prowl findings --prompt`, which prints the findings wrapped in the same instructions.
-- In prowl, `<leader>ch` copies that prompt to the clipboard to paste wherever you like.
+- The TUI copies that prompt to the clipboard, to paste wherever you like.
 
 After you push, the next review on that PR starts from what changed.

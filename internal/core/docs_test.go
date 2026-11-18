@@ -21,7 +21,7 @@ func TestDocs(t *testing.T) {
 			t.Errorf("%s has no title or text", p.Name)
 		}
 	}
-	if !slices.Equal(names[:6], []string{"inbox", "reviewing", "ai-reviews", "slack", "running", "config"}) {
+	if !slices.Equal(names[:7], []string{"inbox", "reviewing", "ai-reviews", "slack", "tui", "cli", "config"}) {
 		t.Errorf("order = %v", names)
 	}
 	if p, ok := core.Doc("slack.md"); !ok || p.Title != "Slack" {
@@ -65,10 +65,10 @@ func TestFindDocTag(t *testing.T) {
 		{"snoozing", "inbox", "Snoozing", "## Snoozing"},
 		{"stale_after", "config", "Inbox", "| `stale_after` |"},
 		{"stale", "config", "Inbox", "| `stale_after` |"},
-		{"<leader>cc", "ai-reviews", "Starting a review", "| `<leader>cc` |"},
+		{"<leader>cc", "tui", "Agent keys", "| `<leader>cc` |"},
 		{"re-check", "inbox", "Buckets", "| re-check |"},
-		{"H", "reviewing", "Moving around", "| `H`/`M`/`L` |"},
-		{"h", "reviewing", "Moving around", "| `h`, `esc`, `←` |"},
+		{"H", "tui", "Moving around", "| `H`/`M`/`L` |"},
+		{"h", "tui", "Moving around", "| `h`, `esc`, `←` |"},
 		{"should_fix", "config", "Agent", "| `should_fix`, `nits` |"},
 	} {
 		tags := core.FindDocTag(tc.topic)
@@ -82,7 +82,7 @@ func TestFindDocTag(t *testing.T) {
 			t.Errorf("FindDocTag(%q) = %+v at %q", tc.topic, tags[0], line)
 		}
 	}
-	if md := core.FindDocTag("stale_after")[0].Markdown(); !strings.HasPrefix(md, "## Inbox\n\n| Setting |") || !strings.HasSuffix(md, "\n| `stale_after` | `24h` | a PR waiting on you longer than this turns yellow, and bold red at twice that |") {
+	if md := core.FindDocTag("stale_after")[0].Markdown(); !strings.HasPrefix(md, "## Inbox\n\n| Setting |") || !strings.HasSuffix(md, "\n| `stale_after` | `24h` | a PR waiting on you longer than this is due, and overdue at twice that |") {
 		t.Errorf("stale_after's Markdown = %q", md)
 	}
 	if md := core.FindDocTag("running-tests")[0].Markdown(); !strings.HasPrefix(md, "## Running tests\n") || strings.Contains(md, "\n## ") {

@@ -116,7 +116,7 @@ func TestWheelScrollsPR(t *testing.T) {
 func TestClickDocs(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}})
 	a.keys("?", "d")
-	a.clickFirst("slack · running")
+	a.clickFirst("slack · tui")
 	a.want("prowl docs · Slack")
 	a.clickFirst("inbox · reviewing")
 	a.want("prowl docs · The inbox", "close   1/")
