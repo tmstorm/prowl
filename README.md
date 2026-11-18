@@ -51,7 +51,7 @@ A few things worth doing next:
 
 ## A short tour
 
-**The inbox** is split into what needs you, everything, your own PRs, approved and waiting. Each row says how long the PR has waited on you, its size, review state and CI. The owl at the bottom left reads the room: `(-,-)` nothing needs you, `(o,o)` something does, `(O,O)` something is overdue. See [the inbox](docs/inbox.md).
+**The inbox** is split into what needs you, everything, your own PRs, approved and waiting. Each row says how long the PR has waited on you, its size, review state and CI. The owl at the bottom left reads the room: `(-,-)` nothing needs you, `(o,o)` something does, `(O,O)` something is due. See [the inbox](docs/inbox.md).
 
 ![The inbox, sorted by what each PR needs from you](docs/images/inbox.png)
 
