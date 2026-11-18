@@ -120,7 +120,7 @@ func SeedDemo(st *store.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := st.AddReviewLog(demoAuthKey, "claude", "agent", "I couldn't check how the mobile app handles a revoked family. If it retries the refresh in a loop, revoking could log people out repeatedly."); err != nil {
+	if err := st.AddNote(demoAuthKey, "claude", "agent", "I couldn't check how the mobile app handles a revoked family. If it retries the refresh in a loop, revoking could log people out repeatedly."); err != nil {
 		return err
 	}
 	return st.SaveSummary(store.Summary{Key: demoAuthKey, HeadOid: demoAuthOid, Model: "haiku", At: time.Now(),
@@ -149,7 +149,7 @@ func demoCommit(p *gh.PR, at time.Time) {
 }
 
 func demoTimeline(p *gh.PR, item map[string]any) {
-	var ti gh.TimelineItem
+	var ti gh.Event
 	b, _ := json.Marshal(item)
 	_ = json.Unmarshal(b, &ti)
 	p.TimelineItems.Nodes = append(p.TimelineItems.Nodes, ti)

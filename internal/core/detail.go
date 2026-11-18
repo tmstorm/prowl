@@ -1,6 +1,8 @@
 package core
 
 import (
+	"cmp"
+	"context"
 	"fmt"
 	"time"
 
@@ -37,6 +39,9 @@ type Thread struct {
 	DiffSide           string // RIGHT (new) or LEFT (old)
 	Comments           []Comment
 }
+
+// LineShown is the thread's line, or where it was once it left the diff.
+func (t Thread) LineShown() int { return cmp.Or(t.Line, t.OriginalLine) }
 
 type File struct {
 	Path                 string
@@ -79,7 +84,7 @@ type Annotation struct {
 
 // Detail fetches what a PR page shows: the description, activity, review
 // threads and changed files.
-func (co *Core) Detail(key string) (*Detail, error) {
+func (co *Core) Detail(ctx context.Context, key string) (*Detail, error) {
 	if l, err := co.local(key); err == nil {
 		return &Detail{Body: localBody(l)}, nil
 	}
@@ -87,7 +92,7 @@ func (co *Core) Detail(key string) (*Detail, error) {
 	if err != nil {
 		return nil, fmt.Errorf("detail: %w", err)
 	}
-	det, err := co.gh.FetchDetail(repo, n)
+	det, err := co.gh.FetchDetail(ctx, repo, n)
 	if err != nil {
 		return nil, fmt.Errorf("detail %s: %w", key, err)
 	}

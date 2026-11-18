@@ -1,9 +1,11 @@
 package inbox_test
 
 import (
-	"github.com/tmstorm/prowl/internal/inbox"
+	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/tmstorm/prowl/internal/inbox"
 
 	"github.com/tmstorm/prowl/internal/gh"
 )
@@ -29,7 +31,7 @@ func requestMe(p *gh.PR) {
 }
 
 func requested(p *gh.PR, h int) {
-	ti := gh.TimelineItem{Typename: "ReviewRequestedEvent", CreatedAt: at(h)}
+	ti := gh.Event{Typename: "ReviewRequestedEvent", CreatedAt: at(h)}
 	ti.RequestedReviewer = &struct {
 		Login string `json:"login"`
 		Slug  string `json:"slug"`
@@ -38,11 +40,9 @@ func requested(p *gh.PR, h int) {
 }
 
 func commit(p *gh.PR, h int) {
-	ti := gh.TimelineItem{Typename: "PullRequestCommit"}
-	ti.Commit = &struct {
-		Oid           string    `json:"oid"`
-		CommittedDate time.Time `json:"committedDate"`
-	}{Oid: "abc", CommittedDate: at(h)}
+	ti := gh.Event{Typename: "PullRequestCommit"}
+	_ = json.Unmarshal([]byte(`{"commit":{"oid":"abc"}}`), &ti)
+	ti.Commit.CommittedDate = at(h)
 	p.TimelineItems.Nodes = append(p.TimelineItems.Nodes, ti)
 }
 
@@ -143,7 +143,7 @@ func TestClassify(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			items := inbox.Classify(&gh.Inbox{Viewer: "me", Teams: []string{"backend"}, PRs: []gh.PR{c.build()}})
+			items := inbox.Classify(&gh.Inbox{Viewer: "me", Teams: []string{"backend"}, PRs: []gh.PR{c.build()}}, inbox.Options{})
 			if got := items[0].Bucket; got != c.want {
 				t.Fatalf("got %s (%s), want %s", got, items[0].Reason, c.want)
 			}
@@ -180,7 +180,7 @@ func TestWatchedRepoBuckets(t *testing.T) {
 		if c.watched {
 			w = watch
 		}
-		got := inbox.Classify(&gh.Inbox{Viewer: "me", PRs: []gh.PR{c.pr}, Watched: w})[0]
+		got := inbox.Classify(&gh.Inbox{Viewer: "me", PRs: []gh.PR{c.pr}, Watched: w}, inbox.Options{})[0]
 		if got.Bucket != c.want || got.Bucket.NeedsMe() {
 			t.Errorf("draft=%v requested=%v watched=%v: got %v (%s), want %v", c.pr.IsDraft, len(c.pr.ReviewRequests.Nodes), c.watched, got.Bucket, got.Reason, c.want)
 		}
@@ -196,12 +196,12 @@ func TestBotCommentAfterApproval(t *testing.T) {
 	pr.Reviews.Nodes = []gh.Review{{Author: &gh.Actor{Login: "me"}, State: "APPROVED", SubmittedAt: approved}}
 	pr.Comments.Nodes = []gh.Comment{{Author: &gh.Actor{Login: "github-actions", Typename: "Bot"}, CreatedAt: approved.Add(12 * time.Second)}}
 	in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr}}
-	if it := inbox.Classify(in)[0]; it.Bucket != inbox.Approved {
+	if it := inbox.Classify(in, inbox.Options{})[0]; it.Bucket != inbox.Approved {
 		t.Fatalf("a bot comment after approving moved it to %v (%s)", it.Bucket, it.Reason)
 	}
 	pr.Comments.Nodes = append(pr.Comments.Nodes, gh.Comment{Author: &gh.Actor{Login: "carol"}, CreatedAt: approved.Add(time.Minute)})
 	in.PRs = []gh.PR{pr}
-	if it := inbox.Classify(in)[0]; it.Bucket != inbox.Activity || it.Reason != "carol commented" {
+	if it := inbox.Classify(in, inbox.Options{})[0]; it.Bucket != inbox.Activity || it.Reason != "carol commented" {
 		t.Fatalf("a person commenting is activity: %v (%s)", it.Bucket, it.Reason)
 	}
 }
@@ -215,14 +215,14 @@ func TestCommentAfterPushIsWaiting(t *testing.T) {
 	pr := gh.PR{ID: "1", Number: 307, Author: &gh.Actor{Login: "carol"}, CreatedAt: asked.Add(-time.Hour)}
 	pr.Repository.NameWithOwner = "o/infra"
 	pr.Reviews.Nodes = []gh.Review{{Author: &gh.Actor{Login: "me"}, State: "CHANGES_REQUESTED", SubmittedAt: asked}}
-	pr.TimelineItems.Nodes = []gh.TimelineItem{{Typename: "HeadRefForcePushedEvent", CreatedAt: pushed}}
+	pr.TimelineItems.Nodes = []gh.Event{{Typename: "HeadRefForcePushedEvent", CreatedAt: pushed}}
 	in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr}}
-	if it := inbox.Classify(in)[0]; it.Bucket != inbox.Addressed {
+	if it := inbox.Classify(in, inbox.Options{})[0]; it.Bucket != inbox.Addressed {
 		t.Fatalf("after the push and before you look: %v (%s)", it.Bucket, it.Reason)
 	}
 	pr.Reviews.Nodes = append(pr.Reviews.Nodes, gh.Review{Author: &gh.Actor{Login: "me"}, State: "COMMENTED", SubmittedAt: looked})
 	in.PRs = []gh.PR{pr}
-	if it := inbox.Classify(in)[0]; it.Bucket != inbox.WaitingOnAuthor {
+	if it := inbox.Classify(in, inbox.Options{})[0]; it.Bucket != inbox.WaitingOnAuthor {
 		t.Fatalf("after you commented on the push: %v (%s)", it.Bucket, it.Reason)
 	}
 }
@@ -240,7 +240,7 @@ func TestOtherReviewerAfterYouApproved(t *testing.T) {
 	var th gh.Thread
 	th.Comments.Nodes = []gh.Comment{{Author: &gh.Actor{Login: "pickuperast"}, CreatedAt: approved.Add(4 * 24 * time.Hour)}}
 	pr.ReviewThreads.Nodes = []gh.Thread{th}
-	if it := inbox.Classify(&gh.Inbox{Viewer: "me", PRs: []gh.PR{pr}})[0]; it.Bucket != inbox.Approved {
+	if it := inbox.Classify(&gh.Inbox{Viewer: "me", PRs: []gh.PR{pr}}, inbox.Options{})[0]; it.Bucket != inbox.Approved {
 		t.Fatalf("another reviewer's review pulled it back: %v (%s)", it.Bucket, it.Reason)
 	}
 }
@@ -252,13 +252,12 @@ func TestRecheckAfterPush(t *testing.T) {
 	pr := gh.PR{ID: "1", Number: 9, Author: &gh.Actor{Login: "alice"}, CreatedAt: approved.Add(-time.Hour)}
 	pr.Repository.NameWithOwner = "o/r"
 	pr.Reviews.Nodes = []gh.Review{{Author: &gh.Actor{Login: "me"}, State: "APPROVED", SubmittedAt: approved}}
-	pr.TimelineItems.Nodes = []gh.TimelineItem{{Typename: "HeadRefForcePushedEvent", CreatedAt: approved.Add(time.Hour)}}
-	in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr}, RecheckAfterPush: true}
-	if it := inbox.Classify(in)[0]; it.Bucket != inbox.Recheck || !it.Bucket.NeedsMe() {
+	pr.TimelineItems.Nodes = []gh.Event{{Typename: "HeadRefForcePushedEvent", CreatedAt: approved.Add(time.Hour)}}
+	in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr}}
+	if it := inbox.Classify(in, inbox.Options{RecheckAfterPush: true})[0]; it.Bucket != inbox.Recheck || !it.Bucket.NeedsMe() {
 		t.Fatalf("with recheck on: %v (%s)", it.Bucket, it.Reason)
 	}
-	in.RecheckAfterPush = false
-	if it := inbox.Classify(in)[0]; it.Bucket != inbox.Approved || !it.ChangedSinceApproval {
+	if it := inbox.Classify(in, inbox.Options{})[0]; it.Bucket != inbox.Approved || !it.ChangedSinceApproval {
 		t.Fatalf("with recheck off: %v (%s)", it.Bucket, it.Reason)
 	}
 }
@@ -275,13 +274,15 @@ func TestCommentReviewIsFeedback(t *testing.T) {
 		return pr
 	}
 	commented := gh.Review{Author: &gh.Actor{Login: "me"}, State: "COMMENTED", SubmittedAt: reviewed, Body: "Two things to fix."}
-	classify := func(pr gh.PR) inbox.Item { return inbox.Classify(&gh.Inbox{Viewer: "me", PRs: []gh.PR{pr}})[0] }
+	classify := func(pr gh.PR) inbox.Item {
+		return inbox.Classify(&gh.Inbox{Viewer: "me", PRs: []gh.PR{pr}}, inbox.Options{})[0]
+	}
 
 	pr := mk(commented)
 	if it := classify(pr); it.Bucket != inbox.WaitingOnAuthor {
 		t.Fatalf("after your comment review: %v (%s)", it.Bucket, it.Reason)
 	}
-	pr.TimelineItems.Nodes = []gh.TimelineItem{{Typename: "HeadRefForcePushedEvent", CreatedAt: reviewed.Add(16 * time.Minute)}}
+	pr.TimelineItems.Nodes = []gh.Event{{Typename: "HeadRefForcePushedEvent", CreatedAt: reviewed.Add(16 * time.Minute)}}
 	if it := classify(pr); it.Bucket != inbox.Addressed {
 		t.Fatalf("after the author pushed: %v (%s)", it.Bucket, it.Reason)
 	}
@@ -291,7 +292,7 @@ func TestCommentReviewIsFeedback(t *testing.T) {
 	var th gh.Thread
 	th.Opener.Nodes = []gh.Comment{{Author: &gh.Actor{Login: "bob"}}}
 	pr.ReviewThreads.Nodes = []gh.Thread{th}
-	pr.TimelineItems.Nodes = []gh.TimelineItem{{Typename: "HeadRefForcePushedEvent", CreatedAt: reviewed.Add(time.Hour)}}
+	pr.TimelineItems.Nodes = []gh.Event{{Typename: "HeadRefForcePushedEvent", CreatedAt: reviewed.Add(time.Hour)}}
 	if it := classify(pr); it.Bucket == inbox.Addressed || it.Bucket == inbox.WaitingOnAuthor {
 		t.Fatalf("a reply in someone else's thread isn't feedback: %v (%s)", it.Bucket, it.Reason)
 	}
@@ -310,7 +311,7 @@ func TestCommentReviewIsFeedback(t *testing.T) {
 // A PR shared in Slack waits for you as Shared until you review it, and a
 // review request still wins, naming the share.
 func TestShared(t *testing.T) {
-	share := gh.Share{Channel: "reviews", From: "alice", At: at(3)}
+	share := inbox.Share{Channel: "reviews", From: "alice", At: at(3)}
 	cases := []struct {
 		name   string
 		build  func() gh.PR
@@ -335,8 +336,8 @@ func TestShared(t *testing.T) {
 		}, inbox.Involved, "mentioned / commented"},
 	}
 	for _, c := range cases {
-		in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{c.build()}, Shared: map[string]gh.Share{"org/repo#1": share}}
-		got := inbox.Classify(in)[0]
+		in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{c.build()}}
+		got := inbox.Classify(in, inbox.Options{Shared: map[string]inbox.Share{"org/repo#1": share}})[0]
 		if got.Bucket != c.bucket || got.Reason != c.reason {
 			t.Errorf("%s: got %s %q, want %s %q", c.name, got.Bucket, got.Reason, c.bucket, c.reason)
 		}
@@ -344,8 +345,8 @@ func TestShared(t *testing.T) {
 			t.Errorf("%s: shared too %q", c.name, got.SharedToo)
 		}
 	}
-	dm := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr("alice")}, Shared: map[string]gh.Share{"org/repo#1": {From: "bob", At: at(3)}}}
-	if got := inbox.Classify(dm)[0]; got.Bucket != inbox.Shared || got.Reason != "sent to you by bob" || !got.Since.Equal(at(3)) {
+	dm := inbox.Options{Shared: map[string]inbox.Share{"org/repo#1": {From: "bob", At: at(3)}}}
+	if got := inbox.Classify(&gh.Inbox{Viewer: "me", PRs: []gh.PR{pr("alice")}}, dm)[0]; got.Bucket != inbox.Shared || got.Reason != "sent to you by bob" || !got.Since.Equal(at(3)) {
 		t.Errorf("DM: got %s %q since %v", got.Bucket, got.Reason, got.Since)
 	}
 	if !inbox.Shared.NeedsMe() {
@@ -356,12 +357,13 @@ func TestShared(t *testing.T) {
 // Reactions on the Slack share of your PR join its reason; on someone
 // else's PR they don't.
 func TestSlackReactionsReason(t *testing.T) {
-	in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr("me")}, Reactions: map[string]string{"org/repo#1": "#reviews: Bob ✅"}}
-	if got := inbox.Classify(in)[0]; got.Reason != "awaiting reviewers · #reviews: Bob ✅" || got.SlackReactions != "#reviews: Bob ✅" {
+	in := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr("me")}}
+	opt := inbox.Options{Reactions: map[string]string{"org/repo#1": "#reviews: Bob ✅"}}
+	if got := inbox.Classify(in, opt)[0]; got.Reason != "awaiting reviewers · #reviews: Bob ✅" || got.SlackReactions != "#reviews: Bob ✅" {
 		t.Errorf("yours: %q, %q", got.Reason, got.SlackReactions)
 	}
 	in.PRs = []gh.PR{pr("alice")}
-	if got := inbox.Classify(in)[0]; got.SlackReactions != "" || got.Reason != "mentioned / commented" {
+	if got := inbox.Classify(in, opt)[0]; got.SlackReactions != "" || got.Reason != "mentioned / commented" {
 		t.Errorf("someone else's: %q, %q", got.Reason, got.SlackReactions)
 	}
 }

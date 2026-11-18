@@ -59,7 +59,7 @@ func (co *Core) emit(e Event) {
 func (co *Core) Run(ctx context.Context) {
 	var tasks sync.WaitGroup
 	tasks.Go(co.PruneOrphans)
-	tasks.Go(co.PruneClosed)
+	tasks.Go(func() { co.PruneClosed(ctx) })
 	tasks.Go(func() {
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
@@ -77,7 +77,7 @@ func (co *Core) Run(ctx context.Context) {
 				if changed, err := co.reloadConfig(); changed {
 					co.emit(Event{Kind: ConfigChanged, Err: err})
 				}
-				co.autoSummaries()
+				co.autoSummaries(ctx)
 			}
 		}
 	})
@@ -86,11 +86,11 @@ func (co *Core) Run(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(max(co.Config().PollInterval.Duration, 30*time.Second)):
+			case <-time.After(co.Config().PollEvery()):
 				co.emit(Event{Kind: Syncing})
-				changes, err := co.Refresh()
+				changes, err := co.Refresh(ctx)
 				co.emit(Event{Kind: InboxChanged, Changes: changes, Err: err})
-				co.PruneClosed()
+				co.PruneClosed(ctx)
 			}
 		}
 	})
@@ -98,7 +98,7 @@ func (co *Core) Run(ctx context.Context) {
 		exe := Executable()
 		for {
 			if co.notifies() {
-				_, _ = co.AutoUpgrade(exe)
+				_, _ = co.AutoUpgrade(ctx, exe)
 			}
 			co.emit(Event{Kind: ReleaseChanged})
 			select {
@@ -110,12 +110,12 @@ func (co *Core) Run(ctx context.Context) {
 	})
 	tasks.Go(func() {
 		for {
-			co.CheckAuth()
+			co.CheckAuth(ctx)
 			co.emit(Event{Kind: AuthChanged})
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(authEvery):
+			case <-time.After(AuthEvery):
 			}
 		}
 	})
@@ -339,7 +339,7 @@ func (co *Core) Notes(key string) map[string][]Note {
 func notesOf(st *store.Store, key string, reviews []*Review) map[string][]Note {
 	out := map[string][]Note{}
 	for _, r := range reviews {
-		log, _ := st.ReviewLog(key, r.Reviewer())
+		log, _ := st.Notes(key, r.Reviewer())
 		for _, e := range log {
 			out[r.Reviewer()] = append(out[r.Reviewer()], Note(e))
 		}
@@ -424,7 +424,7 @@ func (co *Core) job(key, reviewer, refine string, sync bool) (agent.Job, error) 
 	pr := it.PR
 	job := agent.Job{
 		Repo: pr.Repository.NameWithOwner, Number: pr.Number, Title: pr.Title,
-		Author: pr.AuthorLogin(), Base: pr.BaseRefName, Head: pr.HeadRefOid,
+		Author: pr.Author.Name(), Base: pr.BaseRefName, Head: pr.HeadRefOid,
 		Body: pr.Body, Refine: refine, Viewer: viewer, Sync: sync, Agent: be.Name(), Profile: profile,
 	}
 	if pr.Local() {
@@ -468,7 +468,7 @@ func (co *Core) Discard(runID int64) error {
 	if err := co.st.DeleteRun(runID); err != nil {
 		return fmt.Errorf("discard: %w", err)
 	}
-	if err := co.st.ClearReviewLog(run.Key, run.Reviewer()); err != nil {
+	if err := co.st.ClearNotes(run.Key, run.Reviewer()); err != nil {
 		return fmt.Errorf("discard: %w", err)
 	}
 	co.loadRuns()
@@ -583,10 +583,4 @@ func (co *Core) Chat(key, reviewer string) (Command, error) {
 }
 
 // ReviewerTitle names a reviewer for people: "Codex", "Codex · adversarial".
-func ReviewerTitle(reviewer string) string {
-	name, profile, _ := strings.Cut(reviewer, ":")
-	if profile == "" {
-		return agent.Title(name)
-	}
-	return agent.Title(name) + " · " + profile
-}
+var ReviewerTitle = agent.ReviewerTitle

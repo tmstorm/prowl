@@ -42,7 +42,7 @@ func TestRunReview(t *testing.T) {
 	cfg.Agent.RunImages = map[string]string{"*": "golang:1.27"}
 	job := agent.Job{Repo: "o/api", Number: 7, Title: "feat: a", Author: "alice", Base: "main", Head: head,
 		Viewer: "me", Agent: "claude", Profile: "adversarial"}
-	if err := agent.Run(cfg, st, nil, job); err != nil {
+	if err := agent.Run(t.Context(), cfg, st, nil, job); err != nil {
 		t.Fatal(err)
 	}
 
@@ -50,7 +50,7 @@ func TestRunReview(t *testing.T) {
 	if run == nil || run.Status != "done" || run.Model != "claude-test" || len(run.Findings) != 1 || run.SessionID != "s1" {
 		t.Fatalf("stored run: %+v", run)
 	}
-	if log, _ := st.ReviewLog("o/api#7", "claude:adversarial"); len(log) != 1 || log[0].Who != "agent" || log[0].Text != "I could not check the repo settings." {
+	if log, _ := st.Notes("o/api#7", "claude:adversarial"); len(log) != 1 || log[0].Who != "agent" || log[0].Text != "I could not check the repo settings." {
 		t.Errorf("the agent's note should reach Notes, never the summary: %+v", log)
 	}
 	if _, err := os.Stat(filepath.Join(agent.WorktreePath("o/api", 7, "claude:adversarial"), "a.go")); err != nil {
@@ -160,7 +160,7 @@ func TestSeverityToggles(t *testing.T) {
 	cfg.RepoRoots = []string{roots}
 	cfg.Agent.Nits = false
 	cfg.Agent.ReviewInstructions = "Look only at error handling."
-	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"}); err != nil {
+	if err := agent.Run(t.Context(), cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	if run := latestRun(t, st, "claude"); run == nil || len(run.Findings) != 0 {
@@ -182,7 +182,7 @@ func TestRunToolOptIn(t *testing.T) {
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
 	cfg.Agent.RunImages = map[string]string{"acme/web": "node:22"}
-	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"}); err != nil {
+	if err := agent.Run(t.Context(), cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	if args := read(filepath.Join(bin, "args")); strings.Contains(args, "--mcp-config") || strings.Contains(args, "mcp__prowl__run") {
@@ -238,7 +238,7 @@ echo '{"type":"result","session_id":"s1","structured_output":`+answer+`}'
 `), 0o755)
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
-	if err := agent.Run(cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude"}); err != nil {
+	if err := agent.Run(t.Context(), cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	prompt := read(filepath.Join(bin, "prompts"))
@@ -265,7 +265,7 @@ echo '=== turn' >> "$d/prompts"
 cat >> "$d/prompts"
 echo '{"type":"result","session_id":"s1","structured_output":`+answer+`}'
 `), 0o755)
-	if err := agent.Run(cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude",
+	if err := agent.Run(t.Context(), cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude",
 		Refine: agent.SyncInstruction, Sync: true, RunID: run.ID}); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ echo '{"type":"result","session_id":"s1","structured_output":`+answer+`}'
 `), 0o755)
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
-	if err := agent.Run(cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude"}); err != nil {
+	if err := agent.Run(t.Context(), cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	prompt := read(filepath.Join(bin, "prompts"))
@@ -336,7 +336,7 @@ func TestFailedReviseKeepsReview(t *testing.T) {
 	_ = st.RestartRun(id, 0)
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
-	err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude", Refine: "drop it", RunID: id})
+	err := agent.Run(t.Context(), cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude", Refine: "drop it", RunID: id})
 	if err == nil {
 		t.Fatal("the revise should fail")
 	}
@@ -344,7 +344,7 @@ func TestFailedReviseKeepsReview(t *testing.T) {
 	if r.Status != "done" || len(r.Findings) != 1 {
 		t.Fatalf("after a failed revise: %s %+v", r.Status, r.Findings)
 	}
-	if log, _ := st.ReviewLog("o/api#7", "claude"); len(log) == 0 || !strings.Contains(log[len(log)-1].Text, "revise failed") {
+	if log, _ := st.Notes("o/api#7", "claude"); len(log) == 0 || !strings.Contains(log[len(log)-1].Text, "revise failed") {
 		t.Fatalf("no note about the failed revise: %+v", log)
 	}
 }
@@ -370,7 +370,7 @@ func TestCloneMustMatchOrigin(t *testing.T) {
 	git(t, filepath.Join(roots, "api"), "remote", "set-url", "origin", "https://github.com/someone-else/api.git")
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
-	err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"})
+	err := agent.Run(t.Context(), cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"})
 	if err == nil || !strings.Contains(err.Error(), "gh repo clone o/api") {
 		t.Fatalf("want prowl to clone o/api itself, got %v", err)
 	}
@@ -403,7 +403,7 @@ o="$(dirname "$0")/../origin.git"
 git clone --quiet "$o" "$4"
 git clone --quiet "$o" "${4%.cloning-*}"
 `), 0o755)
-	if err := agent.Run(config.Default(), st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"}); err != nil {
+	if err := agent.Run(t.Context(), config.Default(), st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	if run := latestRun(t, st, "claude"); run == nil || run.Status != "done" {
@@ -428,7 +428,7 @@ func TestSupersededBotRuns(t *testing.T) {
 		cfg := config.Default()
 		cfg.RepoRoots = []string{roots}
 		cfg.Bots = []string{"ci-reviewer"}
-		if err := agent.Run(cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude"}); err != nil {
+		if err := agent.Run(t.Context(), cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude"}); err != nil {
 			t.Fatal(err)
 		}
 		prompt := read(filepath.Join(bin, "prompts"))
@@ -447,7 +447,7 @@ func TestOwnPRStartsFromLastAIReview(t *testing.T) {
 	_ = st.FinishRun(prev, "s0", "earlier", "", nil)
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
-	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Author: "me", Viewer: "me", Agent: "claude"}); err != nil {
+	if err := agent.Run(t.Context(), cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Author: "me", Viewer: "me", Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	p := read(filepath.Join(bin, "prompts"))
@@ -468,7 +468,7 @@ func TestReReviewTestsWhatChanged(t *testing.T) {
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
 	cfg.Agent.RunImages = map[string]string{"*": "golang:1.27"}
-	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Author: "me", Viewer: "me", Agent: "claude"}); err != nil {
+	if err := agent.Run(t.Context(), cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Author: "me", Viewer: "me", Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	if p := read(filepath.Join(bin, "prompts")); !strings.Contains(p, "Run only the tests for the code that changed since then, not the whole suite, with the checks the repo's own test command uses, such as the race detector.") {
@@ -480,11 +480,11 @@ func TestReReviewTestsWhatChanged(t *testing.T) {
 func TestLocalReReviewTestsWhatChanged(t *testing.T) {
 	st, roots, bin, head := setupRun(t)
 	dir := filepath.Join(roots, "api")
-	prev, _ := st.StartRun(store.LocalKey("o/api", "main"), head, "claude", "", 0)
+	prev, _ := st.StartRun(gh.LocalKey("o/api", "main"), head, "claude", "", 0)
 	_ = st.FinishRun(prev, "s0", "earlier", "", nil)
 	cfg := config.Default()
 	cfg.Agent.RunImages = map[string]string{"*": "golang:1.27"}
-	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Dir: dir, Branch: "main", Base: "main", Viewer: "me", Agent: "claude"}); err != nil {
+	if err := agent.Run(t.Context(), cfg, st, nil, agent.Job{Repo: "o/api", Dir: dir, Branch: "main", Base: "main", Viewer: "me", Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	if p := read(filepath.Join(bin, "prompts")); !strings.Contains(p, "You reviewed this branch before") || !strings.Contains(p, "Run only the tests for the code that changed since then") {
@@ -516,7 +516,7 @@ func TestDismissedApproval(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
-	if err := agent.Run(cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude"}); err != nil {
+	if err := agent.Run(t.Context(), cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	prompt := read(filepath.Join(bin, "prompts"))

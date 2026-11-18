@@ -29,7 +29,7 @@ type NameMatch struct {
 // least: the same email, the same name, a login that holds their Slack name
 // or handle, then whoever posts most of their PRs in Slack. A Slack user is
 // proposed for one login at most.
-func (co *Core) ProposeNames() ([]NameMatch, []SlackUser, error) {
+func (co *Core) ProposeNames(ctx context.Context) ([]NameMatch, []SlackUser, error) {
 	co.mu.Lock()
 	sl, err := co.slackFor()
 	cfg, viewer, me := co.cfg, co.inbox.Viewer, co.slackMe
@@ -38,13 +38,13 @@ func (co *Core) ProposeNames() ([]NameMatch, []SlackUser, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	users, err := co.loadSlackUsers(sl)
+	users, err := co.loadSlackUsers(ctx, sl)
 	if err != nil {
 		return nil, nil, err
 	}
 	var people []gh.Person
 	for _, org := range cfg.Orgs {
-		members, err := co.gh.OrgMembers(org)
+		members, err := co.gh.OrgMembers(ctx, org)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -52,7 +52,7 @@ func (co *Core) ProposeNames() ([]NameMatch, []SlackUser, error) {
 	}
 	botLogins := cfg.BotSet()
 	for _, it := range items {
-		a := it.PR.AuthorLogin()
+		a := it.PR.Author.Name()
 		if a != "" && !it.PR.Author.IsBot(botLogins) && !slices.ContainsFunc(people, func(p gh.Person) bool { return p.Login == a }) {
 			people = append(people, gh.Person{Login: a})
 		}
@@ -66,7 +66,7 @@ func (co *Core) ProposeNames() ([]NameMatch, []SlackUser, error) {
 	}
 	authors := map[string]string{}
 	for _, it := range items {
-		authors[it.PR.Key()] = it.PR.AuthorLogin()
+		authors[it.PR.Key()] = it.PR.Author.Name()
 	}
 	posted := map[string]map[string]int{}
 	for _, s := range shares {
@@ -206,14 +206,14 @@ func fold(s string) string {
 }
 
 // loadSlackUsers reads the workspace's people once per process.
-func (co *Core) loadSlackUsers(sl *slack.Client) ([]slack.User, error) {
+func (co *Core) loadSlackUsers(ctx context.Context, sl *slack.Client) ([]slack.User, error) {
 	co.mu.Lock()
 	cached := co.slackUsers
 	co.mu.Unlock()
 	if cached != nil {
 		return cached, nil
 	}
-	users, err := sl.Users(context.Background())
+	users, err := sl.Users(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("slack users: %w", err)
 	}
@@ -237,7 +237,7 @@ func (co *Core) SlackLine(key string, event ReviewEvent, post bool) string {
 	if state := reviewStates[event]; state != "" {
 		it.MyLastReview = &gh.Review{State: state}
 	}
-	login := it.PR.AuthorLogin()
+	login := it.PR.Author.Name()
 	co.mu.Lock()
 	name := co.cfg.SlackNames[login]
 	shown := slackName(co.slackUsers, name)
@@ -259,11 +259,11 @@ func (co *Core) SlackLine(key string, event ReviewEvent, post bool) string {
 var ErrNoSlackUser = errors.New("no Slack user for the author")
 
 // DMAuthor sends the PR's author its Slack line in a direct message.
-func (co *Core) DMAuthor(key string) error {
+func (co *Core) DMAuthor(ctx context.Context, key string) error {
 	co.mu.Lock()
 	sl, err := co.slackFor()
 	it, _ := co.item(key)
-	id := co.cfg.SlackNames[it.PR.AuthorLogin()]
+	id := co.cfg.SlackNames[it.PR.Author.Name()]
 	co.mu.Unlock()
 	if err != nil {
 		return err
@@ -271,8 +271,8 @@ func (co *Core) DMAuthor(key string) error {
 	if !slack.IsUserID(id) {
 		return ErrNoSlackUser
 	}
-	if err := sl.DM(context.Background(), id, co.SlackLine(key, "", true)); err != nil {
-		return fmt.Errorf("DM %s: %w", it.PR.AuthorLogin(), err)
+	if err := sl.DM(ctx, id, co.SlackLine(key, "", true)); err != nil {
+		return fmt.Errorf("DM %s: %w", it.PR.Author.Name(), err)
 	}
 	return nil
 }

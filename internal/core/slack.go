@@ -39,6 +39,42 @@ func (co *Core) LoadSlack() error {
 	return nil
 }
 
+// SignInSlack signs you in to Slack and keeps the token in the keyring:
+// with token, a user token (xoxp-...) from an app of your own, or else
+// through the team's Slack app (slack_client_id) in your browser, at the
+// address it hands open. It returns who you're signed in as, e.g. "sam in
+// Acme".
+func (co *Core) SignInSlack(ctx context.Context, token string, open func(url string) error) (string, error) {
+	t := slack.Token{Access: token}
+	if token == "" {
+		login, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		var err error
+		if t, err = slack.New(slack.Token{}).Login(login, co.Config().SlackClientID, open); err != nil {
+			return "", err
+		}
+	}
+	id, err := slack.New(t).AuthTest(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := slack.SaveToken(t); err != nil {
+		return "", err
+	}
+	if err := co.st.SetSlackSignedIn(true); err != nil {
+		return "", err
+	}
+	return id.User + " in " + id.Team, nil
+}
+
+// SignOutSlack deletes your Slack token.
+func (co *Core) SignOutSlack() error {
+	if err := slack.DeleteToken(); err != nil {
+		return err
+	}
+	return co.st.SetSlackSignedIn(false)
+}
+
 // slackLink opens a share's message: in the Slack app when it's installed,
 // which goes straight there, else its permalink, which goes through the
 // browser. A reply in a thread opens the thread's first message.
@@ -76,8 +112,7 @@ const slackIndexLag = 5 * time.Minute
 // by someone else that prowl hasn't seen shared before is looked up once, and
 // returned so this sync shows it. Only a sync, which holds co.syncing, sets
 // co.slackMe, so the sync reads it without co.mu.
-func (co *Core) syncSlack(sl *slack.Client, cfg config.Config, kept []store.SlackShare) ([]gh.PR, error) {
-	ctx := context.Background()
+func (co *Core) syncSlack(ctx context.Context, sl *slack.Client, cfg config.Config, kept []store.SlackShare) ([]gh.PR, error) {
 	if co.slackMe == "" {
 		id, err := sl.AuthTest(ctx)
 		if err != nil {
@@ -86,7 +121,7 @@ func (co *Core) syncSlack(sl *slack.Client, cfg config.Config, kept []store.Slac
 		co.mu.Lock()
 		co.slackMe, co.slackWho, co.slackTeam = id.UserID, id.User+" in "+id.Team, id.TeamID
 		co.mu.Unlock()
-		_, _ = co.loadSlackUsers(sl)
+		_, _ = co.loadSlackUsers(ctx, sl)
 	}
 	since := co.st.SlackSearched()
 	if since.IsZero() {
@@ -118,7 +153,7 @@ func (co *Core) syncSlack(sl *slack.Client, cfg config.Config, kept []store.Slac
 		wg.Go(func() {
 			limit <- struct{}{}
 			defer func() { <-limit }()
-			if pr, err := co.gh.PR(s.Repo, s.Number); err == nil && pr.State == "OPEN" {
+			if pr, err := co.gh.PR(ctx, s.Repo, s.Number); err == nil && pr.State == "OPEN" {
 				looked[i] = pr
 			}
 		})
@@ -172,7 +207,7 @@ func newestShares(cfg config.Config, me string, shares []store.SlackShare) map[s
 
 // pruneShares forgets the shares of PRs that are closed. A share outside
 // the inbox may be of a closed PR, so each is asked about.
-func (co *Core) pruneShares(open map[string]string) {
+func (co *Core) pruneShares(ctx context.Context, open map[string]string) {
 	shares, err := co.st.SlackShares()
 	if err != nil {
 		return
@@ -187,7 +222,7 @@ func (co *Core) pruneShares(open map[string]string) {
 		if err != nil {
 			continue
 		}
-		if pr, err := co.gh.PR(repo, n); err == nil && pr.State != "OPEN" {
+		if pr, err := co.gh.PR(ctx, repo, n); err == nil && pr.State != "OPEN" {
 			_ = co.st.DeleteSlackShares(s.PRKey)
 		}
 	}
@@ -196,7 +231,7 @@ func (co *Core) pruneShares(open map[string]string) {
 // withShares adds the PRs first shared this sync to in, and which PRs are
 // shared, and returns each PR's newest share. The shares are read again, so
 // the ones saved this sync count.
-func (co *Core) withShares(in *gh.Inbox, cfg config.Config, newlyShared []gh.PR) map[string]store.SlackShare {
+func (co *Core) withShares(in *synced, cfg config.Config, newlyShared []gh.PR) map[string]store.SlackShare {
 	have := map[string]bool{}
 	for _, pr := range in.PRs {
 		have[pr.ID] = true
@@ -208,9 +243,9 @@ func (co *Core) withShares(in *gh.Inbox, cfg config.Config, newlyShared []gh.PR)
 	}
 	all, _ := co.st.SlackShares()
 	shares := newestShares(cfg, co.slackMe, all)
-	in.Shared, in.SlackLinks = map[string]gh.Share{}, map[string]string{}
+	in.Shared, in.SlackLinks = map[string]inbox.Share{}, map[string]string{}
 	for key, s := range shares {
-		in.Shared[key] = gh.Share{Channel: s.ChannelName, From: s.UserName, At: s.At}
+		in.Shared[key] = inbox.Share{Channel: s.ChannelName, From: s.UserName, At: s.At}
 		in.SlackLinks[key] = co.slackLink(s)
 	}
 	return shares
@@ -219,7 +254,7 @@ func (co *Core) withShares(in *gh.Inbox, cfg config.Config, newlyShared []gh.PR)
 // reconcileReactions keeps your emoji on each shared PR's newest share in
 // step with your review, wherever you made it. Only a share whose emoji
 // should change costs Slack calls.
-func (co *Core) reconcileReactions(sl *slack.Client) error {
+func (co *Core) reconcileReactions(ctx context.Context, sl *slack.Client) error {
 	co.mu.Lock()
 	cfg, shares, viewer := co.cfg, maps.Clone(co.slackShares), co.inbox.Viewer
 	items := slices.Clone(co.inbox.Items)
@@ -230,11 +265,11 @@ func (co *Core) reconcileReactions(sl *slack.Client) error {
 	var errs []error
 	for _, it := range items {
 		s, ok := shares[it.PR.Key()]
-		if !ok || it.PR.AuthorLogin() == viewer {
+		if !ok || it.PR.Author.Name() == viewer {
 			continue
 		}
 		if want := co.reaction(cfg, it, viewer, s.At); want != s.MyReaction {
-			errs = append(errs, co.setReaction(sl, s, want))
+			errs = append(errs, co.setReaction(ctx, sl, s, want))
 		}
 	}
 	return errors.Join(errs...)
@@ -248,7 +283,7 @@ func (co *Core) reconcileReactions(sl *slack.Client) error {
 func (co *Core) reaction(cfg config.Config, it inbox.Item, me string, since time.Time) string {
 	var last *gh.Review
 	for i, r := range it.PR.Reviews.Nodes {
-		if r.Author == nil || r.Author.Login != me || !r.SubmittedAt.After(since) || last != nil && !r.SubmittedAt.After(last.SubmittedAt) {
+		if r.Author.Name() != me || !r.SubmittedAt.After(since) || last != nil && !r.SubmittedAt.After(last.SubmittedAt) {
 			continue
 		}
 		if r.State == "APPROVED" || r.State == "CHANGES_REQUESTED" || r.State == "COMMENTED" && commented(it.PR, r, me) {
@@ -281,7 +316,7 @@ func commented(pr gh.PR, r gh.Review, me string) bool {
 			continue
 		}
 		for _, c := range t.Comments.Nodes {
-			if c.Author != nil && c.Author.Login == me && c.CreatedAt.Sub(r.SubmittedAt).Abs() < time.Minute {
+			if c.Author.Name() == me && c.CreatedAt.Sub(r.SubmittedAt).Abs() < time.Minute {
 				return true
 			}
 		}
@@ -290,8 +325,7 @@ func commented(pr gh.PR, r gh.Review, me string) bool {
 }
 
 // setReaction swaps the emoji prowl set on a share for want ("" for none).
-func (co *Core) setReaction(sl *slack.Client, s store.SlackShare, want string) error {
-	ctx := context.Background()
+func (co *Core) setReaction(ctx context.Context, sl *slack.Client, s store.SlackShare, want string) error {
 	if s.MyReaction != "" {
 		if err := sl.Unreact(ctx, s.Channel, s.TS, s.MyReaction); err != nil {
 			return err
@@ -319,7 +353,7 @@ func (co *Core) setReaction(sl *slack.Client, s store.SlackShare, want string) e
 // afterReview tells the newest Slack share of the PR about the review you
 // just posted, as slack_after_review says, and says what it did: "" when
 // the PR has no share or Slack isn't connected.
-func (co *Core) afterReview(key string, event ReviewEvent) (string, error) {
+func (co *Core) afterReview(ctx context.Context, key string, event ReviewEvent) (string, error) {
 	co.mu.Lock()
 	sl, cfg := co.slack, co.cfg
 	loggedOut := co.authErr("slack")
@@ -341,9 +375,9 @@ func (co *Core) afterReview(key string, event ReviewEvent) (string, error) {
 		if emoji == s.MyReaction {
 			return note, nil
 		}
-		return note, co.setReaction(sl, s, emoji)
+		return note, co.setReaction(ctx, sl, s, emoji)
 	case "reply":
-		return "replied in " + where, sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), co.SlackLine(key, event, true))
+		return "replied in " + where, sl.Post(ctx, s.Channel, cmp.Or(s.ThreadTS, s.TS), co.SlackLine(key, event, true))
 	}
 	return "", nil
 }
@@ -369,7 +403,7 @@ func place(s store.SlackShare) string {
 
 // PostInThread posts text in the thread of the PR's newest Slack share and
 // says where.
-func (co *Core) PostInThread(key, text string) (string, error) {
+func (co *Core) PostInThread(ctx context.Context, key, text string) (string, error) {
 	co.mu.Lock()
 	sl, err := co.slackFor()
 	s, ok := co.slackShares[key]
@@ -380,7 +414,7 @@ func (co *Core) PostInThread(key, text string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), text); err != nil {
+	if err := sl.Post(ctx, s.Channel, cmp.Or(s.ThreadTS, s.TS), text); err != nil {
 		return "", fmt.Errorf("post in %s: %w", place(s), err)
 	}
 	return place(s), nil
@@ -391,10 +425,10 @@ func (co *Core) PostInThread(key, text string) (string, error) {
 // Carol 👀". Only the emoji in slack_reactions count, and not yours; someone
 // with several counts by the one that says most. One call per shared PR.
 // It adds the link to each share to in.SlackLinks.
-func (co *Core) reactionsOnYours(sl *slack.Client, cfg config.Config, in *gh.Inbox) (map[string]string, error) {
+func (co *Core) reactionsOnYours(ctx context.Context, sl *slack.Client, cfg config.Config, in *synced) (map[string]string, error) {
 	yours := map[string]string{}
 	for _, pr := range in.PRs {
-		if pr.AuthorLogin() == in.Viewer {
+		if pr.Author.Name() == in.Viewer {
 			yours[strings.ToLower(pr.Key())] = pr.Key()
 		}
 	}
@@ -422,7 +456,7 @@ func (co *Core) reactionsOnYours(sl *slack.Client, cfg config.Config, in *gh.Inb
 	out := map[string]string{}
 	for key, s := range newest {
 		wg.Go(func() {
-			reactions, err := sl.Reactions(context.Background(), s.Channel, s.TS)
+			reactions, err := sl.Reactions(ctx, s.Channel, s.TS)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -482,7 +516,7 @@ const (
 // SlackActivity lists the channels you're in, the busiest with PR links of
 // your orgs first, and how many such links reached you in DMs. It searches
 // Slack once per session.
-func (co *Core) SlackActivity() ([]ChannelActivity, int, error) {
+func (co *Core) SlackActivity(ctx context.Context) ([]ChannelActivity, int, error) {
 	co.mu.Lock()
 	sl, err := co.slackFor()
 	cfg, cached, dms := co.cfg, co.activity, co.dmLinks
@@ -493,7 +527,6 @@ func (co *Core) SlackActivity() ([]ChannelActivity, int, error) {
 	if cached != nil {
 		return cached, dms, nil
 	}
-	ctx := context.Background()
 	channels, err := sl.Channels(ctx)
 	if err != nil {
 		return nil, 0, err

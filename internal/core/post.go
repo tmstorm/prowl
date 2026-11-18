@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -193,8 +194,8 @@ func (co *Core) AgentDraft(key string) (Draft, error) {
 // posted are kept so `prowl edits` and later reviews can learn from your
 // changes. A review on a PR shared in Slack then shows there, as
 // slack_after_review says.
-func (co *Core) Submit(key string, d Draft) (Submitted, error) {
-	out, err := co.submit(key, d)
+func (co *Core) Submit(ctx context.Context, key string, d Draft) (Submitted, error) {
+	out, err := co.submit(ctx, key, d)
 	if err != nil && !out.Review {
 		co.mu.Lock()
 		if co.unsent == nil {
@@ -206,7 +207,7 @@ func (co *Core) Submit(key string, d Draft) (Submitted, error) {
 	return out, err
 }
 
-func (co *Core) submit(key string, d Draft) (Submitted, error) {
+func (co *Core) submit(ctx context.Context, key string, d Draft) (Submitted, error) {
 	var out Submitted
 	co.mu.Lock()
 	it, ok := co.item(key)
@@ -216,8 +217,8 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 	}
 	pr := it.PR
 	if d.Event == EventNote {
-		if err := co.gh.Comment(pr.ID, d.Body); err != nil {
-			return out, fmt.Errorf("comment on %s: %w", key, err)
+		if err := co.gh.Comment(ctx, pr.ID, d.Body); err != nil {
+			return out, fmt.Errorf("%s: %w", key, err)
 		}
 		out.Review = true
 		return out, nil
@@ -235,9 +236,9 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 		main = commitComments{commit: pr.HeadRefOid}
 	}
 	for _, g := range earlier {
-		u, err := co.gh.SubmitReview(pr.Repository.NameWithOwner, pr.Number, g.commit, string(EventComment), "", ghComments(g.comments))
+		u, err := co.gh.SubmitReview(ctx, pr.Repository.NameWithOwner, pr.Number, g.commit, string(EventComment), "", ghComments(g.comments))
 		if err != nil {
-			return out, fmt.Errorf("submit %s: comments on %s: %w", key, gh.Short(g.commit), err)
+			return out, fmt.Errorf("comments on %s: %w", gh.Short(g.commit), err)
 		}
 		out.URL = u
 		co.dropPending(key, g.comments)
@@ -248,14 +249,14 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 	switch {
 	case then != "" && len(main.comments) == 0 && len(earlier) == 0:
 		if strings.TrimSpace(d.Body) != "" {
-			if err := co.gh.Comment(pr.ID, d.Body); err != nil {
-				return out, fmt.Errorf("comment on %s: %w", key, err)
+			if err := co.gh.Comment(ctx, pr.ID, d.Body); err != nil {
+				return out, fmt.Errorf("%s: %w", key, err)
 			}
 		}
 	case event != EventComment || strings.TrimSpace(d.Body) != "" || len(main.comments) > 0:
-		u, err := co.gh.SubmitReview(pr.Repository.NameWithOwner, pr.Number, main.commit, string(event), d.Body, ghComments(main.comments))
+		u, err := co.gh.SubmitReview(ctx, pr.Repository.NameWithOwner, pr.Number, main.commit, string(event), d.Body, ghComments(main.comments))
 		if err != nil {
-			return out, fmt.Errorf("submit %s: %w", key, err)
+			return out, err
 		}
 		out.URL = u
 		co.reviewed(key, event, main.commit)
@@ -287,7 +288,7 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 	failed := make([]error, len(d.Replies))
 	var sending sync.WaitGroup
 	for i, r := range d.Replies {
-		sending.Go(func() { failed[i] = co.sendReply(r.RunID, r.ThreadID, r.Body) })
+		sending.Go(func() { failed[i] = co.sendReply(ctx, r.RunID, r.ThreadID, r.Body) })
 	}
 	sending.Wait()
 	for i, r := range d.Replies {
@@ -296,7 +297,7 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 		}
 	}
 	if reviewed != "" {
-		note, err := co.afterReview(key, reviewed)
+		note, err := co.afterReview(ctx, key, reviewed)
 		out.Slack = note
 		if err != nil {
 			failed = append(failed, fmt.Errorf("slack: %w", err))
@@ -304,12 +305,12 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 	}
 	switch then {
 	case EventClose:
-		if err := co.gh.ClosePR(pr.ID); err != nil {
-			failed = append(failed, fmt.Errorf("close: %w", err))
+		if err := co.gh.ClosePR(ctx, pr.ID); err != nil {
+			failed = append(failed, err)
 		}
 	case EventDraft:
-		if err := co.gh.SetDraft(pr.ID, true); err != nil {
-			failed = append(failed, fmt.Errorf("convert to draft: %w", err))
+		if err := co.gh.SetDraft(ctx, pr.ID, true); err != nil {
+			failed = append(failed, err)
 		}
 	}
 	if err := errors.Join(failed...); err != nil {
@@ -342,14 +343,14 @@ func (co *Core) reviewed(key string, event ReviewEvent, commit string) {
 }
 
 // MarkReady marks a draft PR ready for review.
-func (co *Core) MarkReady(key string) error {
+func (co *Core) MarkReady(ctx context.Context, key string) error {
 	co.mu.Lock()
 	it, ok := co.item(key)
 	co.mu.Unlock()
 	if !ok || it.PR.Local() {
 		return fmt.Errorf("%s is not a pull request in the inbox", key)
 	}
-	if err := co.gh.SetDraft(it.PR.ID, false); err != nil {
+	if err := co.gh.SetDraft(ctx, it.PR.ID, false); err != nil {
 		return fmt.Errorf("%s: %w", key, err)
 	}
 	return nil
@@ -417,8 +418,8 @@ func stripVerdict(s string) string {
 // PostReply sends a reply that an agent drafted for a review thread, as
 // you edited it. The draft is marked sent, and kept beside what you sent so
 // `prowl edits` and later reviews learn from your edits.
-func (co *Core) PostReply(runID int64, threadID, body string) error {
-	if err := co.sendReply(runID, threadID, body); err != nil {
+func (co *Core) PostReply(ctx context.Context, runID int64, threadID, body string) error {
+	if err := co.sendReply(ctx, runID, threadID, body); err != nil {
 		return err
 	}
 	return co.markReplied(runID, threadID, body)
@@ -441,14 +442,11 @@ func (co *Core) draftedReply(runID int64, threadID string) (*store.Run, int, err
 	return run, i, nil
 }
 
-func (co *Core) sendReply(runID int64, threadID, body string) error {
+func (co *Core) sendReply(ctx context.Context, runID int64, threadID, body string) error {
 	if _, _, err := co.draftedReply(runID, threadID); err != nil {
 		return err
 	}
-	if err := co.gh.ReplyToThread(threadID, body); err != nil {
-		return fmt.Errorf("reply: %w", err)
-	}
-	return nil
+	return co.gh.ReplyToThread(ctx, threadID, body)
 }
 
 // markReplied records that a drafted reply went out as body. Submit sends

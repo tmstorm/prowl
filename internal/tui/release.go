@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
@@ -79,7 +80,7 @@ func (m *Model) upgrade() tea.Cmd {
 	}
 	co, exe := m.core, m.exe
 	return func() tea.Msg {
-		if err := co.CheckRelease(true); err != nil {
+		if err := co.CheckRelease(context.Background(), true); err != nil {
 			return upgradeMsg{err: err}
 		}
 		r := co.Release(exe)
@@ -93,7 +94,7 @@ func (m *Model) upgrade() tea.Cmd {
 		case r.Command != "":
 			return upgradeMsg{note: "prowl " + r.Latest + " is out: " + r.Command}
 		}
-		v, err := co.Upgrade(exe)
+		v, err := co.Upgrade(context.Background(), exe)
 		return upgradeMsg{installed: v, err: err}
 	}
 }

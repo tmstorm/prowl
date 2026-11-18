@@ -116,20 +116,39 @@ type Item struct {
 	ReviewStatus string // approved | changes requested | needs review | needs rebase | draft
 }
 
-func Classify(in *gh.Inbox) []Item {
+// Options are what classifying takes besides GitHub's inbox: settings, and
+// what Slack says about its PRs, by PR key.
+type Options struct {
+	Bots map[string]bool // logins treated as bots: their activity doesn't count
+	// RecheckAfterPush puts a PR pushed to after you approved back in front
+	// of you, for repos that don't dismiss stale approvals.
+	RecheckAfterPush bool
+	Shared           map[string]Share  // its newest share in Slack, by someone else
+	Reactions        map[string]string // on your PR: who reacted on its Slack share, e.g. "#reviews: Bob ✅"
+	SlackLinks       map[string]string // the Slack message that shared it
+}
+
+// Share is a PR link someone posted in Slack.
+type Share struct {
+	Channel string // e.g. "reviews"; empty for a DM
+	From    string // who posted it
+	At      time.Time
+}
+
+func Classify(in *gh.Inbox, opt Options) []Item {
 	teams := map[string]bool{}
 	for _, t := range in.Teams {
 		teams[t] = true
 	}
 	items := make([]Item, 0, len(in.PRs))
 	for _, pr := range in.PRs {
-		share, shared := in.Shared[pr.Key()]
-		it := classify(pr, in.Viewer, teams, in.Bots, in.Watched[pr.Repository.NameWithOwner], in.RecheckAfterPush)
+		share, shared := opt.Shared[pr.Key()]
+		it := classify(pr, in.Viewer, teams, opt.Bots, in.Watched[pr.Repository.NameWithOwner], opt.RecheckAfterPush)
 		if shared {
 			it = withShare(it, share)
 		}
-		it.SlackLink = in.SlackLinks[pr.Key()]
-		if r := in.Reactions[pr.Key()]; r != "" && it.Bucket == Mine {
+		it.SlackLink = opt.SlackLinks[pr.Key()]
+		if r := opt.Reactions[pr.Key()]; r != "" && it.Bucket == Mine {
 			it.Reason += " · " + r
 			it.SlackReactions = r
 		}
@@ -160,7 +179,7 @@ func watched(pr gh.PR, bots map[string]bool) (Bucket, time.Time, Why, string) {
 		}
 	}
 	for _, r := range pr.Reviews.Nodes {
-		if a := login(r.Author); a != "" && a != login(pr.Author) && !r.Author.IsBot(bots) && !slices.Contains(who, a) {
+		if a := r.Author.Name(); a != pr.Author.Name() && !r.Author.IsBot(bots) && !slices.Contains(who, a) {
 			who = append(who, a)
 		}
 	}
@@ -190,13 +209,6 @@ func (l latest) String() string {
 	return l.who + " " + l.what
 }
 
-func login(a *gh.Actor) string {
-	if a == nil {
-		return ""
-	}
-	return a.Login
-}
-
 // classify puts a PR in one bucket from the viewer's history with it.
 // myLastDecisive is their latest approve or request-changes; myVerdict also
 // counts DISMISSED, which is what those turn into when GitHub or a bot
@@ -216,7 +228,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 	var myLast, myLastDecisive, myVerdict *gh.Review
 	for i := range pr.Reviews.Nodes {
 		r := &pr.Reviews.Nodes[i]
-		if login(r.Author) != me || r.State == "PENDING" {
+		if r.Author.Name() != me || r.State == "PENDING" {
 			continue
 		}
 		if myLast == nil || r.SubmittedAt.After(myLast.SubmittedAt) {
@@ -245,10 +257,10 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 	var others, threads latest
 	for _, c := range pr.Comments.Nodes {
 		switch {
-		case login(c.Author) == me:
+		case c.Author.Name() == me:
 			myLastActivity = maxT(myLastActivity, c.CreatedAt)
 		case !c.Author.IsBot(bots):
-			others.see(c.CreatedAt, login(c.Author), "commented")
+			others.see(c.CreatedAt, c.Author.Name(), "commented")
 		}
 	}
 	for _, t := range pr.ReviewThreads.Nodes {
@@ -260,11 +272,11 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 		var reply latest
 		for _, c := range t.Comments.Nodes {
 			switch {
-			case login(c.Author) == me:
+			case c.Author.Name() == me:
 				mine = true
 				myLastActivity = maxT(myLastActivity, c.CreatedAt)
 			case !c.Author.IsBot(bots):
-				reply.see(c.CreatedAt, login(c.Author), "replied in your thread")
+				reply.see(c.CreatedAt, c.Author.Name(), "replied in your thread")
 			}
 		}
 		if mine {
@@ -273,7 +285,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 	}
 	reviewers := others
 	for _, r := range pr.Reviews.Nodes {
-		if a := login(r.Author); a != me && a != "" && !r.Author.IsBot(bots) {
+		if a := r.Author.Name(); a != me && !r.Author.IsBot(bots) {
 			reviewers.see(r.SubmittedAt, a, "reviewed")
 		}
 	}
@@ -317,7 +329,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 
 	asked := false
 	for _, r := range pr.Reviews.Nodes {
-		if login(r.Author) == me && r.State == "COMMENTED" && strings.TrimSpace(r.Body) != "" {
+		if r.Author.Name() == me && r.State == "COMMENTED" && strings.TrimSpace(r.Body) != "" {
 			asked = true
 		}
 	}
@@ -334,7 +346,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 		myVerdict.State == "DISMISSED" && myVerdict.PreviousState != "CHANGES_REQUESTED")
 
 	switch {
-	case login(pr.Author) == me:
+	case pr.Author.Name() == me:
 		it.Bucket = Mine
 		it.Since = maxT(reviewers.at, pr.CreatedAt)
 		it.Why, it.Reason = mineReason(pr, reviewers.at, myLastActivity)
@@ -354,7 +366,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 		it.Since = orT(requestedAt, lastPush)
 		it.Why, it.Reason = ReRequested, "re-requested"+commitsNote(commitsAfterReview)
 
-	case login(pr.Author) != me && !pr.IsDraft && myVerdict != nil && myVerdict.State == "DISMISSED":
+	case pr.Author.Name() != me && !pr.IsDraft && myVerdict != nil && myVerdict.State == "DISMISSED":
 		it.Bucket = ReApprove
 		it.Since = maxT(lastPush, myVerdict.SubmittedAt)
 		it.Why, it.Reason = ReviewDismissed, "your review was dismissed"+commitsNote(commitsAfterReview)
@@ -424,7 +436,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 
 // withShare moves a PR you haven't touched into Shared, or notes the share
 // on a review request.
-func withShare(it Item, share gh.Share) Item {
+func withShare(it Item, share Share) Item {
 	why, where := SentToYou, "sent to you by "+share.From
 	if share.Channel != "" {
 		why, where = SharedInChannel, "shared in #"+share.Channel+" by "+share.From

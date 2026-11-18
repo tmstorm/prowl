@@ -5,6 +5,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -69,9 +70,9 @@ func prWorktrees(repo string, number int) string {
 
 func (j Job) Key() string {
 	if j.Dir != "" {
-		return store.LocalKey(j.Repo, j.Branch)
+		return gh.LocalKey(j.Repo, j.Branch)
 	}
-	return fmt.Sprintf("%s#%d", j.Repo, j.Number)
+	return gh.PRKey(j.Repo, j.Number)
 }
 
 func logDir() string { return filepath.Join(config.DataDir(), "logs") }
@@ -453,7 +454,7 @@ type result struct {
 // A revise or sync runs on the agent that made the review, since a session
 // only resumes there. A failure from a logged-out agent is reported as that,
 // whatever the agent printed.
-func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
+func Run(ctx context.Context, cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 	r := &jobRun{cfg: cfg, st: st, c: c, j: j, key: j.Key()}
 	if j.RunID != 0 {
 		if r.prev, _ = st.Run(j.RunID); r.prev != nil {
@@ -487,9 +488,9 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 	}
 	r.tools = ToolServerCommand(cfg, be, r.j.Repo, r.wt, r.j.Dir != "", false)
 	if r.j.Refine != "" {
-		return r.revise()
+		return r.revise(ctx)
 	}
-	return r.review()
+	return r.review(ctx)
 }
 
 // jobRun is a job as it runs: what its review or revise turns share.
@@ -520,7 +521,7 @@ func (r *jobRun) fail(err error) error {
 	}
 	if r.j.Refine != "" && r.prev != nil {
 		_ = r.st.EndRevise(r.id)
-		_ = r.st.AddReviewLog(r.key, r.reviewer(), "note", "the revise failed, so the review is as it was: "+err.Error())
+		_ = r.st.AddNote(r.key, r.reviewer(), "note", "the revise failed, so the review is as it was: "+err.Error())
 		r.notify(Title(r.be.Name())+" revise failed", r.key+": "+err.Error())
 		return err
 	}
@@ -543,7 +544,7 @@ func (r *jobRun) turn(input, session, phase string) (*result, string, error) {
 
 // fresh is the full prompt for a turn that starts without a session: the
 // PR's history, guidelines and what you dismissed before.
-func (r *jobRun) fresh() string {
+func (r *jobRun) fresh(ctx context.Context) string {
 	j, st, wt := r.j, r.st, r.wt
 	runs, _ := st.Runs(r.key)
 	var hist history
@@ -553,7 +554,7 @@ func (r *jobRun) fresh() string {
 		changed = localChanges(wt, hist.base)
 	} else {
 		_ = st.SetRunActivity(r.id, "reading review history")
-		hist = loadHistory(r.c, j, r.cfg.BotSet())
+		hist = loadHistory(ctx, r.c, j, r.cfg.BotSet())
 		r.threads = hist.threads
 		if hist.lastOid == "" && hist.reader != "" && hist.reader == j.Author {
 			hist.lastOid, hist.lastAt, hist.byAgent = lastRun(runs, store.Reviewer(j.Agent, j.Profile), r.id)
@@ -577,25 +578,25 @@ func (r *jobRun) fresh() string {
 }
 
 // revise sends the job's instruction to the review's own session.
-func (r *jobRun) revise() error {
+func (r *jobRun) revise(ctx context.Context) error {
 	j, prev := r.j, r.prev
 	if prev == nil || (r.be.Resumes() && prev.SessionID == "") {
 		return r.fail(fmt.Errorf("no previous review to revise"))
 	}
 	if !j.Sync {
-		_ = r.st.AddReviewLog(r.key, r.reviewer(), "you", j.Refine)
+		_ = r.st.AddNote(r.key, r.reviewer(), "you", j.Refine)
 	}
 	instruction := "Revise your review per this instruction from the reviewer, then return the complete updated review " +
 		"(all findings you still stand behind, not just the changes). Put one or two sentences to the reviewer " +
 		"about what you changed and why in `note`:\n\n" + j.Refine
 	if j.Sync {
 		instruction = j.Refine
-		_ = r.st.AddReviewLog(r.key, r.reviewer(), "note", "synced the review from your chat")
+		_ = r.st.AddNote(r.key, r.reviewer(), "note", "synced the review from your chat")
 	}
 	instruction += reviseReplies
 	session := prev.SessionID
 	if !r.be.Resumes() {
-		instruction = r.fresh() + previousReview(prev) + instruction
+		instruction = r.fresh(ctx) + previousReview(prev) + instruction
 		session = ""
 	}
 	res, sid, err := r.turn(instruction, session, "revising")
@@ -603,19 +604,19 @@ func (r *jobRun) revise() error {
 		return r.fail(err)
 	}
 	if res.Note != "" {
-		_ = r.st.AddReviewLog(r.key, r.reviewer(), "agent", res.Note)
+		_ = r.st.AddNote(r.key, r.reviewer(), "agent", res.Note)
 	}
 	keepState(res.Findings, prev.Findings)
 	if r.threads == nil && j.Dir == "" {
-		r.threads = loadHistory(r.c, j, r.cfg.BotSet()).threads
+		r.threads = loadHistory(ctx, r.c, j, r.cfg.BotSet()).threads
 	}
 	return r.finish(sid, res, prev.Guidance, 0, threadReplies(res, r.threads, prev.Replies))
 }
 
 // review runs a fresh review, then a turn that verifies its findings.
-func (r *jobRun) review() error {
-	_ = r.st.ClearReviewLog(r.key, r.reviewer())
-	input := r.fresh()
+func (r *jobRun) review(ctx context.Context) error {
+	_ = r.st.ClearNotes(r.key, r.reviewer())
+	input := r.fresh(ctx)
 	first, sid, err := r.turn(input, "", "reviewing")
 	if err != nil {
 		return r.fail(err)
@@ -629,7 +630,7 @@ func (r *jobRun) review() error {
 		final, sid2 = first, sid
 	}
 	if final.Note != "" {
-		_ = r.st.AddReviewLog(r.key, r.reviewer(), "agent", final.Note)
+		_ = r.st.AddNote(r.key, r.reviewer(), "agent", final.Note)
 	}
 	return r.finish(sid2, final, "", len(first.Findings), threadReplies(final, r.threads, nil))
 }

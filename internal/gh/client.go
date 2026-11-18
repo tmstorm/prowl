@@ -2,6 +2,7 @@ package gh
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -105,7 +106,7 @@ fragment pr on PullRequest {
 
 // search runs a PR search, following pages up to limit results, and returns
 // the PRs' node IDs.
-func (c *Client) search(q string, limit int) ([]string, error) {
+func (c *Client) search(ctx context.Context, q string, limit int) ([]string, error) {
 	var out []string
 	var after *string
 	for len(out) < limit {
@@ -114,7 +115,7 @@ func (c *Client) search(q string, limit int) ([]string, error) {
 				ID string `json:"id"`
 			}] `json:"search"`
 		}
-		err := c.gql.Do(`query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: 100, after: $after) {
+		err := c.gql.DoWithContext(ctx, `query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: 100, after: $after) {
   nodes { ... on PullRequest { id } } pageInfo { hasNextPage endCursor } } }`, map[string]any{"q": q, "after": after}, &resp)
 		if err != nil {
 			return nil, fmt.Errorf("search %q: %w", q, err)
@@ -135,26 +136,9 @@ func (c *Client) search(q string, limit int) ([]string, error) {
 
 type Inbox struct {
 	Watched map[string]bool // repos (owner/name) whose every open PR is fetched
-	Bots    map[string]bool // logins treated as bots: their activity doesn't count
-	// RecheckAfterPush puts a PR pushed to after you approved back in front
-	// of you, for repos that don't dismiss stale approvals.
-	RecheckAfterPush bool
-	Viewer           string
-	Teams            []string // team slugs the viewer belongs to
-	PRs              []PR
-	Shared           map[string]Share // PR key -> its newest share in Slack, by someone else
-	// PR key -> who reacted on the Slack share of your PR, e.g. "#reviews: Bob ✅".
-	Reactions map[string]string
-	// PR key -> the Slack message that shared it: the newest by someone else,
-	// or on your PR the newest by anyone.
-	SlackLinks map[string]string
-}
-
-// Share is a PR link someone posted in Slack.
-type Share struct {
-	Channel string // e.g. "reviews"; empty for a DM
-	From    string // who posted it
-	At      time.Time
+	Viewer  string
+	Teams   []string // team slugs the viewer belongs to
+	PRs     []PR
 }
 
 // searchLimit caps each inbox search; past it, PRs drop out of the inbox.
@@ -174,7 +158,7 @@ const maxBatches = 10
 // new wait for them. A known PR that no search finds any more is left out.
 // The PRs in keep (node IDs, e.g. shared in Slack) are in the inbox whether a
 // search finds them or not, while they are open.
-func (c *Client) FetchInbox(orgs, watch, known, keep []string) (*Inbox, error) {
+func (c *Client) FetchInbox(ctx context.Context, orgs, watch, known, keep []string) (*Inbox, error) {
 	inbox := &Inbox{Watched: map[string]bool{}}
 	for _, r := range watch {
 		inbox.Watched[r] = true
@@ -201,13 +185,13 @@ func (c *Client) FetchInbox(orgs, watch, known, keep []string) (*Inbox, error) {
 	ids := make([][]string, len(queries))
 	errs := make([]error, len(queries)+1)
 	for i, q := range queries {
-		wg.Go(func() { ids[i], errs[i] = c.search(q, searchLimit) })
+		wg.Go(func() { ids[i], errs[i] = c.search(ctx, q, searchLimit) })
 	}
-	wg.Go(func() { inbox.Viewer, inbox.Teams, errs[len(queries)] = c.viewerTeams(orgs) })
+	wg.Go(func() { inbox.Viewer, inbox.Teams, errs[len(queries)] = c.viewerTeams(ctx, orgs) })
 	var loaded []PR
 	var loadErr error
 	wg.Go(func() {
-		loaded, loadErr = c.loadPRs(slices.Compact(slices.Sorted(slices.Values(slices.Concat(known, keep)))))
+		loaded, loadErr = c.loadPRs(ctx, slices.Compact(slices.Sorted(slices.Values(slices.Concat(known, keep)))))
 	})
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
@@ -234,7 +218,7 @@ func (c *Client) FetchInbox(orgs, watch, known, keep []string) (*Inbox, error) {
 			}
 		}
 	}
-	more, err := c.loadPRs(missing)
+	more, err := c.loadPRs(ctx, missing)
 	if err != nil {
 		return nil, fmt.Errorf("fetch inbox: %w", err)
 	}
@@ -250,22 +234,22 @@ func (c *Client) FetchInbox(orgs, watch, known, keep []string) (*Inbox, error) {
 }
 
 // loadPRs loads full PR data for the given node IDs, in batches run at once.
-func (c *Client) loadPRs(ids []string) ([]PR, error) {
+func (c *Client) loadPRs(ctx context.Context, ids []string) ([]PR, error) {
 	size := max(2, (len(ids)+maxBatches-1)/maxBatches)
 	batches := make([][]PR, (len(ids)+size-1)/size)
 	errs := make([]error, len(batches))
 	var wg sync.WaitGroup
 	for i := range batches {
 		chunk := ids[i*size : min((i+1)*size, len(ids))]
-		wg.Go(func() { batches[i], errs[i] = c.prsByID(chunk) })
+		wg.Go(func() { batches[i], errs[i] = c.prsByID(ctx, chunk) })
 	}
 	wg.Wait()
 	return slices.Concat(batches...), errors.Join(errs...)
 }
 
 // viewerTeams is your login and the teams you're on in orgs.
-func (c *Client) viewerTeams(orgs []string) (string, []string, error) {
-	me, err := c.Viewer()
+func (c *Client) viewerTeams(ctx context.Context, orgs []string) (string, []string, error) {
+	me, err := c.Viewer(ctx)
 	if err != nil {
 		return "", nil, err
 	}
@@ -280,7 +264,7 @@ func (c *Client) viewerTeams(orgs []string) (string, []string, error) {
 				} `json:"teams"`
 			} `json:"organization"`
 		}
-		err := c.gql.Do(`query($org: String!, $me: String!) {
+		err := c.gql.DoWithContext(ctx, `query($org: String!, $me: String!) {
   organization(login: $org) { teams(first: 100, userLogins: [$me]) { nodes { slug } } } }`,
 			map[string]any{"org": org, "me": me}, &resp)
 		if err != nil {
@@ -296,12 +280,12 @@ func (c *Client) viewerTeams(orgs []string) (string, []string, error) {
 }
 
 // prsByID loads full PR data for the given node IDs.
-func (c *Client) prsByID(ids []string) ([]PR, error) {
+func (c *Client) prsByID(ctx context.Context, ids []string) ([]PR, error) {
 	var resp struct {
 		Nodes []*PR `json:"nodes"`
 	}
-	me, _ := c.Viewer()
-	if err := c.gql.Do(`query($ids: [ID!]!, $me: String) { nodes(ids: $ids) { ...pr } }`+prFields, map[string]any{"ids": ids, "me": me}, &resp); err != nil {
+	me, _ := c.Viewer(ctx)
+	if err := c.gql.DoWithContext(ctx, `query($ids: [ID!]!, $me: String) { nodes(ids: $ids) { ...pr } }`+prFields, map[string]any{"ids": ids, "me": me}, &resp); err != nil {
 		return nil, fmt.Errorf("load PRs: %w", err)
 	}
 	var out []PR
@@ -316,7 +300,7 @@ func (c *Client) prsByID(ids []string) ([]PR, error) {
 
 // Viewer returns the authenticated user's login. It is asked once and
 // remembered; a failed lookup is asked again next time.
-func (c *Client) Viewer() (string, error) {
+func (c *Client) Viewer(ctx context.Context) (string, error) {
 	c.viewerMu.Lock()
 	defer c.viewerMu.Unlock()
 	if c.viewer != "" {
@@ -327,7 +311,7 @@ func (c *Client) Viewer() (string, error) {
 			Login string `json:"login"`
 		} `json:"viewer"`
 	}
-	if err := c.gql.Do(`{ viewer { login } }`, nil, &v); err != nil {
+	if err := c.gql.DoWithContext(ctx, `{ viewer { login } }`, nil, &v); err != nil {
 		return "", fmt.Errorf("viewer: %w", err)
 	}
 	c.viewer = v.Viewer.Login
@@ -345,29 +329,6 @@ type Detail struct {
 	Checks   []Check // CI on the head commit
 }
 
-// Event is a timeline item that is not a review or comment.
-type Event struct {
-	Typename          string    `json:"__typename"`
-	CreatedAt         time.Time `json:"createdAt"`
-	Actor             *Actor    `json:"actor"`
-	RequestedReviewer *struct {
-		Login string `json:"login"`
-		Slug  string `json:"slug"`
-	} `json:"requestedReviewer"`
-	PreviousReviewState string `json:"previousReviewState"`
-	Review              *struct {
-		ID string `json:"id"`
-	} `json:"review"`
-	Commit *struct {
-		Oid             string    `json:"oid"`
-		CommittedDate   time.Time `json:"committedDate"`
-		MessageHeadline string    `json:"messageHeadline"`
-		Author          *struct {
-			User *Actor `json:"user"`
-		} `json:"author"`
-	} `json:"commit"`
-}
-
 type File struct {
 	Path      string `json:"path"`
 	Additions int    `json:"additions"`
@@ -376,7 +337,7 @@ type File struct {
 	ViewerViewedState string `json:"viewerViewedState"`
 }
 
-func (c *Client) FetchDetail(repo string, number int) (*Detail, error) {
+func (c *Client) FetchDetail(ctx context.Context, repo string, number int) (*Detail, error) {
 	owner, name, _ := strings.Cut(repo, "/")
 	q := `query($owner: String!, $name: String!, $n: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $n) {
@@ -416,16 +377,16 @@ func (c *Client) FetchDetail(repo string, number int) (*Detail, error) {
 		} `json:"repository"`
 	}
 	vars := map[string]any{"owner": owner, "name": name, "n": number}
-	if err := c.gql.Do(q, vars, &resp); err != nil {
+	if err := c.gql.DoWithContext(ctx, q, vars, &resp); err != nil {
 		return nil, fmt.Errorf("fetch detail: %w", err)
 	}
 	p := resp.Repository.PullRequest
-	threads, err := allPages(c, p.ReviewThreads, vars, `reviewThreads(first: 100, after: $after) { `+threadFields+` }`,
+	threads, err := allPages(ctx, c, p.ReviewThreads, vars, `reviewThreads(first: 100, after: $after) { `+threadFields+` }`,
 		func(pr prPage) page[Thread] { return pr.ReviewThreads })
 	if err != nil {
 		return nil, err
 	}
-	files, err := allPages(c, p.Files, vars, `files(first: 100, after: $after) { `+fileFields+` }`,
+	files, err := allPages(ctx, c, p.Files, vars, `files(first: 100, after: $after) { `+fileFields+` }`,
 		func(pr prPage) page[File] { return pr.Files })
 	if err != nil {
 		return nil, err
@@ -434,16 +395,12 @@ func (c *Client) FetchDetail(repo string, number int) (*Detail, error) {
 		Body: p.Body, Reviews: p.Reviews.Nodes, Comments: p.Comments.Nodes,
 		Threads: threads, Files: files, Events: p.TimelineItems.Nodes,
 	}
-	for _, e := range det.Events {
-		if e.Typename == "ReviewDismissedEvent" && e.Review != nil {
-			setPreviousState(det.Reviews, e.Review.ID, e.PreviousReviewState)
-		}
-	}
+	markDismissed(det.Reviews, det.Events)
 	for _, cm := range p.Commits.Nodes {
 		if cm.Commit.StatusCheckRollup == nil {
 			continue
 		}
-		checks, err := allPages(c, cm.Commit.StatusCheckRollup.Contexts, vars,
+		checks, err := allPages(ctx, c, cm.Commit.StatusCheckRollup.Contexts, vars,
 			`commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100, after: $after) { `+checkFields+` } } } } }`,
 			func(pr prPage) page[checkNode] {
 				if len(pr.Commits.Nodes) == 0 || pr.Commits.Nodes[0].Commit.StatusCheckRollup == nil {
@@ -507,7 +464,7 @@ type prPage struct {
 
 // allPages returns the nodes of first and of the pages after it, which it loads
 // with field, a connection taking $after, picked out of the answer by get.
-func allPages[T any](c *Client, first page[T], vars map[string]any, field string, get func(prPage) page[T]) ([]T, error) {
+func allPages[T any](ctx context.Context, c *Client, first page[T], vars map[string]any, field string, get func(prPage) page[T]) ([]T, error) {
 	nodes := first.Nodes
 	cur := first
 	for i := 0; i < maxPages && cur.PageInfo.HasNextPage; i++ {
@@ -520,7 +477,7 @@ func allPages[T any](c *Client, first page[T], vars map[string]any, field string
 		v["after"] = cur.PageInfo.EndCursor
 		q := `query($owner: String!, $name: String!, $n: Int!, $after: String) {
   repository(owner: $owner, name: $name) { pullRequest(number: $n) { ` + field + ` } } }`
-		if err := c.gql.Do(q, v, &resp); err != nil {
+		if err := c.gql.DoWithContext(ctx, q, v, &resp); err != nil {
 			return nil, fmt.Errorf("fetch detail: %w", err)
 		}
 		cur = get(resp.Repository.PullRequest)
@@ -530,23 +487,26 @@ func allPages[T any](c *Client, first page[T], vars map[string]any, field string
 }
 
 // PRDiff returns the full unified diff of the PR.
-func (c *Client) PRDiff(repo string, number int) (string, error) {
-	return c.rawDiff(fmt.Sprintf("repos/%s/pulls/%d", repo, number))
+func (c *Client) PRDiff(ctx context.Context, repo string, number int) (string, error) {
+	return c.rawDiff(ctx, fmt.Sprintf("repos/%s/pulls/%d", repo, number))
 }
 
 // CompareDiff returns the diff between two commits (used for "since my last review").
-func (c *Client) CompareDiff(repo, from, to string) (string, error) {
-	return c.rawDiff(fmt.Sprintf("repos/%s/compare/%s...%s", repo, from, to))
+func (c *Client) CompareDiff(ctx context.Context, repo, from, to string) (string, error) {
+	return c.rawDiff(ctx, fmt.Sprintf("repos/%s/compare/%s...%s", repo, from, to))
 }
 
-func (c *Client) rawDiff(path string) (string, error) {
-	resp, err := c.diff.Request("GET", path, nil)
+func (c *Client) rawDiff(ctx context.Context, path string) (string, error) {
+	resp, err := c.diff.RequestWithContext(ctx, "GET", path, nil)
 	if err != nil {
-		return "", fmt.Errorf("raw diff: %w", err)
+		return "", fmt.Errorf("diff %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
-	return string(b), err
+	if err != nil {
+		return "", fmt.Errorf("diff %s: %w", path, err)
+	}
+	return string(b), nil
 }
 
 type DraftComment struct {
@@ -562,7 +522,7 @@ type DraftComment struct {
 // SubmitReview posts a review. event is APPROVE, REQUEST_CHANGES or COMMENT.
 // If GitHub rejects the inline comments (e.g. a line outside the diff), the
 // comments are folded into the review body and the review is retried.
-func (c *Client) SubmitReview(repo string, number int, commitID, event, body string, comments []DraftComment) (string, error) {
+func (c *Client) SubmitReview(ctx context.Context, repo string, number int, commitID, event, body string, comments []DraftComment) (string, error) {
 	post := func(body string, comments []DraftComment) (string, error) {
 		payload := map[string]any{"event": event, "body": body}
 		if commitID != "" {
@@ -575,8 +535,10 @@ func (c *Client) SubmitReview(repo string, number int, commitID, event, body str
 		var out struct {
 			HTMLURL string `json:"html_url"`
 		}
-		err := c.rest.Post(fmt.Sprintf("repos/%s/pulls/%d/reviews", repo, number), bytes.NewReader(b), &out)
-		return out.HTMLURL, err
+		if err := c.rest.DoWithContext(ctx, "POST", fmt.Sprintf("repos/%s/pulls/%d/reviews", repo, number), bytes.NewReader(b), &out); err != nil {
+			return "", fmt.Errorf("review %s#%d: %w", repo, number, err)
+		}
+		return out.HTMLURL, nil
 	}
 	url, err := post(body, comments)
 	var herr *api.HTTPError
@@ -597,7 +559,7 @@ func (c *Client) SubmitReview(repo string, number int, commitID, event, body str
 // addPullRequestReviewThreadReply puts it in a pending review instead, and
 // GitHub allows one pending review per person on a PR, so the next review
 // you submit fails.
-func (c *Client) ReplyToThread(threadID, body string) error {
+func (c *Client) ReplyToThread(ctx context.Context, threadID, body string) error {
 	q := `query($id: ID!) { node(id: $id) { ... on PullRequestReviewThread {
 	  pullRequest { number repository { nameWithOwner } }
 	  comments(first: 1) { nodes { fullDatabaseId } } } } }`
@@ -616,7 +578,7 @@ func (c *Client) ReplyToThread(threadID, body string) error {
 			} `json:"comments"`
 		} `json:"node"`
 	}
-	if err := c.gql.Do(q, map[string]any{"id": threadID}, &out); err != nil {
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": threadID}, &out); err != nil {
 		return fmt.Errorf("find thread %s: %w", threadID, err)
 	}
 	pr, first := out.Node.PullRequest, out.Node.Comments.Nodes
@@ -625,19 +587,22 @@ func (c *Client) ReplyToThread(threadID, body string) error {
 	}
 	b, _ := json.Marshal(map[string]string{"body": body})
 	path := fmt.Sprintf("repos/%s/pulls/%d/comments/%s/replies", pr.Repository.NameWithOwner, pr.Number, first[0].ID)
-	if err := c.rest.Post(path, bytes.NewReader(b), nil); err != nil {
+	if err := c.rest.DoWithContext(ctx, "POST", path, bytes.NewReader(b), nil); err != nil {
 		return fmt.Errorf("reply in %s#%d: %w", pr.Repository.NameWithOwner, pr.Number, err)
 	}
 	return nil
 }
 
 // ResolveThread resolves a review thread, or reopens it.
-func (c *Client) ResolveThread(threadID string, resolved bool) error {
-	q := `mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }`
+func (c *Client) ResolveThread(ctx context.Context, threadID string, resolved bool) error {
+	q, op := `mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }`, "reopen"
 	if resolved {
-		q = `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }`
+		q, op = `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }`, "resolve"
 	}
-	return c.gql.Do(q, map[string]any{"id": threadID}, nil)
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": threadID}, nil); err != nil {
+		return fmt.Errorf("%s thread %s: %w", op, threadID, err)
+	}
+	return nil
 }
 
 // Person is a GitHub user as their profile shows them.
@@ -648,7 +613,7 @@ type Person struct {
 }
 
 // OrgMembers lists an org's members.
-func (c *Client) OrgMembers(org string) ([]Person, error) {
+func (c *Client) OrgMembers(ctx context.Context, org string) ([]Person, error) {
 	var out []Person
 	var after *string
 	for range 10 {
@@ -657,7 +622,7 @@ func (c *Client) OrgMembers(org string) ([]Person, error) {
 				MembersWithRole page[Person] `json:"membersWithRole"`
 			} `json:"organization"`
 		}
-		err := c.gql.Do(`query($org: String!, $after: String) { organization(login: $org) {
+		err := c.gql.DoWithContext(ctx, `query($org: String!, $after: String) { organization(login: $org) {
   membersWithRole(first: 100, after: $after) { nodes { login name email } pageInfo { hasNextPage endCursor } } } }`,
 			map[string]any{"org": org, "after": after}, &resp)
 		if err != nil {
@@ -687,7 +652,7 @@ type Candidate struct {
 // ReviewCandidates lists who can be asked to review a PR in repo: the people
 // who can be assigned in it, then the teams of the org that owns it. A repo
 // owned by a person has no teams.
-func (c *Client) ReviewCandidates(repo string) ([]Candidate, error) {
+func (c *Client) ReviewCandidates(ctx context.Context, repo string) ([]Candidate, error) {
 	owner, name, ok := strings.Cut(repo, "/")
 	if !ok {
 		return nil, fmt.Errorf("repo %q is not owner/name", repo)
@@ -700,7 +665,7 @@ func (c *Client) ReviewCandidates(repo string) ([]Candidate, error) {
 				AssignableUsers page[Candidate] `json:"assignableUsers"`
 			} `json:"repository"`
 		}
-		err := c.gql.Do(`query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) {
+		err := c.gql.DoWithContext(ctx, `query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) {
   assignableUsers(first: 100, after: $after) { nodes { login name } pageInfo { hasNextPage endCursor } } } }`,
 			map[string]any{"owner": owner, "name": name, "after": after}, &resp)
 		if err != nil {
@@ -724,7 +689,7 @@ func (c *Client) ReviewCandidates(repo string) ([]Candidate, error) {
 			}] `json:"teams"`
 		} `json:"organization"`
 	}
-	err := c.gql.Do(`query($org: String!) { organization(login: $org) { teams(first: 100) { nodes { slug name } } } }`,
+	err := c.gql.DoWithContext(ctx, `query($org: String!) { organization(login: $org) { teams(first: 100) { nodes { slug name } } } }`,
 		map[string]any{"org": owner}, &teams)
 	if err == nil && teams.Organization != nil {
 		for _, t := range teams.Organization.Teams.Nodes {
@@ -736,7 +701,7 @@ func (c *Client) ReviewCandidates(repo string) ([]Candidate, error) {
 
 // SuggestedReviewers are the people GitHub suggests for a PR, from the code
 // owners and recent authors of the files it changes.
-func (c *Client) SuggestedReviewers(repo string, number int) ([]Candidate, error) {
+func (c *Client) SuggestedReviewers(ctx context.Context, repo string, number int) ([]Candidate, error) {
 	owner, name, ok := strings.Cut(repo, "/")
 	if !ok {
 		return nil, fmt.Errorf("repo %q is not owner/name", repo)
@@ -751,7 +716,7 @@ func (c *Client) SuggestedReviewers(repo string, number int) ([]Candidate, error
 			} `json:"pullRequest"`
 		} `json:"repository"`
 	}
-	err := c.gql.Do(`query($owner: String!, $name: String!, $n: Int!) { repository(owner: $owner, name: $name) {
+	err := c.gql.DoWithContext(ctx, `query($owner: String!, $name: String!, $n: Int!) { repository(owner: $owner, name: $name) {
   pullRequest(number: $n) { suggestedReviewers { isAuthor reviewer { login name } } } } }`,
 		map[string]any{"owner": owner, "name": name, "n": number}, &resp)
 	if err != nil {
@@ -770,7 +735,7 @@ func (c *Client) SuggestedReviewers(repo string, number int) ([]Candidate, error
 }
 
 // OrgRepos lists an org's repos that aren't archived, as owner/name.
-func (c *Client) OrgRepos(org string) ([]string, error) {
+func (c *Client) OrgRepos(ctx context.Context, org string) ([]string, error) {
 	var out []string
 	var after *string
 	for range 10 {
@@ -782,7 +747,7 @@ func (c *Client) OrgRepos(org string) ([]string, error) {
 				}] `json:"repositories"`
 			} `json:"organization"`
 		}
-		err := c.gql.Do(`query($org: String!, $after: String) { organization(login: $org) {
+		err := c.gql.DoWithContext(ctx, `query($org: String!, $after: String) { organization(login: $org) {
   repositories(first: 100, after: $after) { nodes { nameWithOwner isArchived } pageInfo { hasNextPage endCursor } } } }`,
 			map[string]any{"org": org, "after": after}, &resp)
 		if err != nil {
@@ -806,7 +771,7 @@ func (c *Client) OrgRepos(org string) ([]string, error) {
 }
 
 // PR fetches one pull request, e.g. one shared as a link.
-func (c *Client) PR(repo string, number int) (*PR, error) {
+func (c *Client) PR(ctx context.Context, repo string, number int) (*PR, error) {
 	owner, name, ok := strings.Cut(repo, "/")
 	if !ok {
 		return nil, fmt.Errorf("repo %q is not owner/name", repo)
@@ -816,8 +781,8 @@ func (c *Client) PR(repo string, number int) (*PR, error) {
 			PullRequest *PR `json:"pullRequest"`
 		} `json:"repository"`
 	}
-	me, _ := c.Viewer()
-	err := c.gql.Do(`query($owner: String!, $name: String!, $n: Int!, $me: String) {
+	me, _ := c.Viewer(ctx)
+	err := c.gql.DoWithContext(ctx, `query($owner: String!, $name: String!, $n: Int!, $me: String) {
   repository(owner: $owner, name: $name) { pullRequest(number: $n) { ...pr } } }`+prFields,
 		map[string]any{"owner": owner, "name": name, "n": number, "me": me}, &resp)
 	if err != nil {
@@ -832,38 +797,53 @@ func (c *Client) PR(repo string, number int) (*PR, error) {
 
 // RequestReviewers asks people, and teams (by slug), to review the PR. For
 // someone who already reviewed, it asks again.
-func (c *Client) RequestReviewers(repo string, number int, logins, teams []string) error {
+func (c *Client) RequestReviewers(ctx context.Context, repo string, number int, logins, teams []string) error {
 	b, _ := json.Marshal(map[string]any{"reviewers": append([]string{}, logins...), "team_reviewers": append([]string{}, teams...)})
-	return c.rest.Post(fmt.Sprintf("repos/%s/pulls/%d/requested_reviewers", repo, number), bytes.NewReader(b), nil)
+	if err := c.rest.DoWithContext(ctx, "POST", fmt.Sprintf("repos/%s/pulls/%d/requested_reviewers", repo, number), bytes.NewReader(b), nil); err != nil {
+		return fmt.Errorf("request reviews on %s#%d: %w", repo, number, err)
+	}
+	return nil
 }
 
 // SetFileViewed toggles GitHub's per-user "Viewed" checkbox for a file.
-func (c *Client) SetFileViewed(prID, path string, viewed bool) error {
+func (c *Client) SetFileViewed(ctx context.Context, prID, path string, viewed bool) error {
 	q := `mutation($id: ID!, $path: String!) { markFileAsViewed(input: {pullRequestId: $id, path: $path}) { clientMutationId } }`
 	if !viewed {
 		q = `mutation($id: ID!, $path: String!) { unmarkFileAsViewed(input: {pullRequestId: $id, path: $path}) { clientMutationId } }`
 	}
-	return c.gql.Do(q, map[string]any{"id": prID, "path": path}, nil)
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": prID, "path": path}, nil); err != nil {
+		return fmt.Errorf("mark %s viewed: %w", path, err)
+	}
+	return nil
 }
 
 // Comment adds a comment to a PR's conversation. subjectID is the PR's node
 // ID.
-func (c *Client) Comment(subjectID, body string) error {
+func (c *Client) Comment(ctx context.Context, subjectID, body string) error {
 	q := `mutation($id: ID!, $body: String!) { addComment(input: {subjectId: $id, body: $body}) { clientMutationId } }`
-	return c.gql.Do(q, map[string]any{"id": subjectID, "body": body}, nil)
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": subjectID, "body": body}, nil); err != nil {
+		return fmt.Errorf("comment on %s: %w", subjectID, err)
+	}
+	return nil
 }
 
 // ClosePR closes a pull request without merging it.
-func (c *Client) ClosePR(prID string) error {
+func (c *Client) ClosePR(ctx context.Context, prID string) error {
 	q := `mutation($id: ID!) { closePullRequest(input: {pullRequestId: $id}) { pullRequest { id } } }`
-	return c.gql.Do(q, map[string]any{"id": prID}, nil)
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": prID}, nil); err != nil {
+		return fmt.Errorf("close %s: %w", prID, err)
+	}
+	return nil
 }
 
 // SetDraft converts a pull request to a draft, or marks it ready for review.
-func (c *Client) SetDraft(prID string, draft bool) error {
-	q := `mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { id } } }`
+func (c *Client) SetDraft(ctx context.Context, prID string, draft bool) error {
+	q, op := `mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { id } } }`, "mark ready for review"
 	if draft {
-		q = `mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { id } } }`
+		q, op = `mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { id } } }`, "convert to draft"
 	}
-	return c.gql.Do(q, map[string]any{"id": prID}, nil)
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": prID}, nil); err != nil {
+		return fmt.Errorf("%s %s: %w", op, prID, err)
+	}
+	return nil
 }

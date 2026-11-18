@@ -2,6 +2,7 @@ package tui
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -58,7 +59,7 @@ func (m *Model) matchSlackNames(msg namesProposedMsg) tea.Cmd {
 		m.info("matching GitHub logins to Slack users…")
 	}
 	return func() tea.Msg {
-		msg.matches, msg.users, msg.err = co.ProposeNames()
+		msg.matches, msg.users, msg.err = co.ProposeNames(context.Background())
 		return msg
 	}
 }
@@ -240,7 +241,7 @@ func (p *namesPopup) save(m *Model) tea.Cmd {
 		return p.done(m)
 	}
 	n := 0
-	_, err := m.core.Update(func(c *config.Config) error {
+	_, err := m.core.UpdateConfig(func(c *config.Config) error {
 		if c.SlackNames == nil {
 			c.SlackNames = map[string]string{}
 		}
@@ -374,7 +375,7 @@ func (m *Model) openChannels(back *optionsPopup) tea.Cmd {
 	co := m.core
 	m.info("reading your Slack channels…")
 	return func() tea.Msg {
-		channels, dms, err := co.SlackActivity()
+		channels, dms, err := co.SlackActivity(context.Background())
 		return channelsMsg{channels: channels, dmLinks: dms, err: err, back: back}
 	}
 }
@@ -448,7 +449,7 @@ func (p *channelsPopup) save(m *Model) tea.Cmd {
 			ids = append(ids, ch.ID)
 		}
 	}
-	_, err := m.core.Update(func(c *config.Config) error {
+	_, err := m.core.UpdateConfig(func(c *config.Config) error {
 		c.SlackChannels, c.SlackDMs = ids, p.dms
 		return nil
 	})

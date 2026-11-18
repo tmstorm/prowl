@@ -61,7 +61,7 @@ func TestProposeNames(t *testing.T) {
 	sl.set(match(ts, "U2", "nlind", "C1", "reviews", "o/api/pull/7"))
 	refresh(t, co)
 
-	got, _, err := co.ProposeNames()
+	got, _, err := co.ProposeNames(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,16 +108,16 @@ func TestSlackLineAndDM(t *testing.T) {
 	if got := co.SlackLine("o/api#9", core.EventApprove, false); got != "https://github.com/o/api/pull/9 Approved · @BQ · fix: x" {
 		t.Errorf("line after approving = %q", got)
 	}
-	if err := co.DMAuthor("o/api#9"); err != nil {
+	if err := co.DMAuthor(t.Context(), "o/api#9"); err != nil {
 		t.Fatal(err)
 	}
 	if calls := sl.took(); len(calls) != 1 || calls[0] != "chat.postMessage D9  https://github.com/o/api/pull/9 Needs review · <@U0BEN123456> · fix: x" {
 		t.Fatalf("calls = %q", calls)
 	}
-	if _, err := co.Open("o/api", 8); err != nil {
+	if _, err := co.Open(t.Context(), "o/api", 8); err != nil {
 		t.Fatal(err)
 	}
-	if err := co.DMAuthor("o/api#8"); !errors.Is(err, core.ErrNoSlackUser) {
+	if err := co.DMAuthor(t.Context(), "o/api#8"); !errors.Is(err, core.ErrNoSlackUser) {
 		t.Fatalf("unmapped author: %v", err)
 	}
 }

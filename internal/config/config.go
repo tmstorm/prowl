@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,73 +16,41 @@ import (
 )
 
 type Config struct {
-	// GitHub orgs to pull PRs from.
-	Orgs []string `toml:"orgs"`
-	// Repos (owner/name) to show every open PR of, not only the ones that
-	// involve you. Those go in All, so you can drain a repo before a release.
-	WatchRepos []string `toml:"watch_repos"`
-	// Directories that contain local clones, searched in order for <dir>/<repo>.
-	RepoRoots []string `toml:"repo_roots"`
-	// How often `prowl watch` (and the TUI) refresh.
-	PollInterval Duration `toml:"poll_interval"`
-	// Treat a PR as stale after it waits on you this long.
-	StaleAfter Duration `toml:"stale_after"`
-	// How long desktop notifications stay up.
+	Orgs          []string `toml:"orgs"`
+	RepoRoots     []string `toml:"repo_roots"`
+	PollInterval  Duration `toml:"poll_interval"`
 	NotifyTimeout Duration `toml:"notify_timeout"`
-	// Ask GitHub once a day whether a newer prowl is out.
-	CheckUpdates bool `toml:"check_updates"`
-	// Install a newer prowl in the background when prowl installed itself.
-	AutoUpdate bool `toml:"auto_update"`
+	CheckUpdates  bool     `toml:"check_updates"`
+	AutoUpdate    bool     `toml:"auto_update"`
+	Bots          []string `toml:"bots"`
 
-	// UI
-	// The key that opens the action menu: space, ",", "\" or ";" (see Leaders).
-	Leader   string `toml:"leader"`
-	Theme    string `toml:"theme"`
-	NerdFont bool   `toml:"nerd_font"`
-	Mouse    bool   `toml:"mouse"`
-	Editor   string `toml:"editor"` // empty: $VISUAL, $EDITOR, then vi (notepad on Windows)
-	// Explain the inbox icons at the bottom of the inbox pane.
-	ShowLegend bool `toml:"show_legend"`
-	// The owl: asleep on an empty inbox, waking up while prowl syncs.
-	Playful bool `toml:"playful"`
-	// Stripped from repo names on screen, e.g. "acme-" shows acme-api as api.
-	RepoPrefix string `toml:"repo_prefix"`
-	// Give each repo its own color in the inbox (default: one color for all).
-	ColorRepos bool `toml:"color_repos"`
-	// Sort PRs inside each inbox section by Conventional Commit type.
-	SortByType bool `toml:"sort_by_type"`
-	// Type order for that sort. Empty uses DefaultTypeOrder.
-	TypeOrder []string `toml:"type_order"`
-	// Color per commit type, added to or replacing the built-in colors.
-	TypeColors map[string]string `toml:"type_colors"`
-	// A PR pushed to after you approved needs you again (as re-check), for
-	// repos where GitHub doesn't dismiss stale approvals.
-	RecheckAfterPush bool `toml:"recheck_after_push"`
-	// Inbox grouping: "status" (what each PR needs from you) or "repo".
-	GroupBy string `toml:"group_by"`
-	// How <leader>ci shows the agent chat: "popup" (floating window) or "fullscreen".
-	ChatMode string `toml:"chat_mode"`
+	WatchRepos       []string          `toml:"watch_repos"`
+	StaleAfter       Duration          `toml:"stale_after"`
+	SortByType       bool              `toml:"sort_by_type"`
+	TypeOrder        []string          `toml:"type_order"`
+	TypeColors       map[string]string `toml:"type_colors"`
+	RecheckAfterPush bool              `toml:"recheck_after_push"`
+	GroupBy          string            `toml:"group_by"`
 
-	// Accounts treated as bots: dimmed and folded in the activity timeline.
-	// Logins ending in [bot] always count.
-	Bots []string `toml:"bots"`
+	SlackClientID    string            `toml:"slack_client_id"`
+	SlackChannels    []string          `toml:"slack_channels"`
+	SlackDMs         bool              `toml:"slack_dms"`
+	SlackAfterReview string            `toml:"slack_after_review"`
+	SlackReactions   SlackReactions    `toml:"slack_reactions"`
+	SlackNames       map[string]string `toml:"slack_names"`
 
-	// The coding agents that review PRs, and how.
 	Agent Agent `toml:"agent"`
 
-	// Client ID of the team's prowl Slack app, for `prowl slack`.
-	SlackClientID string `toml:"slack_client_id"`
-	// Slack channel IDs whose PR links show in the inbox.
-	SlackChannels []string `toml:"slack_channels"`
-	// PR links sent to you in Slack DMs show in the inbox.
-	SlackDMs bool `toml:"slack_dms"`
-	// What prowl does on the Slack message that shared a PR once you review
-	// it: "react", "reply" in its thread, or "off".
-	SlackAfterReview string `toml:"slack_after_review"`
-	// The emoji prowl reacts with, by Slack name.
-	SlackReactions SlackReactions `toml:"slack_reactions"`
-	// GitHub login -> name used in Slack lines (e.g. "@alice").
-	SlackNames map[string]string `toml:"slack_names"`
+	Leader     string `toml:"leader"`
+	Mouse      bool   `toml:"mouse"`
+	Editor     string `toml:"editor"`
+	ChatMode   string `toml:"chat_mode"`
+	Theme      string `toml:"theme"`
+	NerdFont   bool   `toml:"nerd_font"`
+	ShowLegend bool   `toml:"show_legend"`
+	Playful    bool   `toml:"playful"`
+	RepoPrefix string `toml:"repo_prefix"`
+	ColorRepos bool   `toml:"color_repos"`
 }
 
 // SlackReactions are the emoji for where your review of a shared PR stands.
@@ -94,42 +63,21 @@ type SlackReactions struct {
 
 // Agent configures the coding agents that review PRs and write summaries.
 type Agent struct {
-	// The agents that review a PR together (claude, codex, command), the
-	// main one first. <leader>cc runs all of them.
-	Reviewers []string `toml:"reviewers"`
-	// Model per agent, e.g. claude = "opus". Missing: the agent's own default.
-	Models map[string]string `toml:"models"`
-	// For the command agent: a shell command that reads the review prompt on
-	// stdin and prints the review JSON on stdout.
-	Command string `toml:"command"`
-	// Skills the agent must use on every review.
-	Skills []string `toml:"skills"`
-	// Extra directories the agent may read, e.g. a clone of the org's
-	// standards repo that AGENTS.md / CONTRIBUTING.md link to.
-	ContextDirs []string `toml:"context_dirs"`
-	// Container image per repo (owner/name) for the agent's run tool; "*" is
-	// the fallback. No image: the agent can't run commands.
-	RunImages map[string]string `toml:"run_images"`
-	// How to review: what to look for and how to write it. Empty uses
-	// DefaultReviewInstructions.
-	ReviewInstructions string `toml:"review_instructions"`
-	// Report should-fix findings and nits. Must-fix findings always count.
-	ShouldFix bool `toml:"should_fix"`
-	Nits      bool `toml:"nits"`
-	// For the command agent: how to log in, and how to check you're logged in
-	// (exit 0 = yes). Both optional.
-	LoginCommand  string `toml:"login_command"`
-	StatusCommand string `toml:"status_command"`
-	// Models for AI summaries, per agent; a missing one uses the agent's
-	// review model. A small, fast model is plenty.
-	SummaryModels map[string]string `toml:"summary_models"`
-	// Write an AI summary of each PR as it first needs you.
-	AutoSummary bool `toml:"auto_summary"`
-	// How many of your recent edits to agent drafts go into the review
-	// prompt as examples of how you write. 0 is off.
-	EditExamples int `toml:"edit_examples"`
-	// Named review profiles: a focus for a review, run with <leader>cp.
-	Profiles []Profile `toml:"profiles"`
+	Reviewers          []string          `toml:"reviewers"`
+	Command            string            `toml:"command"`
+	LoginCommand       string            `toml:"login_command"`
+	StatusCommand      string            `toml:"status_command"`
+	Skills             []string          `toml:"skills"`
+	ContextDirs        []string          `toml:"context_dirs"`
+	ShouldFix          bool              `toml:"should_fix"`
+	Nits               bool              `toml:"nits"`
+	ReviewInstructions string            `toml:"review_instructions"`
+	AutoSummary        bool              `toml:"auto_summary"`
+	EditExamples       int               `toml:"edit_examples"`
+	Models             map[string]string `toml:"models"`
+	SummaryModels      map[string]string `toml:"summary_models"`
+	RunImages          map[string]string `toml:"run_images"`
+	Profiles           []Profile         `toml:"profiles"`
 }
 
 // Profile is a named way to review: extra instructions, and optionally its
@@ -179,7 +127,7 @@ func (a Agent) Profile(name string) (Profile, bool) {
 // Main is the main review agent: the first reviewer.
 func (a Agent) Main() string {
 	if len(a.Reviewers) == 0 {
-		return "claude"
+		a = Default().Agent
 	}
 	return a.Reviewers[0]
 }
@@ -317,6 +265,9 @@ catch.`
 // mode, so none shadows a motion.
 var Leaders = []string{"space", ",", "\\", ";"}
 
+// Themes are the TUI's color themes.
+var Themes = []string{"dracula", "catppuccin", "tokyonight", "gruvbox", "nord", "rose-pine", "kanagawa"}
+
 // Instructions are the review instructions in use.
 func (a Agent) Instructions() string {
 	if strings.TrimSpace(a.ReviewInstructions) == "" {
@@ -378,17 +329,33 @@ func Load() (Config, error) {
 	}
 
 	cfg.Agent.ReviewInstructions = strings.Trim(cfg.Agent.ReviewInstructions, "\n")
-	if !slices.Contains(Leaders, cfg.Leader) {
-		return cfg, fmt.Errorf(`leader = %q: use "space", ",", "\\" or ";"`, cfg.Leader)
-	}
-	if !slices.Contains([]string{"react", "reply", "off"}, cfg.SlackAfterReview) {
-		return cfg, fmt.Errorf(`slack_after_review = %q: use "react", "reply" or "off"`, cfg.SlackAfterReview)
+	for _, e := range []struct {
+		key, val string
+		want     []string
+	}{
+		{"leader", cfg.Leader, Leaders},
+		{"group_by", cfg.GroupBy, []string{"status", "repo"}},
+		{"slack_after_review", cfg.SlackAfterReview, []string{"react", "reply", "off"}},
+		{"chat_mode", cfg.ChatMode, []string{"popup", "fullscreen"}},
+		{"theme", cfg.Theme, Themes},
+	} {
+		if !slices.Contains(e.want, e.val) {
+			q := make([]string, len(e.want))
+			for i, w := range e.want {
+				q[i] = strconv.Quote(w)
+			}
+			return cfg, fmt.Errorf("%s = %q: use %s or %s", e.key, e.val, strings.Join(q[:len(q)-1], ", "), q[len(q)-1])
+		}
 	}
 	if len(cfg.Agent.Reviewers) == 0 {
-		cfg.Agent.Reviewers = []string{"claude"}
+		cfg.Agent.Reviewers = Default().Agent.Reviewers
 	}
 	return cfg, nil
 }
+
+// PollEvery is how often to sync: poll_interval, but never more often than
+// every 30 seconds.
+func (c Config) PollEvery() time.Duration { return max(c.PollInterval.Duration, 30*time.Second) }
 
 // ExpandedRepoRoots returns repo_roots with ~ expanded.
 func (c Config) ExpandedRepoRoots() []string { return expand(c.RepoRoots) }
@@ -480,30 +447,20 @@ func (c Config) Save() error {
 	w("# prowl config. Also editable in the app: <leader>, (options).\n")
 	w("# A commented setting is at its default; uncomment it to change it.\n\n")
 	strs("# GitHub orgs to pull pull requests from. Empty: your open PRs across all of GitHub.\n", "orgs", c.Orgs, d.Orgs)
-	strs("# Repos (owner/name) to show every open PR of, not only the ones that involve\n# you, e.g. to drain a repo before a release. They show in All: unclaimed when\n# nobody was asked to review, watching when someone else has it. <leader>w toggles.\n", "watch_repos", c.WatchRepos, d.WatchRepos)
 	strs("# Where your local clones live. Agent reviews reuse <root>/<repo> when it\n# exists, and otherwise clone into prowl's data directory.\n", "repo_roots", c.RepoRoots, d.RepoRoots)
 	dur("# How often to check GitHub, in the TUI and in `prowl watch`.\n", "poll_interval", c.PollInterval, d.PollInterval)
-	dur("# A PR waiting on you longer than this is flagged.\n", "stale_after", c.StaleAfter, d.StaleAfter)
 	dur("# How long desktop notifications stay on screen.\n", "notify_timeout", c.NotifyTimeout, d.NotifyTimeout)
 	boolean("# Ask GitHub once a day whether a newer prowl is out, and say so.\n", "check_updates", c.CheckUpdates, d.CheckUpdates)
 	boolean("# When the install script installed prowl, install a newer prowl in the\n# background; a restart (<leader>U) runs it. A package manager's prowl is never\n# replaced: prowl says which command updates it.\n", "auto_update", c.AutoUpdate, d.AutoUpdate)
+	strs("# Accounts shown as bots (dimmed and folded) in a PR's activity. Logins\n# ending in [bot] always count.\n", "bots", c.Bots, d.Bots)
 
-	w("# UI ------------------------------------------------------------------\n\n")
-	str("# The leader: the key that opens prowl's action menu, written <leader> in the\n# docs. \"space\", \",\", \"\\\\\" or \";\".\n", "leader", c.Leader, d.Leader)
-	str("# dracula, catppuccin, tokyonight, gruvbox, nord, rose-pine, kanagawa\n", "theme", c.Theme, d.Theme)
-	boolean("# Powerline separators and icons (needs a Nerd Font).\n", "nerd_font", c.NerdFont, d.NerdFont)
-	boolean("", "mouse", c.Mouse, d.Mouse)
-	boolean("# Explain the inbox icons at the bottom of the inbox pane.\n", "show_legend", c.ShowLegend, d.ShowLegend)
-	boolean("# The owl: asleep on an empty inbox, waking up while prowl syncs.\n", "playful", c.Playful, d.Playful)
-	str("# Stripped from repo names on screen to save room, e.g. \"acme-\" shows\n# acme-api as api. Empty shows full names.\n", "repo_prefix", c.RepoPrefix, d.RepoPrefix)
-	boolean("# Give every repo its own color in the inbox instead of one shared color.\n", "color_repos", c.ColorRepos, d.ColorRepos)
+	w("# Inbox ----------------------------------------------------------------\n\n")
+	strs("# Repos (owner/name) to show every open PR of, not only the ones that involve\n# you, e.g. to drain a repo before a release. They show in All: unclaimed when\n# nobody was asked to review, watching when someone else has it. <leader>w toggles.\n", "watch_repos", c.WatchRepos, d.WatchRepos)
+	dur("# A PR waiting on you longer than this is flagged.\n", "stale_after", c.StaleAfter, d.StaleAfter)
 	boolean("# Sort PRs inside each inbox section by Conventional Commit type (fix first,\n# chore last), then by how long they have waited. Off: by wait time only.\n", "sort_by_type", c.SortByType, d.SortByType)
 	strs("# The type order for that sort. \"other\" is any title that isn't a\n# conventional commit, and any type not listed. To add a type, put it in\n# the list where it belongs and give it a color under [type_colors].\n", "type_order", c.Types(), DefaultTypeOrder)
 	boolean("# A PR pushed to after you approved needs you again, as re-check. For repos\n# where GitHub keeps an approval through new pushes; off trusts your approval.\n", "recheck_after_push", c.RecheckAfterPush, d.RecheckAfterPush)
 	str("# Inbox grouping: status (what each PR needs from you) or repo. <leader>g toggles.\n", "group_by", c.GroupBy, d.GroupBy)
-	str("# How <leader>ci shows the agent chat: popup (floating window over prowl)\n# or fullscreen (prowl steps aside until you quit the chat). Windows always\n# uses fullscreen.\n", "chat_mode", c.ChatMode, d.ChatMode)
-	str("# Editor for reviews. Empty uses $VISUAL, then $EDITOR, then vi (notepad on Windows).\n", "editor", c.Editor, d.Editor)
-	strs("# Accounts shown as bots (dimmed and folded) in a PR's activity. Logins\n# ending in [bot] always count.\n", "bots", c.Bots, d.Bots)
 
 	w("# Slack ----------------------------------------------------------------\n\n")
 	str("# Client ID of your team's prowl Slack app; `prowl slack` signs you in to\n# it. Not a secret. Empty: `prowl slack` shows how to make the app.\n", "slack_client_id", c.SlackClientID, d.SlackClientID)
@@ -511,7 +468,33 @@ func (c Config) Save() error {
 	boolean("# PR links sent to you in Slack DMs and group DMs show in the inbox too.\n", "slack_dms", c.SlackDMs, d.SlackDMs)
 	str("# Once you review a PR someone shared in Slack: react (keep an emoji on their\n# message in step with your review, wherever you reviewed; see [slack_reactions]),\n# reply (post the Slack line in its thread when you submit from prowl), or off.\n", "slack_after_review", c.SlackAfterReview, d.SlackAfterReview)
 
-	w("# Agent ----------------------------------------------------------------\n\n")
+	w("# TUI ------------------------------------------------------------------\n\n")
+	str("# The leader: the key that opens prowl's action menu, written <leader> in the\n# docs. \"space\", \",\", \"\\\\\" or \";\".\n", "leader", c.Leader, d.Leader)
+	boolean("", "mouse", c.Mouse, d.Mouse)
+	str("# Editor for reviews. Empty uses $VISUAL, then $EDITOR, then vi (notepad on Windows).\n", "editor", c.Editor, d.Editor)
+	str("# How <leader>ci shows the agent chat: popup (floating window over prowl)\n# or fullscreen (prowl steps aside until you quit the chat). Windows always\n# uses fullscreen.\n", "chat_mode", c.ChatMode, d.ChatMode)
+	str("# dracula, catppuccin, tokyonight, gruvbox, nord, rose-pine, kanagawa\n", "theme", c.Theme, d.Theme)
+	boolean("# Powerline separators and icons (needs a Nerd Font).\n", "nerd_font", c.NerdFont, d.NerdFont)
+	boolean("# Explain the inbox icons at the bottom of the inbox pane.\n", "show_legend", c.ShowLegend, d.ShowLegend)
+	boolean("# The owl: asleep on an empty inbox, waking up while prowl syncs.\n", "playful", c.Playful, d.Playful)
+	str("# Stripped from repo names on screen to save room, e.g. \"acme-\" shows\n# acme-api as api. Empty shows full names.\n", "repo_prefix", c.RepoPrefix, d.RepoPrefix)
+	boolean("# Give every repo its own color in the inbox instead of one shared color.\n", "color_repos", c.ColorRepos, d.ColorRepos)
+
+	w("# Inbox and Slack tables -----------------------------------------------\n\n")
+	w("# Color per Conventional Commit type, added to or replacing the built-in\n# ones: red, green, orange, pink, yellow, purple, cyan, dim or \"#rrggbb\".\n[type_colors]\n")
+	mapLines(&b, c.TypeColors, "# wip = \"orange\"\n")
+
+	w("\n# The emoji prowl reacts with on a shared PR's message, by Slack name, without\n# colons. prowl only removes the ones it added.\n[slack_reactions]\n")
+	r, dr := c.SlackReactions, d.SlackReactions
+	str("", "reviewing", r.Reviewing, dr.Reviewing)
+	str("", "approved", r.Approved, dr.Approved)
+	str("", "changes_requested", r.ChangesRequested, dr.ChangesRequested)
+	str("", "commented", r.Commented, dr.Commented)
+
+	w("# GitHub login -> how to refer to them in copied Slack lines.\n[slack_names]\n")
+	mapLines(&b, c.SlackNames, "# octocat = \"@Mona\"\n")
+
+	w("\n# Agent ----------------------------------------------------------------\n\n")
 	w("[agent]\n")
 	strs("# The agents that review PRs: claude (Claude Code), codex (Codex CLI), or\n# command (any program; see `command`). <leader>cc runs all of them together and\n# their findings post as one review. The first is the main agent.\n", "reviewers", c.Agent.Reviewers, d.Agent.Reviewers)
 	str("# For the command agent: a shell command that reads the review prompt on\n# stdin and prints the review as JSON (`prowl schema` shows the format).\n", "command", c.Agent.Command, d.Agent.Command)
@@ -550,18 +533,6 @@ func (c Config) Save() error {
 			w("skills = %s\n", list(p.Skills))
 		}
 	}
-	w("\n# Color per Conventional Commit type, added to or replacing the built-in\n# ones: red, green, orange, pink, yellow, purple, cyan, dim or \"#rrggbb\".\n[type_colors]\n")
-	mapLines(&b, c.TypeColors, "# wip = \"orange\"\n")
-
-	w("\n# The emoji prowl reacts with on a shared PR's message, by Slack name, without\n# colons. prowl only removes the ones it added.\n[slack_reactions]\n")
-	r, dr := c.SlackReactions, d.SlackReactions
-	str("", "reviewing", r.Reviewing, dr.Reviewing)
-	str("", "approved", r.Approved, dr.Approved)
-	str("", "changes_requested", r.ChangesRequested, dr.ChangesRequested)
-	str("", "commented", r.Commented, dr.Commented)
-
-	w("# GitHub login -> how to refer to them in copied Slack lines.\n[slack_names]\n")
-	mapLines(&b, c.SlackNames, "# octocat = \"@Mona\"\n")
 
 	tmp := Path() + ".tmp"
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {

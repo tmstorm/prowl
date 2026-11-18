@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"context"
 	"fmt"
 	"io"
 )
@@ -21,9 +22,9 @@ type Asset struct {
 
 // LatestRelease is repo's newest release that is neither a draft nor a
 // pre-release.
-func (c *Client) LatestRelease(repo string) (Release, error) {
+func (c *Client) LatestRelease(ctx context.Context, repo string) (Release, error) {
 	var r Release
-	if err := c.rest.Get("repos/"+repo+"/releases/latest", &r); err != nil {
+	if err := c.rest.DoWithContext(ctx, "GET", "repos/"+repo+"/releases/latest", nil, &r); err != nil {
 		return Release{}, fmt.Errorf("latest release of %s: %w", repo, err)
 	}
 	return r, nil
@@ -31,12 +32,12 @@ func (c *Client) LatestRelease(repo string) (Release, error) {
 
 // Download fetches the release asset called name. It goes through the API
 // with your login, so it works for a private repo too.
-func (c *Client) Download(repo string, r Release, name string) ([]byte, error) {
+func (c *Client) Download(ctx context.Context, repo string, r Release, name string) ([]byte, error) {
 	for _, a := range r.Assets {
 		if a.Name != name {
 			continue
 		}
-		resp, err := c.asset.Request("GET", fmt.Sprintf("repos/%s/releases/assets/%d", repo, a.ID), nil)
+		resp, err := c.asset.RequestWithContext(ctx, "GET", fmt.Sprintf("repos/%s/releases/assets/%d", repo, a.ID), nil)
 		if err != nil {
 			return nil, fmt.Errorf("download %s: %w", name, err)
 		}

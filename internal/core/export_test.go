@@ -1,6 +1,13 @@
 package core
 
-import "time"
+import (
+	"time"
+
+	"github.com/tmstorm/prowl/internal/config"
+)
+
+// SetConfig replaces the config without saving it.
+func (co *Core) SetConfig(cfg config.Config) { co.setConfig(cfg) }
 
 // RetryNow lets the next AutoUpgrade try a failed install again without
 // waiting an hour.

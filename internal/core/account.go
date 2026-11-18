@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -17,8 +15,13 @@ import (
 	"github.com/tmstorm/prowl/internal/slack"
 )
 
-// authEvery is how often Run checks the logins.
-const authEvery = 30 * time.Minute
+// AuthEvery is how often Run and `prowl watch` check the logins, and
+// RenewWithin how early prowl asks you to log in again before a login runs
+// out.
+const (
+	AuthEvery   = 30 * time.Minute
+	RenewWithin = 72 * time.Hour
+)
 
 // Account is one login prowl depends on: GitHub, and each agent that can log
 // in.
@@ -42,17 +45,32 @@ func (co *Core) Accounts() []Account {
 	return append([]Account(nil), co.accounts...)
 }
 
+// LoginsDue are the logins that need you, as of the last CheckAuth: each
+// reviewer that is logged out or whose login runs out within RenewWithin,
+// and Slack when it refused the token you signed in with.
+func (co *Core) LoginsDue() []Account {
+	reviewers, slackOn := co.Config().Agent.Reviewers, co.SlackConnected()
+	var due []Account
+	for _, a := range co.Accounts() {
+		mine := slices.Contains(reviewers, a.Key) || a.Key == "slack" && slackOn
+		if mine && a.Auth.Known && (!a.Auth.LoggedIn || a.Auth.ExpiresSoon(RenewWithin)) {
+			due = append(due, a)
+		}
+	}
+	return due
+}
+
 // CheckAuth asks GitHub, every installed agent and Slack whether you're
 // logged in. It runs their status commands, so it takes a moment.
-func (co *Core) CheckAuth() {
+func (co *Core) CheckAuth(ctx context.Context) {
 	accts := accountList(co.Config())
 	for i, a := range accts {
 		switch {
 		case a.Missing != nil:
 		case a.Key == "slack":
-			accts[i].Auth = co.checkSlack()
+			accts[i].Auth = co.checkSlack(ctx)
 		case a.Key == "github":
-			out, err := exec.Command("gh", "auth", "status", "--active").CombinedOutput()
+			out, err := exec.CommandContext(ctx, "gh", "auth", "status", "--active").CombinedOutput()
 			accts[i].Auth = agent.Auth{Known: true, LoggedIn: err == nil}
 			if _, rest, ok := strings.Cut(string(out), "account "); ok {
 				accts[i].Auth.Account, _, _ = strings.Cut(rest, " ")
@@ -70,14 +88,14 @@ func (co *Core) CheckAuth() {
 
 // checkSlack asks Slack whose token prowl has. No token, or Slack refusing
 // it, means you're logged out; failing to reach Slack says nothing.
-func (co *Core) checkSlack() agent.Auth {
+func (co *Core) checkSlack(ctx context.Context) agent.Auth {
 	co.mu.Lock()
 	sl := co.slack
 	co.mu.Unlock()
 	if sl == nil {
 		return agent.Auth{Known: true}
 	}
-	id, err := sl.AuthTest(context.Background())
+	id, err := sl.AuthTest(ctx)
 	if slack.LoggedOut(err) {
 		return agent.Auth{Known: true}
 	}
@@ -166,8 +184,8 @@ func accountList(cfg config.Config) []Account {
 	return append(out, Account{Key: "slack", Title: "Slack"})
 }
 
-// Update changes the config, saves it and applies it.
-func (co *Core) Update(fn func(*config.Config) error) (config.Config, error) {
+// UpdateConfig changes the config, saves it and applies it.
+func (co *Core) UpdateConfig(fn func(*config.Config) error) (config.Config, error) {
 	next, err := config.Update(fn)
 	if err != nil {
 		return co.Config(), fmt.Errorf("save config: %w", err)
@@ -175,7 +193,7 @@ func (co *Core) Update(fn func(*config.Config) error) (config.Config, error) {
 	co.mu.Lock()
 	co.cfgMod = config.ModTime()
 	co.mu.Unlock()
-	co.SetConfig(next)
+	co.setConfig(next)
 	return next, nil
 }
 
@@ -196,7 +214,7 @@ func (co *Core) reloadConfig() (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("%s: %w", config.Path(), err)
 	}
-	co.SetConfig(cfg)
+	co.setConfig(cfg)
 	return true, nil
 }
 
@@ -244,10 +262,16 @@ func (co *Core) FirstTime(name string) bool { return co.st.FirstTime(name) }
 // Shown reports whether prowl has done name before, without marking it.
 func (co *Core) Shown(name string) bool { return co.st.Shown(name) }
 
-// SetService sets up `prowl watch` to run at login and starts it, or stops
-// and removes it. It returns what it set up, for people.
+// SetService sets up this prowl's `prowl watch` to run at login and starts
+// it, or stops and removes it. It returns what it set up, for people.
 func (co *Core) SetService(on bool) (string, error) {
-	what, err := SetService(on)
+	var what string
+	var err error
+	if on {
+		what, err = platform.InstallService(Executable())
+	} else {
+		err = platform.UninstallService()
+	}
 	if err == nil {
 		co.serviceOnce.Do(func() {})
 		co.mu.Lock()
@@ -255,20 +279,4 @@ func (co *Core) SetService(on bool) (string, error) {
 		co.mu.Unlock()
 	}
 	return what, err
-}
-
-// SetService sets up this prowl's `prowl watch` to run at login and starts
-// it, or stops and removes it.
-func SetService(on bool) (string, error) {
-	if !on {
-		return "", platform.UninstallService()
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("service: %w", err)
-	}
-	if exe, err = filepath.EvalSymlinks(exe); err != nil {
-		return "", fmt.Errorf("service: %w", err)
-	}
-	return platform.InstallService(exe)
 }

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -225,7 +226,7 @@ func (m *Model) loadCheckLog(d *detail) tea.Cmd {
 	d.dirty = true
 	co, key, job := m.core, d.item.Key, c.JobID
 	return func() tea.Msg {
-		step, lines, err := co.CheckLog(key, job)
+		step, lines, err := co.CheckLog(context.Background(), key, job)
 		return ciLogMsg{key, job, step, lines, err}
 	}
 }

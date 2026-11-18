@@ -26,8 +26,6 @@ var palettes = map[string]palette{
 	"kanagawa":   {"#1F1F28", "#2D4F67", "#DCD7BA", "#727169", "#957FB8", "#D27E99", "#98BB6C", "#E6C384", "#FF5D62", "#FFA066", "#7FB4CA"},
 }
 
-var themeNames = []string{"dracula", "catppuccin", "tokyonight", "gruvbox", "nord", "rose-pine", "kanagawa"}
-
 var (
 	pal       palette
 	themeName string

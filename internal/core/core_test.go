@@ -41,7 +41,7 @@ func newCore(t *testing.T, fake *ghtest.GitHub) (*core.Core, *store.Store) {
 
 func refresh(t *testing.T, co *core.Core) core.Inbox {
 	t.Helper()
-	if _, err := co.Refresh(); err != nil {
+	if _, err := co.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	return co.Inbox()
@@ -73,14 +73,14 @@ func TestRefreshAndRestart(t *testing.T) {
 func TestOpenByLink(t *testing.T) {
 	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("infra", 5, "chore: release", "bob")}, Closed: map[string]bool{}}
 	co, _ := newCore(t, fake)
-	if _, err := co.Open("o/infra", 5); err != nil {
+	if _, err := co.Open(t.Context(), "o/infra", 5); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := find(refresh(t, co), "o/infra#5"); !ok {
 		t.Fatal("a PR opened by link left the inbox on the next sync")
 	}
 	fake.Closed["o/infra#5"] = true
-	if err := co.RefreshPR("o/infra#5"); err != nil {
+	if err := co.RefreshPR(t.Context(), "o/infra#5"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := find(co.Inbox(), "o/infra#5"); ok {
@@ -134,11 +134,11 @@ func TestPruneClosedKeepsOpenPRs(t *testing.T) {
 	gitIn(t, elsewhere, "update-ref", "refs/prowl/pr-9-claude", "HEAD")
 	orphan := agent.WorktreePath("o/r", 3, "claude")
 	gitIn(t, repo, "worktree", "add", "-q", "--detach", orphan, "HEAD")
-	if _, err := co.Update(func(c *config.Config) error { c.RepoRoots = []string{root}; return nil }); err != nil {
+	if _, err := co.UpdateConfig(func(c *config.Config) error { c.RepoRoots = []string{root}; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	refresh(t, co)
-	co.PruneClosed()
+	co.PruneClosed(t.Context())
 	if runs, _ := st.Runs("o/r#1"); len(runs) != 1 {
 		t.Error("an open PR outside the inbox lost its review history")
 	}
@@ -168,12 +168,12 @@ func TestPruneClosedKeepsOpenPRs(t *testing.T) {
 func TestChangesSinceLastRun(t *testing.T) {
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me")}}
 	co, st := newCore(t, fake)
-	if changes, _ := co.Refresh(); len(changes) != 1 {
+	if changes, _ := co.Refresh(t.Context()); len(changes) != 1 {
 		t.Fatalf("the first sync ever should report the PR that needs you: %v", changes)
 	}
 	fake.PRs = append(fake.PRs, ghtest.Requested(ghtest.PR("api", 2, "fix: two", "alice"), "me"))
 	c, _ := fake.Client()
-	changes, err := core.New(config.Default(), c, st).Refresh()
+	changes, err := core.New(config.Default(), c, st).Refresh(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestChangesSinceLastRun(t *testing.T) {
 // Watching a repo saves it in the config and brings in all its open PRs.
 func TestWatch(t *testing.T) {
 	co, _ := newCore(t, &ghtest.GitHub{Others: []gh.PR{ghtest.PR("infra", 5, "chore: release", "bob")}})
-	if err := co.Watch("o/infra", true); err != nil {
+	if err := co.WatchRepo("o/infra", true); err != nil {
 		t.Fatal(err)
 	}
 	if saved, _ := config.Load(); !slices.Contains(saved.WatchRepos, "o/infra") || !slices.Contains(co.Config().WatchRepos, "o/infra") {
@@ -194,7 +194,7 @@ func TestWatch(t *testing.T) {
 	if _, ok := find(refresh(t, co), "o/infra#5"); !ok {
 		t.Fatal("a watched repo's PR is missing")
 	}
-	if err := co.Watch("o/infra", false); err != nil {
+	if err := co.WatchRepo("o/infra", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := find(refresh(t, co), "o/infra#5"); ok {
@@ -215,7 +215,7 @@ func TestSnooze(t *testing.T) {
 		t.Fatal("not marked snoozed")
 	}
 	fake.PRs[0].ReviewDecision = "CHANGES_REQUESTED"
-	if changes, _ := co.Refresh(); len(changes) != 0 {
+	if changes, _ := co.Refresh(t.Context()); len(changes) != 0 {
 		t.Fatalf("a snoozed PR was reported as changed: %v", changes)
 	}
 	if err := co.Unsnooze("o/api#1"); err != nil {
@@ -225,7 +225,7 @@ func TestSnooze(t *testing.T) {
 		t.Fatal("still snoozed")
 	}
 	fake.PRs[0].ReviewDecision = "APPROVED"
-	if changes, _ := co.Refresh(); len(changes) != 1 {
+	if changes, _ := co.Refresh(t.Context()); len(changes) != 1 {
 		t.Fatalf("once unsnoozed, the approval should be a change: %v", changes)
 	}
 }
@@ -234,10 +234,10 @@ func TestSnooze(t *testing.T) {
 func TestClaim(t *testing.T) {
 	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("infra", 5, "chore: release", "bob")}}
 	co, _ := newCore(t, fake)
-	if _, err := co.Open("o/infra", 5); err != nil {
+	if _, err := co.Open(t.Context(), "o/infra", 5); err != nil {
 		t.Fatal(err)
 	}
-	if err := co.Claim("o/infra#5"); err != nil {
+	if err := co.Claim(t.Context(), "o/infra#5"); err != nil {
 		t.Fatal(err)
 	}
 	if !fake.Wrote("POST /repos/o/infra/pulls/5/requested_reviewers") {
@@ -268,13 +268,13 @@ func TestDetailAndDiff(t *testing.T) {
 		Diffs: map[int]string{1: "full diff"}, Compares: map[string]string{"old...abc1234": "since your review"}}
 	co, _ := newCore(t, fake)
 	refresh(t, co)
-	if det, err := co.Detail("o/api#1"); err != nil || det.Body != "the description" {
+	if det, err := co.Detail(t.Context(), "o/api#1"); err != nil || det.Body != "the description" {
 		t.Fatalf("detail: %v %+v", err, det)
 	}
-	if d, err := co.Diff("o/api#1", false); err != nil || d != "full diff" {
+	if d, err := co.Diff(t.Context(), "o/api#1", false); err != nil || d != "full diff" {
 		t.Fatalf("full diff: %v %q", err, d)
 	}
-	if d, err := co.Diff("o/api#1", true); err != nil || d != "since your review" {
+	if d, err := co.Diff(t.Context(), "o/api#1", true); err != nil || d != "since your review" {
 		t.Fatalf("diff since review: %v %q", err, d)
 	}
 }
@@ -285,16 +285,16 @@ func TestFilesAndThreads(t *testing.T) {
 		Threads: map[int][]gh.Thread{1: {{ID: "thread-1"}}}}
 	co, _ := newCore(t, fake)
 	refresh(t, co)
-	if err := co.SetFileViewed("o/api#1", "a.go", true); err != nil {
+	if err := co.SetFileViewed(t.Context(), "o/api#1", "a.go", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := co.Reply("thread-1", "done"); err != nil {
+	if err := co.Reply(t.Context(), "thread-1", "done"); err != nil {
 		t.Fatal(err)
 	}
-	if err := co.Resolve("thread-1", true); err != nil {
+	if err := co.Resolve(t.Context(), "thread-1", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := co.Resolve("thread-1", false); err != nil {
+	if err := co.Resolve(t.Context(), "thread-1", false); err != nil {
 		t.Fatal(err)
 	}
 	for _, w := range []string{"mutation markFileAsViewed", "POST /repos/o/api/pulls/1/comments/101/replies", "mutation resolveReviewThread", "mutation unresolveReviewThread"} {
@@ -310,7 +310,7 @@ func TestOrgRepos(t *testing.T) {
 	cfg := config.Default()
 	cfg.Orgs = []string{"o"}
 	co.SetConfig(cfg)
-	if got := co.OrgRepos(); len(got) != 2 {
+	if got := co.OrgRepos(t.Context()); len(got) != 2 {
 		t.Fatalf("got %v", got)
 	}
 }
@@ -350,7 +350,7 @@ func TestRunShowsLocalReviewStartedElsewhere(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 	go co.Run(ctx)
-	key := store.LocalKey("o/api", "feat/x")
+	key := gh.LocalKey("o/api", "feat/x")
 	if err := st.SaveLocal(store.Local{Key: key, Repo: "o/api", Branch: "feat/x", Dir: dir, Base: "main", At: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ func TestFindingsAndDiscard(t *testing.T) {
 	_, st := newCore(t, &ghtest.GitHub{})
 	id, _ := st.StartRun("o/api#1", "abc", "claude", "", 0)
 	_ = st.FinishRun(id, "s1", "summary", "", []store.Finding{{Severity: "must-fix", Title: "a"}, {Severity: "nit", Title: "b"}})
-	_ = st.AddReviewLog("o/api#1", "claude", "you", "drop b")
+	_ = st.AddNote("o/api#1", "claude", "you", "drop b")
 	co := core.New(config.Default(), mustClient(t), st)
 	if err := co.SetExcluded(id, 0, true); err != nil {
 		t.Fatal(err)
@@ -490,7 +490,7 @@ func TestAgentDraftAndSubmit(t *testing.T) {
 	fake.PRs[0].HeadRefOid = "def5678"
 	refresh(t, co)
 	d.Body = "Races on the map. Init it first."
-	if _, err := co.Submit("o/api#7", d); err != nil {
+	if _, err := co.Submit(t.Context(), "o/api#7", d); err != nil {
 		t.Fatal(err)
 	}
 	if rv := fake.Reviews(); len(rv) != 1 || rv[0]["event"] != "REQUEST_CHANGES" || rv[0]["commit_id"] != "abc1234" {
@@ -527,14 +527,14 @@ func TestApproveAgentDraftAfterPush(t *testing.T) {
 	fake.PRs[0].HeadRefOid = "def5678"
 	refresh(t, co)
 	d.Event = "APPROVE"
-	if sent, err := co.Submit("o/api#7", d); err == nil || sent.Review {
+	if sent, err := co.Submit(t.Context(), "o/api#7", d); err == nil || sent.Review {
 		t.Fatalf("the approval should fail and not count as sent: %+v %v", sent, err)
 	}
 	if d, err = co.AgentDraft("o/api#7"); err != nil || len(d.Comments) != 0 {
 		t.Fatalf("the retry draft still holds the sent comments: %+v %v", d.Comments, err)
 	}
 	d.Event = "APPROVE"
-	if _, err := co.Submit("o/api#7", d); err != nil {
+	if _, err := co.Submit(t.Context(), "o/api#7", d); err != nil {
 		t.Fatal(err)
 	}
 	rv := fake.Reviews()
@@ -554,7 +554,7 @@ func TestApproveWithPending(t *testing.T) {
 	if len(d.Comments) != 1 {
 		t.Fatalf("draft: %+v", d)
 	}
-	if _, err := co.Submit("o/api#7", d); err != nil {
+	if _, err := co.Submit(t.Context(), "o/api#7", d); err != nil {
 		t.Fatal(err)
 	}
 	if rv := fake.Reviews(); len(rv) != 1 || rv[0]["event"] != "APPROVE" {
@@ -592,7 +592,7 @@ func TestSummarize(t *testing.T) {
 	co, st := newCore(t, fake)
 	refresh(t, co)
 	summarizer(t, "Adds retries.")
-	sum, err := co.Summarize("o/api#7")
+	sum, err := co.Summarize(t.Context(), "o/api#7")
 	if err != nil || sum.Text != "Adds retries." || sum.HeadOid != "abc1234" {
 		t.Fatalf("summary: %v %+v", err, sum)
 	}
@@ -656,11 +656,14 @@ func TestLoggedOut(t *testing.T) {
 	bin := t.TempDir()
 	_ = os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho '{\"loggedIn\":false}'; exit 1\n"), 0o755)
 	t.Setenv("PATH", bin)
-	co.CheckAuth()
+	co.CheckAuth(t.Context())
 	accts := co.Accounts()
 	i := slices.IndexFunc(accts, func(a core.Account) bool { return a.Key == "claude" })
 	if i < 0 || accts[i].Auth.LoggedIn || !accts[i].Auth.Known {
 		t.Fatalf("accounts: %+v", accts)
+	}
+	if due := co.LoginsDue(); len(due) != 1 || due[0].Key != "claude" {
+		t.Fatalf("logins due: %+v", due)
 	}
 	if _, err := co.Review("o/api#1", ""); err == nil || !strings.Contains(err.Error(), "isn't logged in") {
 		t.Fatalf("want a refused review, got %v", err)
@@ -676,11 +679,11 @@ func TestLoggedOut(t *testing.T) {
 	}
 }
 
-// Update saves and applies a setting; an edit to the file made outside
+// UpdateConfig saves and applies a setting; an edit to the file made outside
 // prowl is picked up by Run and reported.
 func TestConfigChanges(t *testing.T) {
 	co, _ := newCore(t, &ghtest.GitHub{})
-	if _, err := co.Update(func(c *config.Config) error { c.GroupBy = "repo"; return nil }); err != nil {
+	if _, err := co.UpdateConfig(func(c *config.Config) error { c.GroupBy = "repo"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if saved, _ := config.Load(); saved.GroupBy != "repo" || co.Config().GroupBy != "repo" {
@@ -717,7 +720,7 @@ func TestChecks(t *testing.T) {
 		JobLogs: map[int64]string{99: log.String()}, JobSteps: map[int64]string{99: "Run tests"}}
 	co, _ := newCore(t, fake)
 	refresh(t, co)
-	det, err := co.Detail("o/api#1")
+	det, err := co.Detail(t.Context(), "o/api#1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -728,7 +731,7 @@ func TestChecks(t *testing.T) {
 	if len(det.Checks) != 3 || states["test"] != "FAIL" || states["lint"] != "PENDING" || states["docs"] != "SKIPPED" || !det.Checks[0].Required || det.Checks[0].JobID != 99 {
 		t.Fatalf("checks: %+v", det.Checks)
 	}
-	step, lines, err := co.CheckLog("o/api#1", 99)
+	step, lines, err := co.CheckLog(t.Context(), "o/api#1", 99)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -751,7 +754,7 @@ func TestPostReply(t *testing.T) {
 	id, _ := st.StartRun("o/api#7", "abc", "claude", "", 0)
 	_ = st.FinishRun(id, "s1", "fine", "", nil)
 	_ = st.SaveReplies(id, []store.ThreadReply{{ThreadID: "t1", Path: "a.go", Line: 3, Body: "Thanks, looks right."}})
-	if err := co.PostReply(id, "t1", "Thanks, the wrap helps."); err != nil {
+	if err := co.PostReply(t.Context(), id, "t1", "Thanks, the wrap helps."); err != nil {
 		t.Fatal(err)
 	}
 	if !fake.Wrote("POST /repos/o/api/pulls/7/comments/107/replies") {
@@ -764,7 +767,7 @@ func TestPostReply(t *testing.T) {
 	if len(posts) != 1 || posts[0].Draft.Comments[0].Body != "Thanks, looks right." || posts[0].Posted.Comments[0].Body != "Thanks, the wrap helps." {
 		t.Fatalf("posts: %+v", posts)
 	}
-	if err := co.PostReply(id, "t9", "x"); err == nil {
+	if err := co.PostReply(t.Context(), id, "t9", "x"); err == nil {
 		t.Fatal("a reply with no draft should fail")
 	}
 }
@@ -815,14 +818,14 @@ func TestNothingToReview(t *testing.T) {
 	path := os.Getenv("PATH")
 	co, _ := newCore(t, &ghtest.GitHub{})
 	t.Setenv("PATH", path)
-	if _, err := co.ReviewLocal(dir, "", true); !errors.Is(err, core.ErrNothingToReview) || !strings.Contains(err.Error(), "main has no changes since") {
+	if _, err := co.ReviewLocal(t.Context(), dir, "", true); !errors.Is(err, core.ErrNothingToReview) || !strings.Contains(err.Error(), "main has no changes since") {
 		t.Fatalf("want nothing to review, got %v", err)
 	}
 	if _, ok := find(co.Inbox(), "local:api@main"); ok {
 		t.Error("nothing to review should leave no local item")
 	}
 	_ = os.WriteFile(filepath.Join(dir, "b.go"), []byte("package a\n"), 0o644)
-	if _, err := co.ReviewLocal(dir, "command", true); err == nil || errors.Is(err, core.ErrNothingToReview) {
+	if _, err := co.ReviewLocal(t.Context(), dir, "command", true); err == nil || errors.Is(err, core.ErrNothingToReview) {
 		t.Fatal("a new file is a change to review")
 	}
 	_ = os.Remove(filepath.Join(dir, "b.go"))
@@ -856,11 +859,11 @@ echo '{"type":"result","session_id":"s1","structured_output":{"summary":"A panic
 	_ = os.WriteFile(filepath.Join(bin, "notify-send"), []byte("#!/bin/sh\n"), 0o755)
 	_ = os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\n"), 0o755)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+path)
-	if _, err := co.Update(func(c *config.Config) error { c.Agent.RunImages = map[string]string{"*": "golang:1.27"}; return nil }); err != nil {
+	if _, err := co.UpdateConfig(func(c *config.Config) error { c.Agent.RunImages = map[string]string{"*": "golang:1.27"}; return nil }); err != nil {
 		t.Fatal(err)
 	}
 
-	key, err := co.ReviewLocal(filepath.Join(dir, "sub"), "", true)
+	key, err := co.ReviewLocal(t.Context(), filepath.Join(dir, "sub"), "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -891,13 +894,13 @@ echo '{"type":"result","session_id":"s1","structured_output":{"summary":"A panic
 	if !ok || it.Bucket != core.Local || !it.Local() || it.Title != "feat: add A" {
 		t.Fatalf("local item: %+v", it)
 	}
-	det, _ := co.Detail(key)
+	det, _ := co.Detail(t.Context(), key)
 	for _, want := range []string{"feat/x", "feat: add A", "sub/new file.go"} {
 		if !strings.Contains(det.Body, want) {
 			t.Errorf("overview is missing %q", want)
 		}
 	}
-	diff, _ := co.Diff(key, false)
+	diff, _ := co.Diff(t.Context(), key, false)
 	for _, want := range []string{"+func A() { panic(1) }", "sub/new file.go", "+package sub", "b/-p.txt"} {
 		if !strings.Contains(diff, want) {
 			t.Errorf("diff is missing %q", want)
@@ -923,7 +926,7 @@ echo '{"type":"result","session_id":"s1","structured_output":{"summary":"A panic
 
 	wt := filepath.Join(t.TempDir(), "wt")
 	gitIn(t, dir, "worktree", "add", "--quiet", "-b", "feat/y", wt)
-	wtKey, err := co.ReviewLocal(wt, "", true)
+	wtKey, err := co.ReviewLocal(t.Context(), wt, "", true)
 	if err != nil || wtKey != "local:o/api@feat/y" {
 		t.Fatalf("from a worktree: %q %v", wtKey, err)
 	}
@@ -1014,7 +1017,7 @@ func TestDraftWithReplies(t *testing.T) {
 	if len(d.Replies) != 1 || d.Replies[0].ThreadID != "t1" {
 		t.Fatalf("draft replies: %+v", d.Replies)
 	}
-	if _, err := co.Submit("o/api#7", d); err != nil {
+	if _, err := co.Submit(t.Context(), "o/api#7", d); err != nil {
 		t.Fatal(err)
 	}
 	if !fake.Wrote("POST /repos/o/api/pulls/7/reviews") || !fake.Wrote("POST /repos/o/api/pulls/7/comments/107/replies") {
@@ -1037,7 +1040,7 @@ func TestOnlyTheNotifierTakesChanges(t *testing.T) {
 	list := core.New(config.Default(), c, st)
 	list.Quiet()
 	fake.PRs = append(fake.PRs, ghtest.Requested(ghtest.PR("api", 2, "fix: two", "alice"), "me"))
-	if changes, _ := list.Refresh(); len(changes) != 0 {
+	if changes, _ := list.Refresh(t.Context()); len(changes) != 0 {
 		t.Fatalf("prowl list reported changes: %v", changes)
 	}
 
@@ -1045,7 +1048,7 @@ func TestOnlyTheNotifierTakesChanges(t *testing.T) {
 	if err := other.Watching(); err != nil {
 		t.Fatal(err)
 	}
-	if changes, _ := ui.Refresh(); len(changes) != 0 {
+	if changes, _ := ui.Refresh(t.Context()); len(changes) != 0 {
 		t.Fatalf("the UI took changes while a watcher runs: %v", changes)
 	}
 	other.StopWatching()
@@ -1055,7 +1058,7 @@ func TestOnlyTheNotifierTakesChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(watch.StopWatching)
-	if changes, _ := watch.Refresh(); len(changes) != 1 || changes[0].Key != "o/api#2" {
+	if changes, _ := watch.Refresh(t.Context()); len(changes) != 1 || changes[0].Key != "o/api#2" {
 		t.Fatalf("the watcher should still see the new PR: %v", changes)
 	}
 }
@@ -1076,7 +1079,7 @@ func TestPendingCommitAndFailedRevise(t *testing.T) {
 	if d.Comments[0].Commit != "abc1234" || d.Comments[1].Commit != "def5678" {
 		t.Fatalf("commits: %q %q", d.Comments[0].Commit, d.Comments[1].Commit)
 	}
-	if _, err := co.Submit("o/api#7", d); err != nil {
+	if _, err := co.Submit(t.Context(), "o/api#7", d); err != nil {
 		t.Fatal(err)
 	}
 	rv := fake.Reviews()
@@ -1114,13 +1117,13 @@ func TestSplitReviewRetryAndNoEmptyReview(t *testing.T) {
 	fake.PRs[0].HeadRefOid = "ccc3333"
 	refresh(t, co)
 
-	if sent, err := co.Submit("o/api#7", co.Draft("o/api#7", "COMMENT")); err == nil || sent.Review {
+	if sent, err := co.Submit(t.Context(), "o/api#7", co.Draft("o/api#7", "COMMENT")); err == nil || sent.Review {
 		t.Fatalf("the second review should fail and not count as sent: %+v %v", sent, err)
 	}
 	if p := co.Pending("o/api#7"); len(p) != 1 || p[0].Body != "on B" {
 		t.Fatalf("pending after the failure: %+v", p)
 	}
-	if _, err := co.Submit("o/api#7", co.Draft("o/api#7", "COMMENT")); err != nil {
+	if _, err := co.Submit(t.Context(), "o/api#7", co.Draft("o/api#7", "COMMENT")); err != nil {
 		t.Fatal(err)
 	}
 	rv := fake.Reviews()
@@ -1139,7 +1142,7 @@ func TestUnsentReopensForItsEvent(t *testing.T) {
 	refresh(t, co)
 	d := co.Draft("o/api#7", "APPROVE")
 	d.Body = "Ship it."
-	if _, err := co.Submit("o/api#7", d); err == nil {
+	if _, err := co.Submit(t.Context(), "o/api#7", d); err == nil {
 		t.Fatal("the first review should fail")
 	}
 	if d := co.Draft("o/api#7", "REQUEST_CHANGES"); d.Body != "" || d.Reopened {
@@ -1167,7 +1170,7 @@ func TestRepliesOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Body = ""
-	sent, err := co.Submit("o/api#7", d)
+	sent, err := co.Submit(t.Context(), "o/api#7", d)
 	if err != nil || !sent.Review || sent.URL != "" {
 		t.Fatalf("submitted %+v, %v", sent, err)
 	}
@@ -1187,20 +1190,20 @@ func TestCloseAndDraft(t *testing.T) {
 		ghtest.Requested(ghtest.PR("api", 8, "feat: wip", "alice"), "me")}}
 	co, _ := newCore(t, fake)
 	refresh(t, co)
-	if _, err := co.Submit("o/api#7", core.Draft{Event: "CLOSE", Body: "Superseded by #9."}); err != nil {
+	if _, err := co.Submit(t.Context(), "o/api#7", core.Draft{Event: "CLOSE", Body: "Superseded by #9."}); err != nil {
 		t.Fatal(err)
 	}
 	if !fake.Wrote("mutation addComment") || !fake.Wrote("mutation closePullRequest") || len(fake.Reviews()) != 0 {
 		t.Fatalf("close: comment and close, no review; reviews %v", fake.Reviews())
 	}
 	d := core.Draft{Event: "DRAFT", Body: "Not ready yet.", Comments: []core.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "missing test"}}}
-	if _, err := co.Submit("o/api#8", d); err != nil {
+	if _, err := co.Submit(t.Context(), "o/api#8", d); err != nil {
 		t.Fatal(err)
 	}
 	if rv := fake.Reviews(); len(rv) != 1 || rv[0]["event"] != "COMMENT" || !fake.Wrote("mutation convertPullRequestToDraft") {
 		t.Fatalf("draft with comments: %v", rv)
 	}
-	if err := co.MarkReady("o/api#8"); err != nil || !fake.Wrote("mutation markPullRequestReadyForReview") {
+	if err := co.MarkReady(t.Context(), "o/api#8"); err != nil || !fake.Wrote("mutation markPullRequestReadyForReview") {
 		t.Fatalf("ready for review: %v", err)
 	}
 }
@@ -1213,19 +1216,19 @@ func TestNoteAndRequestReviews(t *testing.T) {
 	co, _ := newCore(t, fake)
 	refresh(t, co)
 	co.SetPending("o/api#7", []core.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "later"}})
-	if _, err := co.Submit("o/api#7", core.Draft{Event: "NOTE", Body: "Is this still needed?"}); err != nil {
+	if _, err := co.Submit(t.Context(), "o/api#7", core.Draft{Event: "NOTE", Body: "Is this still needed?"}); err != nil {
 		t.Fatal(err)
 	}
 	if !fake.Wrote("mutation addComment") || len(fake.Reviews()) != 0 || len(co.Pending("o/api#7")) != 1 {
 		t.Fatalf("note: reviews %v, pending %v", fake.Reviews(), co.Pending("o/api#7"))
 	}
-	if err := co.RequestReviews("o/api#7", []string{"@bob", " o/backend "}); err != nil {
+	if err := co.RequestReviews(t.Context(), "o/api#7", []string{"@bob", " o/backend "}); err != nil {
 		t.Fatal(err)
 	}
 	if !fake.Wrote("POST /repos/o/api/pulls/7/requested_reviewers") {
 		t.Fatal("no review request sent")
 	}
-	if err := co.RequestReviews("o/api#7", []string{" ", ""}); err == nil {
+	if err := co.RequestReviews(t.Context(), "o/api#7", []string{" ", ""}); err == nil {
 		t.Fatal("asking nobody should fail")
 	}
 }
@@ -1235,10 +1238,10 @@ func TestNoteAndRequestReviews(t *testing.T) {
 func TestDismissedChangeRequest(t *testing.T) {
 	pr := ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")
 	at := time.Now().Add(-time.Hour)
-	var ti gh.TimelineItem
+	var ti gh.Event
 	_ = json.Unmarshal([]byte(`{"__typename":"ReviewDismissedEvent","previousReviewState":"CHANGES_REQUESTED","review":{"id":"r1"}}`), &ti)
 	pr.Reviews.Nodes = []gh.Review{{ID: "r1", Author: &gh.Actor{Login: "me"}, State: "DISMISSED", SubmittedAt: at}}
-	pr.TimelineItems.Nodes = []gh.TimelineItem{ti}
+	pr.TimelineItems.Nodes = []gh.Event{ti}
 	co, _ := newCore(t, &ghtest.GitHub{PRs: []gh.PR{pr}})
 	it, ok := find(refresh(t, co), "o/api#7")
 	if !ok || it.Bucket != core.ReReview || it.Reason != "re-requested" {
@@ -1269,7 +1272,7 @@ func TestReviewsOf(t *testing.T) {
 	_ = st.FinishRun(a, "s1", "first", "", nil)
 	b, _ := st.StartRun("o/r#1", "h2", "codex", "", 0)
 	c, _ := st.StartRun("o/r#1", "h2", "claude", "", 0)
-	_ = st.AddReviewLog("o/r#1", "codex", "you", "hi")
+	_ = st.AddNote("o/r#1", "codex", "you", "hi")
 	reviews, notes, err := core.ReviewsOf(st, "o/r#1")
 	if err != nil || len(reviews) != 3 || reviews[0].ID != c {
 		t.Fatalf("reviews = %d, %v", len(reviews), err)

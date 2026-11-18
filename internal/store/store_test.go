@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,8 +30,8 @@ func TestRunsAndPrune(t *testing.T) {
 	if runs[1].ID != b {
 		t.Fatalf("runs out of order: %+v", runs)
 	}
-	_ = st.AddReviewLog("o/r#1", "codex", "you", "hi")
-	if log, _ := st.ReviewLog("o/r#1", "claude"); len(log) != 0 {
+	_ = st.AddNote("o/r#1", "codex", "you", "hi")
+	if log, _ := st.Notes("o/r#1", "claude"); len(log) != 0 {
 		t.Fatal("notes belong to one agent")
 	}
 	if keys, _ := st.ReviewedPRs(); len(keys) != 1 || keys[0] != "o/r#1" {
@@ -40,7 +41,7 @@ func TestRunsAndPrune(t *testing.T) {
 	if runs, _ := st.Runs("o/r#1"); len(runs) != 0 {
 		t.Fatal("DeleteReviews should remove the runs")
 	}
-	if log, _ := st.ReviewLog("o/r#1", "codex"); len(log) != 0 {
+	if log, _ := st.Notes("o/r#1", "codex"); len(log) != 0 {
 		t.Fatal("and the notes")
 	}
 }
@@ -121,5 +122,35 @@ func TestSlackSignedIn(t *testing.T) {
 	_ = st.SetSlackSignedIn(false)
 	if st.SlackSignedIn() {
 		t.Fatal("still signed in after signing out")
+	}
+}
+
+// A database an older prowl made opens, keeps what it held and works, and
+// opens again.
+func TestOldDatabase(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "prowl.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE pr_state (key TEXT PRIMARY KEY, bucket INTEGER NOT NULL, reason TEXT NOT NULL,
+  head_oid TEXT NOT NULL, title TEXT NOT NULL, url TEXT NOT NULL, seen_at INTEGER NOT NULL);
+INSERT INTO pr_state VALUES ('o/r#1', 2, 're-requested', 'abc', 'fix: one', 'https://github.com/o/r/pull/1', 1)`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		st, err := store.Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := st.AllStates(); err != nil || got["o/r#1"] != (store.PRState{Key: "o/r#1", Bucket: 2, Reason: "re-requested", HeadOid: "abc"}) {
+			t.Fatalf("states = %+v, %v", got, err)
+		}
+		if err := st.ReplaceStates([]store.PRState{{Key: "o/r#1", Bucket: 2, Reason: "re-requested", HeadOid: "abc"}}); err != nil {
+			t.Fatal(err)
+		}
+		st.Close()
 	}
 }

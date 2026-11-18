@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -49,7 +50,7 @@ func checkout(dir string) (store.Local, error) {
 			base = "master"
 		}
 	}
-	return store.Local{Key: store.LocalKey(repo, branch), Repo: repo, Branch: branch, Dir: top, Base: base, At: time.Now()}, nil
+	return store.Local{Key: gh.LocalKey(repo, branch), Repo: repo, Branch: branch, Dir: top, Base: base, At: time.Now()}, nil
 }
 
 // ErrNothingToReview is ReviewLocal's answer for a branch with no changes,
@@ -61,7 +62,7 @@ var ErrNothingToReview = errors.New("nothing to review")
 // agent:profile). With wait it runs in the foreground and returns when the
 // review is done; otherwise it runs in the background. It returns the
 // review's key.
-func (co *Core) ReviewLocal(dir, reviewer string, wait bool) (string, error) {
+func (co *Core) ReviewLocal(ctx context.Context, dir, reviewer string, wait bool) (string, error) {
 	l, err := checkout(dir)
 	if err != nil {
 		return "", err
@@ -75,7 +76,7 @@ func (co *Core) ReviewLocal(dir, reviewer string, wait bool) (string, error) {
 	co.mu.Lock()
 	if co.inbox.Viewer == "" && co.gh != nil {
 		co.mu.Unlock()
-		viewer, _ := co.gh.Viewer()
+		viewer, _ := co.gh.Viewer(ctx)
 		co.mu.Lock()
 		co.inbox.Viewer = viewer
 	}
@@ -86,7 +87,7 @@ func (co *Core) ReviewLocal(dir, reviewer string, wait bool) (string, error) {
 		return "", err
 	}
 	if wait {
-		err = agent.Run(co.Config(), co.st, nil, job)
+		err = agent.Run(ctx, co.Config(), co.st, nil, job)
 	} else {
 		err = agent.Launch(co.st, job)
 	}
@@ -163,7 +164,7 @@ func (co *Core) foldLocals(prs []inbox.Item, viewer string) {
 	for _, l := range locals {
 		for _, it := range prs {
 			pr := it.PR
-			if pr.Local() || pr.State != "OPEN" || pr.AuthorLogin() != viewer ||
+			if pr.Local() || pr.State != "OPEN" || pr.Author.Name() != viewer ||
 				!strings.EqualFold(pr.Repository.NameWithOwner, l.Repo) || pr.HeadRefName != l.Branch {
 				continue
 			}
@@ -191,25 +192,16 @@ func (co *Core) pruneLocals() {
 // unchanged is ErrNothingToReview when the branch has no changes since it
 // left the default branch, committed or not.
 func unchanged(l store.Local) error {
-	if base := mergeBase(l); base != "" && localDiff(l) == "" {
+	if base := agent.MergeBase(l.Dir, l.Base); base != "" && localDiff(l) == "" {
 		return fmt.Errorf("%w: %s has no changes since %s, committed or not", ErrNothingToReview, l.Branch, gh.Short(base))
 	}
 	return nil
 }
 
-// mergeBase is where the branch left the default branch, preferring the
-// remote's copy of it.
-func mergeBase(l store.Local) string {
-	if base := git(l.Dir, "merge-base", "origin/"+l.Base, "HEAD"); base != "" {
-		return base
-	}
-	return git(l.Dir, "merge-base", l.Base, "HEAD")
-}
-
 // localBody is the Overview of a local review: the branch, what it is
 // compared with, its commits and its changed files.
 func localBody(l store.Local) string {
-	base := mergeBase(l)
+	base := agent.MergeBase(l.Dir, l.Base)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Local review of `%s` in `%s`, compared with `%s` (%s). Nothing here is on GitHub.\n\n", l.Branch, l.Dir, l.Base, gh.Short(base))
 	if log := git(l.Dir, "log", "--format=- `%h` %s", base+"..HEAD"); log != "" {
@@ -230,7 +222,7 @@ func localBody(l store.Local) string {
 // localDiff is a local review's diff: everything since the branch left the
 // default branch, committed or not, with untracked files as new files.
 func localDiff(l store.Local) string {
-	base := mergeBase(l)
+	base := agent.MergeBase(l.Dir, l.Base)
 	out, _ := exec.Command("git", "-C", l.Dir, "diff", base).Output()
 	diff := string(out)
 	for _, f := range lines(git(l.Dir, "ls-files", "--others", "--exclude-standard")) {

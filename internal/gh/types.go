@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"cmp"
 	"regexp"
 	"slices"
 	"strconv"
@@ -20,6 +21,14 @@ func (a *Actor) IsBot(bots map[string]bool) bool {
 		return true
 	}
 	return a.Typename == "Bot" || strings.HasSuffix(a.Login, "[bot]") || bots[a.Login]
+}
+
+// Name is the login, or "ghost" for a deleted account, as GitHub shows it.
+func (a *Actor) Name() string {
+	if a == nil {
+		return "ghost"
+	}
+	return a.Login
 }
 
 type Review struct {
@@ -66,9 +75,12 @@ type Thread struct {
 	} `json:"opener"`
 }
 
+// LineShown is the thread's line, or where it was once it left the diff.
+func (t Thread) LineShown() int { return cmp.Or(t.Line, t.OriginalLine) }
+
 // OpenedBy is true when login started the thread.
 func (t Thread) OpenedBy(login string) bool {
-	return len(t.Opener.Nodes) > 0 && t.Opener.Nodes[0].Author != nil && t.Opener.Nodes[0].Author.Login == login
+	return len(t.Opener.Nodes) > 0 && t.Opener.Nodes[0].Author.Name() == login
 }
 
 type ReviewRequest struct {
@@ -79,25 +91,28 @@ type ReviewRequest struct {
 	} `json:"requestedReviewer"`
 }
 
-type TimelineItem struct {
-	Typename  string    `json:"__typename"`
-	CreatedAt time.Time `json:"createdAt"`
-	Actor     *Actor    `json:"actor"`
-	// ReviewRequestedEvent
+// Event is a timeline item that is not a review or comment: a push, force
+// push, review request, ready for review or dismissed review.
+type Event struct {
+	Typename          string    `json:"__typename"`
+	CreatedAt         time.Time `json:"createdAt"`
+	Actor             *Actor    `json:"actor"`
 	RequestedReviewer *struct {
 		Login string `json:"login"`
 		Slug  string `json:"slug"`
 	} `json:"requestedReviewer"`
-	// PullRequestCommit
-	Commit *struct {
-		Oid           string    `json:"oid"`
-		CommittedDate time.Time `json:"committedDate"`
-	} `json:"commit"`
-	// ReviewDismissedEvent
 	PreviousReviewState string `json:"previousReviewState"`
 	Review              *struct {
 		ID string `json:"id"`
 	} `json:"review"`
+	Commit *struct {
+		Oid             string    `json:"oid"`
+		CommittedDate   time.Time `json:"committedDate"`
+		MessageHeadline string    `json:"messageHeadline"`
+		Author          *struct {
+			User *Actor `json:"user"`
+		} `json:"author"`
+	} `json:"commit"`
 }
 
 type PR struct {
@@ -152,15 +167,8 @@ type PR struct {
 		Nodes []Thread `json:"nodes"`
 	} `json:"reviewThreads"`
 	TimelineItems struct {
-		Nodes []TimelineItem `json:"nodes"`
+		Nodes []Event `json:"nodes"`
 	} `json:"timelineItems"`
-}
-
-func (p *PR) AuthorLogin() string {
-	if p.Author == nil {
-		return "ghost"
-	}
-	return p.Author.Login
 }
 
 func (p *PR) CIState() string {
@@ -174,14 +182,13 @@ func (p *PR) NeedsRebase() bool {
 	return p.Mergeable == "CONFLICTING" || p.MergeStateStatus == "DIRTY" || p.MergeStateStatus == "BEHIND"
 }
 
-// Key uniquely identifies a PR across repos.
 // Key names the PR: owner/name#number. A PR with no number is a local
 // branch reviewed before it has a pull request: local:owner/name@branch.
 func (p *PR) Key() string {
-	if p.Number == 0 && p.HeadRefName != "" {
-		return "local:" + p.Repository.NameWithOwner + "@" + p.HeadRefName
+	if p.Local() {
+		return LocalKey(p.Repository.NameWithOwner, p.HeadRefName)
 	}
-	return p.Repository.NameWithOwner + "#" + strconv.Itoa(p.Number)
+	return PRKey(p.Repository.NameWithOwner, p.Number)
 }
 
 // Local reports whether this is a local branch, not a pull request.
@@ -205,17 +212,20 @@ func (p *PR) mergeReviews() {
 	}
 	p.Mine.Nodes = nil
 	slices.SortStableFunc(p.Reviews.Nodes, func(a, b Review) int { return a.SubmittedAt.Compare(b.SubmittedAt) })
-	for _, ti := range p.TimelineItems.Nodes {
-		if ti.Typename == "ReviewDismissedEvent" && ti.Review != nil {
-			setPreviousState(p.Reviews.Nodes, ti.Review.ID, ti.PreviousReviewState)
-		}
-	}
+	markDismissed(p.Reviews.Nodes, p.TimelineItems.Nodes)
 }
 
-func setPreviousState(reviews []Review, id, state string) {
-	for i := range reviews {
-		if reviews[i].ID == id {
-			reviews[i].PreviousState = state
+// markDismissed sets what each dismissed review was before its dismissal
+// in events.
+func markDismissed(reviews []Review, events []Event) {
+	for _, e := range events {
+		if e.Typename != "ReviewDismissedEvent" || e.Review == nil {
+			continue
+		}
+		for i := range reviews {
+			if reviews[i].ID == e.Review.ID {
+				reviews[i].PreviousState = e.PreviousReviewState
+			}
 		}
 	}
 }
@@ -230,3 +240,9 @@ func RemoteRepo(url string) string {
 	}
 	return ""
 }
+
+// PRKey names a pull request: owner/name#number.
+func PRKey(repo string, n int) string { return repo + "#" + strconv.Itoa(n) }
+
+// LocalKey names a local review: local:owner/name@branch.
+func LocalKey(repo, branch string) string { return "local:" + repo + "@" + branch }

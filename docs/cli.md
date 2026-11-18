@@ -1,6 +1,6 @@
 # The prowl command
 
-`prowl` with no command opens the TUI (see [The TUI](tui.md)). The commands below work without it, for scripts, status bars, hooks and the coding agent in your checkout. Each prints its errors as `prowl: <error>` on stderr and exits 1; `prowl review` also exits 2 on a must-fix finding. `-h` or `--help` after any command prints its section of this page.
+`prowl` with no command opens the TUI (see [The TUI](tui.md)). The commands below work without it, for scripts, status bars, hooks and the coding agent in your checkout. Each prints its errors as `prowl: <error>` on stderr and exits 1; `prowl review` also exits 2 on a must-fix finding. `-h` or `--help` after any command prints its section of this page. Flags go before or after a command's arguments, with their value after a space or an `=`: `--since 12h` or `--since=12h`.
 
 ## prowl watch
 
@@ -10,7 +10,7 @@ prowl watch
 
 Polls GitHub every `poll_interval` and sends a desktop notification when a PR moves into a state that needs you. When it starts, it catches up on what changed while it wasn't running; more than a few changes come as one summary. It prints a line per sync (`14:02:11 synced 23 PRs, 1 changes`) and keeps going until stopped.
 
-Only one runs at a time: a second `prowl watch` says `prowl watch is already running` and exits 0. While one runs, the TUI leaves notifications to it, so none arrive twice. It reads the config when it starts and keeps those settings until it restarts. It checks your logins every hour and installs updates (see [Updating](#updating)); when its own binary is replaced, it restarts on the new one within a poll.
+Only one runs at a time: a second `prowl watch` says `prowl watch is already running` and exits 0. While one runs, the TUI leaves notifications to it, so none arrive twice. It reads the config when it starts and keeps those settings until it restarts. It checks your logins every half hour and installs updates (see [Updating](#updating)); when its own binary is replaced, it restarts on the new one within a poll.
 
 ## prowl service
 
@@ -158,7 +158,7 @@ sha256sum --check --ignore-missing checksums.txt
 
 prowl uses the logins of the tools it drives: the GitHub CLI, your review agent and Slack. The TUI, `prowl watch`, `prowl list`, `prowl review` and `prowl update` need a GitHub login, and without one they stop and say to run `gh auth login`; the TUI offers to run it for you. A token in `GH_TOKEN` or `GITHUB_TOKEN` works too.
 
-prowl checks the logins every half hour while the TUI runs, and every hour in `prowl watch`. A review won't start on a logged-out agent, and while Slack refuses your sign-in prowl stops reading it and won't post there. `prowl watch` sends a desktop notification when the agent is logged out or its login ends within a day, and when Slack refuses your sign-in. The TUI shows the same, and logs in again from [the accounts list](tui.md#the-accounts-list).
+prowl checks the logins every half hour, in the TUI and in `prowl watch`. A review won't start on a logged-out agent, and while Slack refuses your sign-in prowl stops reading it and won't post there. `prowl watch` sends a desktop notification when the agent is logged out or its login ends within three days, and when Slack refuses your sign-in. The TUI shows the same, and logs in again from [the accounts list](tui.md#the-accounts-list).
 
 A `command` agent can join in with `login_command` (what logging in runs) and `status_command` (exit 0 when logged in; it may print `{"loggedIn": true, "account": "...", "expiresAt": "<RFC 3339>"}`) under `[agent]`.
 

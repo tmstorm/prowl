@@ -4,6 +4,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,7 +46,7 @@ type Core struct {
 	pending     map[string][]DraftComment   // your inline comments, by PR, until the next review
 	drafted     map[string]store.Review     // agent drafts on their way out, as prowl wrote them
 	unsent      map[string]Draft            // reviews that failed to post, by PR, until reopened
-	shared      map[string]gh.Share         // PRs shared in Slack, as of the last sync
+	shared      map[string]inbox.Share      // PRs shared in Slack, as of the last sync
 	reactions   map[string]string           // Slack reactions on your PRs, as of the last sync
 	slackLinks  map[string]string           // the Slack message that shared each PR, as of the last sync
 	slackShares map[string]store.SlackShare // each shared PR's newest share by someone else
@@ -86,6 +87,15 @@ type Inbox struct {
 	Snoozed map[string]time.Time
 	Viewer  string
 	At      time.Time
+}
+
+// synced is a sync's answer as it is saved: GitHub's inbox, and what Slack
+// says about its PRs.
+type synced struct {
+	gh.Inbox
+	Shared     map[string]inbox.Share
+	Reactions  map[string]string
+	SlackLinks map[string]string
 }
 
 // classified is the inbox as core keeps it.
@@ -216,10 +226,7 @@ type Actor struct {
 }
 
 func actorOf(a *gh.Actor, bots map[string]bool) Actor {
-	if a == nil {
-		return Actor{Login: "ghost", Bot: true}
-	}
-	return Actor{Login: a.Login, Bot: a.IsBot(bots)}
+	return Actor{Login: a.Name(), Bot: a.IsBot(bots)}
 }
 
 func prReviewOf(r gh.Review, bots map[string]bool) PRReview {
@@ -238,7 +245,7 @@ func prsOf(items []inbox.Item, bots map[string]bool) []PR {
 func prOf(it inbox.Item, bots map[string]bool) PR {
 	pr := it.PR
 	p := PR{Key: pr.Key(), Repo: pr.Repository.NameWithOwner, RepoName: pr.Repository.Name, Number: pr.Number,
-		Title: pr.Title, Body: pr.Body, URL: pr.URL, Author: pr.AuthorLogin(), Branch: pr.HeadRefName,
+		Title: pr.Title, Body: pr.Body, URL: pr.URL, Author: pr.Author.Name(), Branch: pr.HeadRefName,
 		Base: pr.BaseRefName, HeadOid: pr.HeadRefOid, Draft: pr.IsDraft, ReviewDecision: pr.ReviewDecision,
 		Mergeable: pr.Mergeable, CI: pr.CIState(), Additions: pr.Additions, Deletions: pr.Deletions,
 		ChangedFiles: pr.ChangedFiles, CreatedAt: pr.CreatedAt, UpdatedAt: pr.UpdatedAt,
@@ -277,7 +284,7 @@ func New(cfg config.Config, c *gh.Client, st *store.Store) *Core {
 	if err != nil || data == nil {
 		return co
 	}
-	var in gh.Inbox
+	var in synced
 	if json.Unmarshal(data, &in) != nil {
 		return co
 	}
@@ -289,8 +296,8 @@ func New(cfg config.Config, c *gh.Client, st *store.Store) *Core {
 	return co
 }
 
-// SetConfig replaces the config without saving it. Update saves.
-func (co *Core) SetConfig(cfg config.Config) {
+// setConfig replaces the config without saving it. UpdateConfig saves.
+func (co *Core) setConfig(cfg config.Config) {
 	accts := accountList(cfg)
 	co.mu.Lock()
 	defer co.mu.Unlock()
@@ -332,8 +339,8 @@ func (co *Core) Unpeek() {
 
 // Open fetches a PR outside the inbox (a link from Slack, say) and keeps it
 // in the inbox for the rest of the session.
-func (co *Core) Open(repo string, n int) (PR, error) {
-	pr, err := co.gh.PR(repo, n)
+func (co *Core) Open(ctx context.Context, repo string, n int) (PR, error) {
+	pr, err := co.gh.PR(ctx, repo, n)
 	if err != nil {
 		return PR{}, fmt.Errorf("open %s#%d: %w", repo, n, err)
 	}
@@ -355,7 +362,7 @@ func (co *Core) Open(repo string, n int) (PR, error) {
 // doesn't notify): PRs that newly need you, moved section, or
 // were pushed to while addressed, and your own PRs that moved. Snoozed PRs
 // are left out. Before the first sync ever, every such PR is a change.
-func (co *Core) Refresh() ([]PR, error) {
+func (co *Core) Refresh(ctx context.Context) ([]PR, error) {
 	co.syncing.Lock()
 	defer co.syncing.Unlock()
 	co.mu.Lock()
@@ -388,25 +395,26 @@ func (co *Core) Refresh() ([]PR, error) {
 	byLink := make([]*gh.PR, len(opened))
 	var fetching sync.WaitGroup
 	for i, o := range opened {
-		fetching.Go(func() { byLink[i], _ = co.gh.PR(o.repo, o.n) })
+		fetching.Go(func() { byLink[i], _ = co.gh.PR(ctx, o.repo, o.n) })
 	}
 	var newlyShared []gh.PR
 	var slackErr error
 	if slackOn {
-		fetching.Go(func() { newlyShared, slackErr = co.syncSlack(sl, cfg, kept) })
+		fetching.Go(func() { newlyShared, slackErr = co.syncSlack(ctx, sl, cfg, kept) })
 	}
-	in, err := co.gh.FetchInbox(cfg.Orgs, cfg.WatchRepos, known, keep)
+	fetched, err := co.gh.FetchInbox(ctx, cfg.Orgs, cfg.WatchRepos, known, keep)
 	fetching.Wait()
 	if err != nil {
 		return nil, fmt.Errorf("refresh: %w", err)
 	}
+	in := &synced{Inbox: *fetched}
 	var shares map[string]store.SlackShare
 	if sl != nil {
 		shares = co.withShares(in, cfg, newlyShared)
 	}
 	if slackOn {
 		var err error
-		in.Reactions, err = co.reactionsOnYours(sl, cfg, in)
+		in.Reactions, err = co.reactionsOnYours(ctx, sl, cfg, in)
 		slackErr = errors.Join(slackErr, err)
 	}
 	if data, err := json.Marshal(in); err == nil {
@@ -443,7 +451,7 @@ func (co *Core) Refresh() ([]PR, error) {
 	co.inbox.Items = co.withLocals(co.inbox.Items)
 	co.mu.Unlock()
 	if slackOn && slackErr == nil {
-		slackErr = co.reconcileReactions(sl)
+		slackErr = co.reconcileReactions(ctx, sl)
 	}
 	if slack.LoggedOut(slackErr) {
 		co.setLoggedOut("slack")
@@ -456,12 +464,17 @@ func (co *Core) Refresh() ([]PR, error) {
 	return prsOf(changes, cfg.BotSet()), nil
 }
 
-func (co *Core) classify(in *gh.Inbox) []inbox.Item {
+func (co *Core) classify(in *synced) []inbox.Item {
 	co.mu.Lock()
-	cfg := co.cfg
+	opt := co.options(in.Shared, in.Reactions, in.SlackLinks)
 	co.mu.Unlock()
-	in.Bots, in.RecheckAfterPush = cfg.BotSet(), cfg.RecheckAfterPush
-	return inbox.Classify(in)
+	return inbox.Classify(&in.Inbox, opt)
+}
+
+// options classify with the settings and what Slack says about the PRs.
+// co.mu is held.
+func (co *Core) options(shared map[string]inbox.Share, reactions, links map[string]string) inbox.Options {
+	return inbox.Options{Bots: co.cfg.BotSet(), RecheckAfterPush: co.cfg.RecheckAfterPush, Shared: shared, Reactions: reactions, SlackLinks: links}
 }
 
 // withOpened adds PRs opened by link to items, unless a sync already
@@ -480,8 +493,8 @@ func (co *Core) withOpened(items []inbox.Item, prs []gh.PR, viewer string) []inb
 	if len(add) == 0 {
 		return items
 	}
-	extra := &gh.Inbox{Viewer: viewer, PRs: add, Bots: co.cfg.BotSet(), RecheckAfterPush: co.cfg.RecheckAfterPush, Shared: co.shared, Reactions: co.reactions, SlackLinks: co.slackLinks}
-	return append(items, inbox.Classify(extra)...)
+	extra := &gh.Inbox{Viewer: viewer, PRs: add}
+	return append(items, inbox.Classify(extra, co.options(co.shared, co.reactions, co.slackLinks))...)
 }
 
 // changed lists the PRs that need you (or are yours) and are new, moved
@@ -506,8 +519,7 @@ func states(items []inbox.Item) []store.PRState {
 	out := make([]store.PRState, 0, len(items))
 	for _, it := range items {
 		out = append(out, store.PRState{
-			Key: it.PR.Key(), Bucket: int(it.Bucket), Reason: it.Reason,
-			HeadOid: it.PR.HeadRefOid, Title: it.PR.Title, URL: it.PR.URL,
+			Key: it.PR.Key(), Bucket: int(it.Bucket), Reason: it.Reason, HeadOid: it.PR.HeadRefOid,
 		})
 	}
 	return out
@@ -547,7 +559,7 @@ func Notify(changes []PR, timeout time.Duration) {
 // GitHub says are merged or closed. A PR missing from the inbox isn't enough:
 // it may be in a repo only peeked at, so each is asked about. Run calls it
 // after a sync, so a sync never waits for it.
-func (co *Core) PruneClosed() {
+func (co *Core) PruneClosed(ctx context.Context) {
 	keys, err := co.st.ReviewedPRs()
 	if err != nil {
 		return
@@ -555,7 +567,7 @@ func (co *Core) PruneClosed() {
 	co.mu.Lock()
 	open := heads(co.inbox.Items)
 	co.mu.Unlock()
-	co.pruneShares(open)
+	co.pruneShares(ctx, open)
 	for _, key := range keys {
 		if _, ok := open[key]; ok {
 			continue
@@ -564,7 +576,7 @@ func (co *Core) PruneClosed() {
 		if err != nil {
 			continue
 		}
-		if pr, err := co.gh.PR(repo, n); err == nil && pr.State != "OPEN" {
+		if pr, err := co.gh.PR(ctx, repo, n); err == nil && pr.State != "OPEN" {
 			_ = co.st.DeleteReviews(key)
 			agent.RemoveReview(co.Config(), repo, n)
 		}
@@ -577,7 +589,7 @@ func (co *Core) PruneClosed() {
 func (co *Core) PruneOrphans() {
 	agent.PruneOrphans(co.Config(), func(repo string, n int) bool {
 		keys, err := co.st.ReviewedPRs()
-		want := fmt.Sprintf("%s#%d", repo, n)
+		want := gh.PRKey(repo, n)
 		return err != nil || slices.ContainsFunc(keys, func(k string) bool { return strings.EqualFold(k, want) })
 	})
 }
@@ -585,12 +597,12 @@ func (co *Core) PruneOrphans() {
 // RefreshPR re-fetches one PR after you acted on it, so its section updates
 // in about a second rather than at the next sync, which also lags behind
 // GitHub by a few seconds. A merged or closed PR leaves the inbox.
-func (co *Core) RefreshPR(key string) error {
+func (co *Core) RefreshPR(ctx context.Context, key string) error {
 	repo, n, err := parseKey(key)
 	if err != nil {
 		return fmt.Errorf("refresh: %w", err)
 	}
-	pr, err := co.gh.PR(repo, n)
+	pr, err := co.gh.PR(ctx, repo, n)
 	if err != nil {
 		return fmt.Errorf("refresh %s: %w", key, err)
 	}
@@ -616,8 +628,8 @@ func (co *Core) reclassify(pr gh.PR) inbox.Item {
 	for _, r := range co.cfg.WatchRepos {
 		watched[r] = true
 	}
-	return inbox.Classify(&gh.Inbox{Viewer: co.inbox.Viewer, Teams: co.inbox.Teams, Watched: watched, Bots: co.cfg.BotSet(),
-		RecheckAfterPush: co.cfg.RecheckAfterPush, PRs: []gh.PR{pr}, Shared: co.shared, Reactions: co.reactions, SlackLinks: co.slackLinks})[0]
+	in := &gh.Inbox{Viewer: co.inbox.Viewer, Teams: co.inbox.Teams, Watched: watched, PRs: []gh.PR{pr}}
+	return inbox.Classify(in, co.options(co.shared, co.reactions, co.slackLinks))[0]
 }
 
 // ErrWatching is Watching's answer while another `prowl watch` runs.
@@ -706,10 +718,10 @@ func (co *Core) Config() config.Config {
 	return co.cfg
 }
 
-// Watch adds repo (owner/name) to watch_repos, or removes it, and saves the
+// WatchRepo adds repo (owner/name) to watch_repos, or removes it, and saves the
 // config. The next Refresh fetches every open PR in a watched repo.
-func (co *Core) Watch(repo string, on bool) error {
-	_, err := co.Update(func(c *config.Config) error {
+func (co *Core) WatchRepo(repo string, on bool) error {
+	_, err := co.UpdateConfig(func(c *config.Config) error {
 		c.WatchRepos = slices.DeleteFunc(c.WatchRepos, func(r string) bool { return r == repo })
 		if on {
 			c.WatchRepos = append(c.WatchRepos, repo)
@@ -759,7 +771,7 @@ func (co *Core) MarkViewed(key string) (time.Time, error) {
 
 // RequestReviews asks people and teams to review a PR, or to review it
 // again. Each name is a login or org/team.
-func (co *Core) RequestReviews(key string, names []string) error {
+func (co *Core) RequestReviews(ctx context.Context, key string, names []string) error {
 	repo, n, err := parseKey(key)
 	if err != nil {
 		return fmt.Errorf("request reviews: %w", err)
@@ -778,10 +790,7 @@ func (co *Core) RequestReviews(key string, names []string) error {
 	if len(logins)+len(teams) == 0 {
 		return fmt.Errorf("request reviews on %s: name someone", key)
 	}
-	if err := co.gh.RequestReviewers(repo, n, logins, teams); err != nil {
-		return fmt.Errorf("request reviews on %s: %w", key, err)
-	}
-	return nil
+	return co.gh.RequestReviewers(ctx, repo, n, logins, teams)
 }
 
 // Candidate is someone who can be asked to review: a login, or org/team for
@@ -795,7 +804,7 @@ type Candidate struct {
 // ReviewCandidates lists who can be asked to review the PR: people who can
 // be assigned in its repo, then its org's teams. It asks GitHub once per repo
 // per session.
-func (co *Core) ReviewCandidates(key string) ([]Candidate, error) {
+func (co *Core) ReviewCandidates(ctx context.Context, key string) ([]Candidate, error) {
 	repo, _, err := parseKey(key)
 	if err != nil {
 		return nil, fmt.Errorf("reviewers: %w", err)
@@ -806,7 +815,7 @@ func (co *Core) ReviewCandidates(key string) ([]Candidate, error) {
 	if ok {
 		return cached, nil
 	}
-	found, err := co.gh.ReviewCandidates(repo)
+	found, err := co.gh.ReviewCandidates(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -822,12 +831,12 @@ func (co *Core) ReviewCandidates(key string) ([]Candidate, error) {
 
 // SuggestedReviewers are the people GitHub suggests for the PR, from the code
 // owners and recent authors of the files it changes.
-func (co *Core) SuggestedReviewers(key string) ([]Candidate, error) {
+func (co *Core) SuggestedReviewers(ctx context.Context, key string) ([]Candidate, error) {
 	repo, n, err := parseKey(key)
 	if err != nil {
 		return nil, fmt.Errorf("suggested reviewers: %w", err)
 	}
-	found, err := co.gh.SuggestedReviewers(repo, n)
+	found, err := co.gh.SuggestedReviewers(ctx, repo, n)
 	return candidates(found), err
 }
 
@@ -841,7 +850,7 @@ func candidates(found []gh.Candidate) []Candidate {
 
 // Claim requests you as a reviewer on GitHub, for a PR shared without
 // asking you (a link in Slack, say).
-func (co *Core) Claim(key string) error {
+func (co *Core) Claim(ctx context.Context, key string) error {
 	repo, n, err := parseKey(key)
 	if err != nil {
 		return fmt.Errorf("claim: %w", err)
@@ -849,10 +858,7 @@ func (co *Core) Claim(key string) error {
 	co.mu.Lock()
 	me := co.inbox.Viewer
 	co.mu.Unlock()
-	if err := co.gh.RequestReviewers(repo, n, []string{me}, nil); err != nil {
-		return fmt.Errorf("claim %s: %w", key, err)
-	}
-	return nil
+	return co.gh.RequestReviewers(ctx, repo, n, []string{me}, nil)
 }
 
 // parseKey splits a PR key (owner/name#number).
@@ -875,7 +881,7 @@ func (co *Core) item(key string) (inbox.Item, bool) {
 
 // Diff fetches a PR's diff, or with sinceReview only what changed since
 // your last review.
-func (co *Core) Diff(key string, sinceReview bool) (string, error) {
+func (co *Core) Diff(ctx context.Context, key string, sinceReview bool) (string, error) {
 	if l, err := co.local(key); err == nil {
 		return localDiff(l), nil
 	}
@@ -889,14 +895,11 @@ func (co *Core) Diff(key string, sinceReview bool) (string, error) {
 	var diff string
 	var err error
 	if sinceReview {
-		diff, err = co.gh.CompareDiff(pr.Repository.NameWithOwner, it.LastReviewedOid, pr.HeadRefOid)
+		diff, err = co.gh.CompareDiff(ctx, pr.Repository.NameWithOwner, it.LastReviewedOid, pr.HeadRefOid)
 	} else {
-		diff, err = co.gh.PRDiff(pr.Repository.NameWithOwner, pr.Number)
+		diff, err = co.gh.PRDiff(ctx, pr.Repository.NameWithOwner, pr.Number)
 	}
-	if err != nil {
-		return "", fmt.Errorf("diff %s: %w", key, err)
-	}
-	return diff, nil
+	return diff, err
 }
 
 // checkLogLines is how much of a failed job's log CheckLog returns.
@@ -904,50 +907,41 @@ const checkLogLines = 40
 
 // CheckLog is the end of a failed GitHub Actions check's log, and the step
 // that failed, for a check from Detail with a JobID.
-func (co *Core) CheckLog(key string, jobID int64) (step string, lines []string, err error) {
+func (co *Core) CheckLog(ctx context.Context, key string, jobID int64) (step string, lines []string, err error) {
 	repo, _, err := parseKey(key)
 	if err != nil {
 		return "", nil, fmt.Errorf("check log: %w", err)
 	}
-	return co.gh.JobLogTail(repo, jobID, checkLogLines)
+	return co.gh.JobLogTail(ctx, repo, jobID, checkLogLines)
 }
 
 // SetFileViewed ticks or clears GitHub's "Viewed" box on a file of a PR.
-func (co *Core) SetFileViewed(key, path string, viewed bool) error {
+func (co *Core) SetFileViewed(ctx context.Context, key, path string, viewed bool) error {
 	co.mu.Lock()
 	it, ok := co.item(key)
 	co.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("mark %s viewed: %s is not in the inbox", path, key)
 	}
-	if err := co.gh.SetFileViewed(it.PR.ID, path, viewed); err != nil {
-		return fmt.Errorf("mark %s viewed: %w", path, err)
-	}
-	return nil
+	return co.gh.SetFileViewed(ctx, it.PR.ID, path, viewed)
 }
 
 // Reply answers a review thread.
-func (co *Core) Reply(threadID, body string) error {
-	if err := co.gh.ReplyToThread(threadID, body); err != nil {
-		return fmt.Errorf("reply: %w", err)
-	}
-	return nil
+func (co *Core) Reply(ctx context.Context, threadID, body string) error {
+	return co.gh.ReplyToThread(ctx, threadID, body)
 }
 
 // Resolve resolves a review thread, or reopens it.
-func (co *Core) Resolve(threadID string, resolved bool) error {
-	if err := co.gh.ResolveThread(threadID, resolved); err != nil {
-		return fmt.Errorf("resolve thread: %w", err)
-	}
-	return nil
+func (co *Core) Resolve(ctx context.Context, threadID string, resolved bool) error {
+	return co.gh.ResolveThread(ctx, threadID, resolved)
 }
 
 // OrgRepos lists every repo (owner/name) in your orgs, e.g. to pick one to
 // peek at. A failing org is skipped.
-func (co *Core) OrgRepos() []string {
+func (co *Core) OrgRepos(ctx context.Context) []string {
 	var all []string
 	for _, org := range co.Config().Orgs {
-		if repos, err := co.gh.OrgRepos(org); err == nil {
+		if repos, err := co.gh.OrgRepos(ctx, org); err == nil {
 			all = append(all, repos...)
 		}
 	}
