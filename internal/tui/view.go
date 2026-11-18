@@ -937,6 +937,9 @@ func (m *Model) detailPane(l layout, x int) string {
 // ---- statusline (lualine-ish)
 
 func (m *Model) currentMode() mode {
+	if m.confirm != nil {
+		return modeConfirm
+	}
 	if m.popup != nil {
 		return m.popup.mode()
 	}
@@ -1141,10 +1144,10 @@ func place(top string, w, h int, where string) (int, int) {
 	return max(x, 0), max(y, 0)
 }
 
-// confirmView draws a pending [y/N] question as a popup over the screen,
+// confirmView draws a pending yes-or-no question as a popup over the screen,
 // with clickable buttons, so a confirmation is hard to miss.
 func (m *Model) confirmView(screen string) string {
-	q := strings.TrimSpace(strings.TrimSuffix(m.confirm.prompt, "[y/N]"))
+	q := m.confirm.prompt
 	yes, no := sGreen.Bold(true).Render("[ y  yes ]"), sDim.Render("[ n  no ]")
 	w := min(max(lipgloss.Width(q)+6, 40), popWidth(m))
 	body := strings.Join(wrap(q, w-4), "\n") + "\n\n" + yes + "   " + no

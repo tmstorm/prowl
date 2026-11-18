@@ -83,6 +83,19 @@ func run(args []string) error {
 	if runtime.GOOS == "windows" {
 		_ = os.Remove(core.OldBinary(core.Executable()))
 	}
+	cmd, rest := "", []string(nil)
+	if len(args) > 0 {
+		cmd, rest = args[0], args[1:]
+	}
+	switch {
+	case cmd == "-h" || cmd == "--help" || cmd == "help":
+		fmt.Print(usage)
+		return nil
+	case slices.Contains(rest, "-h") || slices.Contains(rest, "--help"):
+		return commandHelp(cmd)
+	case cmd == "docs":
+		return showDocs(args[1:])
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -93,10 +106,6 @@ func run(args []string) error {
 	}
 	defer st.Close()
 
-	cmd := ""
-	if len(args) > 0 {
-		cmd = args[0]
-	}
 	switch cmd {
 	case "agent-run":
 		if len(args) < 2 {
@@ -131,13 +140,8 @@ func run(args []string) error {
 			}
 		}
 		return nil
-	case "-h", "--help", "help":
-		fmt.Print(usage)
-		return nil
 	case "findings":
 		return findings(cfg, st, args[1:])
-	case "docs":
-		return showDocs(args[1:])
 	case "service":
 		return service(args[1:])
 	case "slack":
@@ -404,11 +408,8 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 			i++
 		case strings.HasPrefix(a, "--agent="):
 			only = strings.TrimPrefix(a, "--agent=")
-		case a == "-h" || a == "--help":
-			fmt.Print(usage)
-			return nil
 		case strings.HasPrefix(a, "-"):
-			return fmt.Errorf("prowl findings: unknown argument %q", a)
+			return fmt.Errorf("unknown argument %q", a)
 		default:
 			target = a
 		}
@@ -458,6 +459,17 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 		return nil
 	}
 	printMarkdown(md)
+	return nil
+}
+
+// commandHelp prints a command's section of the prowl command's docs.
+func commandHelp(cmd string) error {
+	s, err := core.DocSection("cli", "prowl "+cmd)
+	if err != nil {
+		fmt.Print(usage)
+		return fmt.Errorf("unknown command %q", cmd)
+	}
+	printMarkdown(s + "\n")
 	return nil
 }
 
@@ -623,7 +635,7 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 		case strings.HasPrefix(a, "--agent="):
 			reviewer = strings.TrimPrefix(a, "--agent=")
 		default:
-			return fmt.Errorf("prowl review: unknown argument %q", a)
+			return fmt.Errorf("unknown argument %q", a)
 		}
 	}
 	dir, err := os.Getwd()
@@ -748,17 +760,14 @@ func uninstall(cfg config.Config, st *store.Store, args []string) error {
 			purge = true
 		case "--yes", "-y":
 			yes = true
-		case "-h", "--help":
-			fmt.Print(usage)
-			return nil
 		default:
-			return fmt.Errorf("prowl uninstall: unknown argument %q", a)
+			return fmt.Errorf("unknown argument %q", a)
 		}
 	}
 	f := core.FindFootprint(cfg, core.Executable(), purge)
 	if !yes && !term.IsTerminal(int(os.Stdin.Fd())) {
 		fmt.Print(tui.Uninstalling(cfg, f, false))
-		return errors.New("prowl uninstall: run it in a terminal to confirm, or pass --yes")
+		return errors.New("run prowl uninstall in a terminal to confirm, or pass --yes")
 	}
 	fmt.Print(tui.Uninstalling(cfg, f, !yes))
 	if !f.Service && len(f.Checkouts)+len(f.Skills)+len(f.Dirs) == 0 && f.Binary == "" {

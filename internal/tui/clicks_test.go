@@ -70,6 +70,17 @@ func TestCursorMarkInGutter(t *testing.T) {
 	a.want("▌Snoozing")
 }
 
+// Reviewers in the options says which keys run them, with the leader you
+// use rather than <leader>.
+func TestReviewersHint(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}})
+	a.resize(160, 80)
+	a.keys("space", ",")
+	a.clickFirst("Reviewers")
+	a.keys("enter")
+	a.want("<space>cc runs every checked agent", "reviews alone with <space>cC")
+}
+
 // The PR pane's border offers focus mode, and a click on it toggles it.
 func TestFocusModeHint(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}})

@@ -173,7 +173,7 @@ func (d *detail) activityRows(w int) []brow {
 		older := d.read(ac.at, nil)
 		if older && newAbove && !dividerDone {
 			dividerDone = true
-			label := " you last looked " + ago(d.seen()) + " ago · older below "
+			label := " you last looked " + agoText(d.seen()) + " · older below "
 			rows = append(rows, plainRow(" "+sYellow.Render("──"+label+strings.Repeat("─", max(w-lipgloss.Width(label)-4, 2)))))
 		}
 		newAbove = newAbove || !older

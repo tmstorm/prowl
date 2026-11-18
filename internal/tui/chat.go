@@ -176,8 +176,7 @@ func (m *Model) chatExited(msg chatExitMsg) tea.Cmd {
 			return nil
 		}
 	}
-	m.mode = modeConfirm
-	m.confirm = &confirm{prompt: "chat ended. Update " + core.ReviewerTitle(name) + "'s findings from the conversation? [y/N]", yes: func() tea.Cmd {
+	m.confirm = &confirm{prompt: "chat ended. Update " + core.ReviewerTitle(name) + "'s findings from the conversation?", yes: func() tea.Cmd {
 		return m.startReview(it, "", true, name)
 	}}
 	return nil
