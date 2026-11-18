@@ -383,6 +383,9 @@ func TestSlackAccount(t *testing.T) {
 	if a := slackAuth(); !a.Known || a.LoggedIn {
 		t.Fatalf("revoked: %+v", a)
 	}
+	if due := co.LoginsDue(); !slices.ContainsFunc(due, func(a core.Account) bool { return a.Key == "slack" }) {
+		t.Fatalf("logins due: %+v", due)
+	}
 	if login, err := co.Login("slack"); err != nil || len(login.Args) != 2 || login.Args[1] != "slack" {
 		t.Fatalf("login: %v %+v", err, login)
 	}

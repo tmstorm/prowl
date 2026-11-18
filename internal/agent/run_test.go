@@ -50,7 +50,7 @@ func TestRunReview(t *testing.T) {
 	if run == nil || run.Status != "done" || run.Model != "claude-test" || len(run.Findings) != 1 || run.SessionID != "s1" {
 		t.Fatalf("stored run: %+v", run)
 	}
-	if log, _ := st.ReviewLog("o/api#7", "claude:adversarial"); len(log) != 1 || log[0].Who != "agent" || log[0].Text != "I could not check the repo settings." {
+	if log, _ := st.Notes("o/api#7", "claude:adversarial"); len(log) != 1 || log[0].Who != "agent" || log[0].Text != "I could not check the repo settings." {
 		t.Errorf("the agent's note should reach Notes, never the summary: %+v", log)
 	}
 	if _, err := os.Stat(filepath.Join(agent.WorktreePath("o/api", 7, "claude:adversarial"), "a.go")); err != nil {
@@ -344,7 +344,7 @@ func TestFailedReviseKeepsReview(t *testing.T) {
 	if r.Status != "done" || len(r.Findings) != 1 {
 		t.Fatalf("after a failed revise: %s %+v", r.Status, r.Findings)
 	}
-	if log, _ := st.ReviewLog("o/api#7", "claude"); len(log) == 0 || !strings.Contains(log[len(log)-1].Text, "revise failed") {
+	if log, _ := st.Notes("o/api#7", "claude"); len(log) == 0 || !strings.Contains(log[len(log)-1].Text, "revise failed") {
 		t.Fatalf("no note about the failed revise: %+v", log)
 	}
 }

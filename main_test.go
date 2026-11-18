@@ -53,3 +53,27 @@ func stdout(t *testing.T, f func() error) string {
 	}
 	return string(b)
 }
+
+// Every command reads its flags the same way: before or after its
+// arguments, with the value after a space or an =.
+func TestFlags(t *testing.T) {
+	home := t.TempDir()
+	for _, v := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "APPDATA", "LOCALAPPDATA"} {
+		t.Setenv(v, filepath.Join(home, v))
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"edits", "--since=12h", "--repo", "api"}, "no posted AI reviews in that time"},
+		{[]string{"edits", "--since", "soon"}, "want e.g. 30d or 12h"},
+		{[]string{"findings", "--agent=codex", "o/api#1", "--all"}, "no finished review for o/api#1 yet"},
+		{[]string{"findings", "--agent"}, "flag needs an argument"},
+		{[]string{"slack", "now"}, `unexpected argument "now"`},
+		{[]string{"uninstall", "--force"}, "not defined: -force"},
+	} {
+		if err := run(c.args); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("prowl %s: %v, want %q", strings.Join(c.args, " "), err, c.want)
+		}
+	}
+}

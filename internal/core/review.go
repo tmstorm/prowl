@@ -86,7 +86,7 @@ func (co *Core) Run(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(max(co.Config().PollInterval.Duration, 30*time.Second)):
+			case <-time.After(co.Config().PollEvery()):
 				co.emit(Event{Kind: Syncing})
 				changes, err := co.Refresh(ctx)
 				co.emit(Event{Kind: InboxChanged, Changes: changes, Err: err})
@@ -115,7 +115,7 @@ func (co *Core) Run(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(authEvery):
+			case <-time.After(AuthEvery):
 			}
 		}
 	})
@@ -339,7 +339,7 @@ func (co *Core) Notes(key string) map[string][]Note {
 func notesOf(st *store.Store, key string, reviews []*Review) map[string][]Note {
 	out := map[string][]Note{}
 	for _, r := range reviews {
-		log, _ := st.ReviewLog(key, r.Reviewer())
+		log, _ := st.Notes(key, r.Reviewer())
 		for _, e := range log {
 			out[r.Reviewer()] = append(out[r.Reviewer()], Note(e))
 		}
@@ -468,7 +468,7 @@ func (co *Core) Discard(runID int64) error {
 	if err := co.st.DeleteRun(runID); err != nil {
 		return fmt.Errorf("discard: %w", err)
 	}
-	if err := co.st.ClearReviewLog(run.Key, run.Reviewer()); err != nil {
+	if err := co.st.ClearNotes(run.Key, run.Reviewer()); err != nil {
 		return fmt.Errorf("discard: %w", err)
 	}
 	co.loadRuns()

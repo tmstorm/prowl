@@ -39,6 +39,42 @@ func (co *Core) LoadSlack() error {
 	return nil
 }
 
+// SignInSlack signs you in to Slack and keeps the token in the keyring:
+// with token, a user token (xoxp-...) from an app of your own, or else
+// through the team's Slack app (slack_client_id) in your browser, at the
+// address it hands open. It returns who you're signed in as, e.g. "sam in
+// Acme".
+func (co *Core) SignInSlack(ctx context.Context, token string, open func(url string) error) (string, error) {
+	t := slack.Token{Access: token}
+	if token == "" {
+		login, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		var err error
+		if t, err = slack.New(slack.Token{}).Login(login, co.Config().SlackClientID, open); err != nil {
+			return "", err
+		}
+	}
+	id, err := slack.New(t).AuthTest(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := slack.SaveToken(t); err != nil {
+		return "", err
+	}
+	if err := co.st.SetSlackSignedIn(true); err != nil {
+		return "", err
+	}
+	return id.User + " in " + id.Team, nil
+}
+
+// SignOutSlack deletes your Slack token.
+func (co *Core) SignOutSlack() error {
+	if err := slack.DeleteToken(); err != nil {
+		return err
+	}
+	return co.st.SetSlackSignedIn(false)
+}
+
 // slackLink opens a share's message: in the Slack app when it's installed,
 // which goes straight there, else its permalink, which goes through the
 // browser. A reply in a thread opens the thread's first message.

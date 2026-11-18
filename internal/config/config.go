@@ -390,6 +390,10 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// PollEvery is how often to sync: poll_interval, but never more often than
+// every 30 seconds.
+func (c Config) PollEvery() time.Duration { return max(c.PollInterval.Duration, 30*time.Second) }
+
 // ExpandedRepoRoots returns repo_roots with ~ expanded.
 func (c Config) ExpandedRepoRoots() []string { return expand(c.RepoRoots) }
 

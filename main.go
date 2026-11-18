@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -141,9 +143,9 @@ func run(args []string) error {
 	case "findings":
 		return findings(cfg, st, args[1:])
 	case "service":
-		return service(args[1:])
+		return service(core.New(cfg, nil, st), args[1:])
 	case "slack":
-		return connectSlack(ctx, cfg, st, args[1:])
+		return connectSlack(ctx, core.New(cfg, nil, st), args[1:])
 	case "uninstall":
 		return uninstall(cfg, st, args[1:])
 	case "edits":
@@ -158,23 +160,18 @@ func run(args []string) error {
 		}
 		switch sub {
 		case "install":
-			who, dir := "claude", ""
-			for i := 2; i < len(args); i++ {
-				switch {
-				case args[i] == "--agent" && i+1 < len(args):
-					who = args[i+1]
-					i++
-				case strings.HasPrefix(args[i], "--agent="):
-					who = strings.TrimPrefix(args[i], "--agent=")
-				default:
-					dir = args[i]
-				}
+			fs := flagSet("skill install")
+			who := fs.String("agent", "claude", "")
+			dirs, err := parseFlags(fs, args[2:])
+			if err != nil {
+				return err
 			}
-			if who != "claude" && who != "codex" {
+			if *who != "claude" && *who != "codex" {
 				return fmt.Errorf("--agent must be claude or codex")
 			}
-			if dir == "" {
-				dir = skill.Dir(who)
+			dir := skill.Dir(*who)
+			if len(dirs) > 0 {
+				dir = dirs[0]
 			}
 			path, err := skill.Install(dir)
 			if err != nil {
@@ -239,10 +236,6 @@ func run(args []string) error {
 }
 
 func watch(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store) error {
-	interval := cfg.PollInterval.Duration
-	if interval < 30*time.Second {
-		interval = 30 * time.Second
-	}
 	co := withSlack(core.New(cfg, c, st))
 	if err := co.Watching(); errors.Is(err, core.ErrWatching) {
 		fmt.Println(err)
@@ -266,7 +259,7 @@ func watch(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store
 				return nil
 			}
 		}
-		if time.Since(authAt) > time.Hour {
+		if time.Since(authAt) > core.AuthEvery {
 			authAt = time.Now()
 			co.CheckAuth(ctx)
 			reminded = remindLogin(co, reminded)
@@ -287,7 +280,7 @@ func watch(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store
 			}
 			co.PruneClosed(ctx)
 		}
-		time.Sleep(interval)
+		time.Sleep(cfg.PollEvery())
 	}
 }
 
@@ -302,30 +295,22 @@ func updated(exe string, built os.FileInfo) bool {
 	return (now.ModTime() != built.ModTime() || now.Size() != built.Size()) && time.Since(now.ModTime()) > 10*time.Second
 }
 
-// remindLogin sends a desktop notification when the review agent is logged
-// out or its login runs out within a day, or Slack refused the token you
-// signed in with. last is the state notified before;
-// the new one is returned.
+// remindLogin sends a desktop notification when a login needs you (see
+// LoginsDue). last is the state notified before; the new one is returned.
 func remindLogin(co *core.Core, last string) string {
-	cfg := co.Config()
 	var states, msgs []string
-	for _, acct := range co.Accounts() {
-		watched := slices.Contains(cfg.Agent.Reviewers, acct.Key) || acct.Key == "slack" && co.SlackConnected()
-		if !watched || acct.Missing != nil {
+	for _, a := range co.LoginsDue() {
+		if !a.Auth.LoggedIn {
+			states = append(states, a.Key+":out")
+			msgs = append(msgs, a.Title+" is logged out.")
 			continue
 		}
-		switch a := acct.Auth; {
-		case a.Known && !a.LoggedIn:
-			states = append(states, acct.Key+":out")
-			msgs = append(msgs, acct.Title+" is logged out.")
-		case a.ExpiresSoon(24 * time.Hour):
-			states = append(states, acct.Key+":"+a.Expires.String())
-			msgs = append(msgs, acct.Title+"'s login runs out "+a.Expires.Local().Format("Mon 15:04")+".")
-		}
+		states = append(states, a.Key+":"+a.Auth.Expires.String())
+		msgs = append(msgs, a.Title+"'s login runs out "+a.Auth.Expires.Local().Format("Mon 15:04")+".")
 	}
 	state := strings.Join(states, ",")
 	if state != "" && state != last {
-		platform.Notify("prowl", strings.Join(msgs, " ")+" Log in again from prowl's accounts.", cfg.NotifyTimeout.Duration)
+		platform.Notify("prowl", strings.Join(msgs, " ")+" Log in again from prowl's accounts.", co.Config().NotifyTimeout.Duration)
 	}
 	return state
 }
@@ -340,31 +325,24 @@ func progOpts(cfg config.Config) []tea.ProgramOption {
 
 // edits prints how you edited agent drafts before posting them.
 func edits(cfg config.Config, st *store.Store, args []string) error {
-	since, repo := 30*24*time.Hour, ""
-	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == "--since" && i+1 < len(args):
-			d, err := parseAge(args[i+1])
-			if err != nil {
-				return err
-			}
-			since = d
-			i++
-		case args[i] == "--repo" && i+1 < len(args):
-			repo = args[i+1]
-			i++
-		default:
-			return fmt.Errorf("usage: prowl edits [--since 30d] [--repo NAME]")
-		}
+	since := 30 * 24 * time.Hour
+	fs := flagSet("edits")
+	fs.Func("since", "", func(s string) (err error) {
+		since, err = parseAge(s)
+		return err
+	})
+	repo := fs.String("repo", "", "")
+	if err := parseNoArgs(fs, args); err != nil {
+		return err
 	}
 	posts, err := st.Posts(time.Now().Add(-since))
 	if err != nil {
 		return err
 	}
-	if repo != "" {
+	if *repo != "" {
 		posts = slices.DeleteFunc(posts, func(p store.Post) bool {
 			r, _, _ := strings.Cut(p.Key, "#")
-			return r != repo && !strings.HasSuffix(r, "/"+repo)
+			return r != *repo && !strings.HasSuffix(r, "/"+*repo)
 		})
 	}
 	if len(posts) == 0 {
@@ -379,13 +357,13 @@ func parseAge(s string) (time.Duration, error) {
 	if n, ok := strings.CutSuffix(s, "d"); ok {
 		days, err := strconv.Atoi(n)
 		if err != nil {
-			return 0, fmt.Errorf("--since %q: want e.g. 30d or 12h", s)
+			return 0, errors.New("want e.g. 30d or 12h")
 		}
 		return time.Duration(days) * 24 * time.Hour, nil
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		return 0, fmt.Errorf("--since %q: want e.g. 30d or 12h", s)
+		return 0, errors.New("want e.g. 30d or 12h")
 	}
 	return d, nil
 }
@@ -393,24 +371,17 @@ func parseAge(s string) (time.Duration, error) {
 // findings prints a stored agent review for a PR. It works offline except
 // when the PR has to be worked out from the current directory.
 func findings(cfg config.Config, st *store.Store, args []string) error {
-	all, asPrompt := false, false
-	target, only := "", ""
-	for i := 0; i < len(args); i++ {
-		switch a := args[i]; {
-		case a == "--all":
-			all = true
-		case a == "--prompt":
-			asPrompt = true
-		case a == "--agent" && i+1 < len(args):
-			only = args[i+1]
-			i++
-		case strings.HasPrefix(a, "--agent="):
-			only = strings.TrimPrefix(a, "--agent=")
-		case strings.HasPrefix(a, "-"):
-			return fmt.Errorf("unknown argument %q", a)
-		default:
-			target = a
-		}
+	fs := flagSet("findings")
+	all := fs.Bool("all", false, "")
+	asPrompt := fs.Bool("prompt", false, "")
+	only := fs.String("agent", "", "")
+	targets, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	target := ""
+	if len(targets) > 0 {
+		target = targets[0]
 	}
 	key, head, err := resolvePR(target)
 	if target == "" {
@@ -429,7 +400,7 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 	}
 	var cur []*core.Review
 	for _, r := range core.Current(reviews) {
-		if only != "" && r.Agent != only && r.Reviewer() != only {
+		if *only != "" && r.Agent != *only && r.Reviewer() != *only {
 			continue
 		}
 		if r.Status == core.ReviewRunning {
@@ -444,8 +415,8 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 		}
 		return fmt.Errorf("no finished review for %s yet; open it in prowl and run an AI review", key)
 	}
-	md := core.FindingsMarkdown(cur, notes, key, head, all)
-	if asPrompt {
+	md := core.FindingsMarkdown(cur, notes, key, head, *all)
+	if *asPrompt {
 		fmt.Print(core.HandoffPrompt(md))
 		return nil
 	}
@@ -615,27 +586,19 @@ func noGitHub() error {
 // review runs a local review of the branch checked out in the current
 // directory and prints its findings.
 func review(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store, args []string) error {
-	detach, reviewer := false, ""
-	for i := 0; i < len(args); i++ {
-		switch a := args[i]; {
-		case a == "--detach":
-			detach = true
-		case a == "--agent" && i+1 < len(args):
-			reviewer = args[i+1]
-			i++
-		case strings.HasPrefix(a, "--agent="):
-			reviewer = strings.TrimPrefix(a, "--agent=")
-		default:
-			return fmt.Errorf("unknown argument %q", a)
-		}
+	fs := flagSet("review")
+	detach := fs.Bool("detach", false, "")
+	reviewer := fs.String("agent", "", "")
+	if err := parseNoArgs(fs, args); err != nil {
+		return err
 	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return err
 	}
 	co := core.New(cfg, c, st)
-	if detach {
-		key, err := co.ReviewLocal(ctx, dir, reviewer, false)
+	if *detach {
+		key, err := co.ReviewLocal(ctx, dir, *reviewer, false)
 		if errors.Is(err, core.ErrNothingToReview) {
 			fmt.Fprintln(os.Stderr, err)
 			return nil
@@ -657,7 +620,7 @@ func review(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Stor
 		}
 		return ""
 	})
-	_, err = co.ReviewLocal(ctx, dir, reviewer, true)
+	_, err = co.ReviewLocal(ctx, dir, *reviewer, true)
 	stop()
 	if errors.Is(err, core.ErrNothingToReview) {
 		fmt.Fprintln(os.Stderr, err)
@@ -744,16 +707,13 @@ func showProgress(co *core.Core, start time.Time, step func(now time.Time) strin
 
 // uninstall removes what prowl put on this machine, after asking.
 func uninstall(cfg config.Config, st *store.Store, args []string) error {
-	purge, yes := false, false
-	for _, a := range args {
-		switch a {
-		case "--purge":
-			purge = true
-		case "--yes", "-y":
-			yes = true
-		default:
-			return fmt.Errorf("unknown argument %q", a)
-		}
+	var purge, yes bool
+	fs := flagSet("uninstall")
+	fs.BoolVar(&purge, "purge", false, "")
+	fs.BoolVar(&yes, "yes", false, "")
+	fs.BoolVar(&yes, "y", false, "")
+	if err := parseNoArgs(fs, args); err != nil {
+		return err
 	}
 	f := core.FindFootprint(cfg, core.Executable(), purge)
 	if !yes && !term.IsTerminal(int(os.Stdin.Fd())) {
@@ -794,24 +754,22 @@ func withSlack(co *core.Core) *core.Core {
 	return co
 }
 
-// connectSlack signs in to the team's Slack app, or shows how to make one,
-// and keeps the user token in the keyring.
-func connectSlack(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
-	switch {
-	case slices.Contains(args, "--off"):
-		if err := slack.DeleteToken(); err != nil {
-			return err
-		}
-		if err := st.SetSlackSignedIn(false); err != nil {
+// connectSlack signs in to the team's Slack app, or shows how to make one.
+func connectSlack(ctx context.Context, co *core.Core, args []string) error {
+	fs := flagSet("slack")
+	off := fs.Bool("off", false, "")
+	if err := parseNoArgs(fs, args); err != nil {
+		return err
+	}
+	if *off {
+		if err := co.SignOutSlack(); err != nil {
 			return err
 		}
 		fmt.Println("signed out of Slack")
 		return nil
-	case len(args) > 0:
-		return fmt.Errorf("usage: prowl slack [--off]")
 	}
-	var token slack.Token
-	if cfg.SlackClientID == "" {
+	token := ""
+	if co.Config().SlackClientID == "" {
 		fmt.Print("prowl needs a Slack app to sign in to. Your team needs only one: if someone\n" +
 			"already made it, enter its client ID. Otherwise create it at\n" +
 			"https://api.slack.com/apps?new_app=1 (From a manifest) with this manifest,\n" +
@@ -824,50 +782,34 @@ func connectSlack(ctx context.Context, cfg config.Config, st *store.Store, args 
 		answer = strings.TrimSpace(answer)
 		switch {
 		case strings.HasPrefix(answer, "xoxp-"):
-			token = slack.Token{Access: answer}
+			token = answer
 		case !clientID.MatchString(answer):
 			return fmt.Errorf("%q isn't a client ID: it's two numbers joined by a dot, under Basic Information, App Credentials", answer)
 		default:
-			cfg.SlackClientID = answer
-			if err := cfg.Save(); err != nil {
+			if _, err := co.UpdateConfig(func(c *config.Config) error { c.SlackClientID = answer; return nil }); err != nil {
 				return err
 			}
 		}
 	}
-	if token.Access == "" {
-		login, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
-		var err error
-		token, err = slack.New(slack.Token{}).Login(login, cfg.SlackClientID, func(url string) error {
-			fmt.Println("Opening Slack in your browser to sign in. If it doesn't open, go to:\n" + url)
-			_ = platform.Open(url)
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-	}
-	id, err := slack.New(token).AuthTest(ctx)
+	who, err := co.SignInSlack(ctx, token, func(url string) error {
+		fmt.Println("Opening Slack in your browser to sign in. If it doesn't open, go to:\n" + url)
+		_ = platform.Open(url)
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	if err := slack.SaveToken(token); err != nil {
-		return err
-	}
-	if err := st.SetSlackSignedIn(true); err != nil {
-		return err
-	}
-	fmt.Printf("signed in to Slack as %s in %s\n", id.User, id.Team)
+	fmt.Println("signed in to Slack as", who)
 	fmt.Println("Next, in prowl's options, under Slack: pick the channels to watch, and match\nyour teammates to their Slack users under Slack names.")
 	return nil
 }
 
 // service installs or removes `prowl watch` as a login service.
-func service(args []string) error {
+func service(co *core.Core, args []string) error {
 	if len(args) != 1 || args[0] != "install" && args[0] != "uninstall" {
 		return fmt.Errorf("usage: prowl service install | uninstall")
 	}
-	what, err := core.SetService(args[0] == "install")
+	what, err := co.SetService(args[0] == "install")
 	if err != nil {
 		return err
 	}
@@ -877,4 +819,35 @@ func service(args []string) error {
 	}
 	fmt.Println("prowl watch runs at login and is running now:", what)
 	return nil
+}
+
+func flagSet(cmd string) *flag.FlagSet {
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	return fs
+}
+
+// parseFlags parses args with fs, flags before or after the arguments, and
+// returns the arguments. A flag's value follows it, or an =.
+func parseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
+	var rest []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if fs.NArg() == 0 {
+			return rest, nil
+		}
+		rest = append(rest, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
+}
+
+// parseNoArgs parses the flags of a command that takes no arguments.
+func parseNoArgs(fs *flag.FlagSet, args []string) error {
+	rest, err := parseFlags(fs, args)
+	if err == nil && len(rest) > 0 {
+		err = fmt.Errorf("unexpected argument %q", rest[0])
+	}
+	return err
 }

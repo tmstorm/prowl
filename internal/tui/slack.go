@@ -241,7 +241,7 @@ func (p *namesPopup) save(m *Model) tea.Cmd {
 		return p.done(m)
 	}
 	n := 0
-	_, err := m.core.Update(func(c *config.Config) error {
+	_, err := m.core.UpdateConfig(func(c *config.Config) error {
 		if c.SlackNames == nil {
 			c.SlackNames = map[string]string{}
 		}
@@ -449,7 +449,7 @@ func (p *channelsPopup) save(m *Model) tea.Cmd {
 			ids = append(ids, ch.ID)
 		}
 	}
-	_, err := m.core.Update(func(c *config.Config) error {
+	_, err := m.core.UpdateConfig(func(c *config.Config) error {
 		c.SlackChannels, c.SlackDMs = ids, p.dms
 		return nil
 	})

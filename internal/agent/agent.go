@@ -521,7 +521,7 @@ func (r *jobRun) fail(err error) error {
 	}
 	if r.j.Refine != "" && r.prev != nil {
 		_ = r.st.EndRevise(r.id)
-		_ = r.st.AddReviewLog(r.key, r.reviewer(), "note", "the revise failed, so the review is as it was: "+err.Error())
+		_ = r.st.AddNote(r.key, r.reviewer(), "note", "the revise failed, so the review is as it was: "+err.Error())
 		r.notify(Title(r.be.Name())+" revise failed", r.key+": "+err.Error())
 		return err
 	}
@@ -584,14 +584,14 @@ func (r *jobRun) revise(ctx context.Context) error {
 		return r.fail(fmt.Errorf("no previous review to revise"))
 	}
 	if !j.Sync {
-		_ = r.st.AddReviewLog(r.key, r.reviewer(), "you", j.Refine)
+		_ = r.st.AddNote(r.key, r.reviewer(), "you", j.Refine)
 	}
 	instruction := "Revise your review per this instruction from the reviewer, then return the complete updated review " +
 		"(all findings you still stand behind, not just the changes). Put one or two sentences to the reviewer " +
 		"about what you changed and why in `note`:\n\n" + j.Refine
 	if j.Sync {
 		instruction = j.Refine
-		_ = r.st.AddReviewLog(r.key, r.reviewer(), "note", "synced the review from your chat")
+		_ = r.st.AddNote(r.key, r.reviewer(), "note", "synced the review from your chat")
 	}
 	instruction += reviseReplies
 	session := prev.SessionID
@@ -604,7 +604,7 @@ func (r *jobRun) revise(ctx context.Context) error {
 		return r.fail(err)
 	}
 	if res.Note != "" {
-		_ = r.st.AddReviewLog(r.key, r.reviewer(), "agent", res.Note)
+		_ = r.st.AddNote(r.key, r.reviewer(), "agent", res.Note)
 	}
 	keepState(res.Findings, prev.Findings)
 	if r.threads == nil && j.Dir == "" {
@@ -615,7 +615,7 @@ func (r *jobRun) revise(ctx context.Context) error {
 
 // review runs a fresh review, then a turn that verifies its findings.
 func (r *jobRun) review(ctx context.Context) error {
-	_ = r.st.ClearReviewLog(r.key, r.reviewer())
+	_ = r.st.ClearNotes(r.key, r.reviewer())
 	input := r.fresh(ctx)
 	first, sid, err := r.turn(input, "", "reviewing")
 	if err != nil {
@@ -630,7 +630,7 @@ func (r *jobRun) review(ctx context.Context) error {
 		final, sid2 = first, sid
 	}
 	if final.Note != "" {
-		_ = r.st.AddReviewLog(r.key, r.reviewer(), "agent", final.Note)
+		_ = r.st.AddNote(r.key, r.reviewer(), "agent", final.Note)
 	}
 	return r.finish(sid2, final, "", len(first.Findings), threadReplies(final, r.threads, nil))
 }

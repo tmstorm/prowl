@@ -29,8 +29,8 @@ func TestRunsAndPrune(t *testing.T) {
 	if runs[1].ID != b {
 		t.Fatalf("runs out of order: %+v", runs)
 	}
-	_ = st.AddReviewLog("o/r#1", "codex", "you", "hi")
-	if log, _ := st.ReviewLog("o/r#1", "claude"); len(log) != 0 {
+	_ = st.AddNote("o/r#1", "codex", "you", "hi")
+	if log, _ := st.Notes("o/r#1", "claude"); len(log) != 0 {
 		t.Fatal("notes belong to one agent")
 	}
 	if keys, _ := st.ReviewedPRs(); len(keys) != 1 || keys[0] != "o/r#1" {
@@ -40,7 +40,7 @@ func TestRunsAndPrune(t *testing.T) {
 	if runs, _ := st.Runs("o/r#1"); len(runs) != 0 {
 		t.Fatal("DeleteReviews should remove the runs")
 	}
-	if log, _ := st.ReviewLog("o/r#1", "codex"); len(log) != 0 {
+	if log, _ := st.Notes("o/r#1", "codex"); len(log) != 0 {
 		t.Fatal("and the notes")
 	}
 }

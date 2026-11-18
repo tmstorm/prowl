@@ -61,7 +61,7 @@ func TestUninstall(t *testing.T) {
 	gitIn(t, repo, "update-ref", "refs/prowl/pr-1-claude", "HEAD")
 	wt := filepath.Join(config.DataDir(), "worktrees", "o", "api", "1", "claude")
 	gitIn(t, repo, "worktree", "add", "-q", "--detach", wt, "refs/prowl/pr-1-claude")
-	if _, err := co.Update(func(c *config.Config) error {
+	if _, err := co.UpdateConfig(func(c *config.Config) error {
 		c.RepoRoots = []string{root}
 		c.Agent.RunImages = map[string]string{"*": "golang:1.27", "acme/api": "golang:1.27", "acme/web": "node:22"}
 		return nil

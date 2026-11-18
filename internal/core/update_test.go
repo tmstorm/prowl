@@ -112,13 +112,13 @@ func TestUpdateCheck(t *testing.T) {
 	publish(t, fake, "v0.2.0", "v0.2.0", signer(t, 1, true), false)
 	co, _ := newCore(t, fake)
 	exe := installed(t)
-	if _, err := co.Update(func(c *config.Config) error { c.CheckUpdates = false; return nil }); err != nil {
+	if _, err := co.UpdateConfig(func(c *config.Config) error { c.CheckUpdates = false; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if err := co.CheckRelease(t.Context(), false); err != nil || fake.ReleaseCalls() != 0 {
 		t.Fatalf("check_updates off asked GitHub: %v, %d calls", err, fake.ReleaseCalls())
 	}
-	_, _ = co.Update(func(c *config.Config) error { c.CheckUpdates = true; return nil })
+	_, _ = co.UpdateConfig(func(c *config.Config) error { c.CheckUpdates = true; return nil })
 	if err := co.CheckRelease(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -217,14 +217,14 @@ func TestAutoUpgrade(t *testing.T) {
 	if v, err := co.AutoUpgrade(t.Context(), exe); err != nil || v != "" {
 		t.Fatalf("the failed release was tried again: %q, %v", v, err)
 	}
-	_, _ = co.Update(func(c *config.Config) error { c.AutoUpdate = false; return nil })
+	_, _ = co.UpdateConfig(func(c *config.Config) error { c.AutoUpdate = false; return nil })
 	key := signer(t, 3, true)
 	publish(t, fake, "v0.3.0", "v0.3.0", key, false)
 	_ = co.CheckRelease(t.Context(), true)
 	if v, _ := co.AutoUpgrade(t.Context(), exe); v != "" {
 		t.Fatal("auto_update off installed a release")
 	}
-	_, _ = co.Update(func(c *config.Config) error { c.AutoUpdate = true; return nil })
+	_, _ = co.UpdateConfig(func(c *config.Config) error { c.AutoUpdate = true; return nil })
 	assets := fake.Release.Assets
 	fake.Release.Assets = assets[:1]
 	if _, err := co.AutoUpgrade(t.Context(), exe); err == nil {

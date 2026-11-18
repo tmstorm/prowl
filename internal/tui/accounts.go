@@ -21,9 +21,6 @@ type loginDoneMsg struct {
 	err       error
 }
 
-// renewWithin is how early prowl starts asking you to log in again.
-const renewWithin = 72 * time.Hour
-
 // checkAuth has core check every login.
 func (m *Model) checkAuth() tea.Cmd {
 	co := m.core
@@ -44,33 +41,14 @@ func (m *Model) slackSignedIn() tea.Cmd {
 	}
 }
 
-// account is the login of the given key, as of the last check.
-func (m *Model) account(key string) (core.Account, bool) {
-	for _, a := range m.core.Accounts() {
-		if a.Key == key {
-			return a, true
-		}
-	}
-	return core.Account{}, false
-}
-
-// authWarning is the statusline note for the configured agent: logged out,
-// or a login that runs out within three days. Then Slack, when it refused
-// the token you signed in with.
+// authWarning is the statusline note for the first login that needs you:
+// logged out, or running out soon.
 func (m *Model) authWarning() string {
-	for _, name := range m.cfg.Agent.Reviewers {
-		acct, ok := m.account(name)
-		a := acct.Auth
-		switch {
-		case !ok || !a.Known:
-		case !a.LoggedIn:
-			return sRed.Render(acct.Title+" logged out") + sDim.Render(" "+leader+"l")
-		case a.ExpiresSoon(renewWithin):
-			return sYellow.Render(acct.Title+" relogin in "+until(a.Expires)) + sDim.Render(" "+leader+"l")
+	for _, a := range m.core.LoginsDue() {
+		if !a.Auth.LoggedIn {
+			return sRed.Render(a.Title+" logged out") + sDim.Render(" "+leader+"l")
 		}
-	}
-	if acct, ok := m.account("slack"); ok && acct.Auth.Known && !acct.Auth.LoggedIn && m.core.SlackConnected() {
-		return sRed.Render("Slack logged out") + sDim.Render(" "+leader+"l")
+		return sYellow.Render(a.Title+" relogin in "+until(a.Auth.Expires)) + sDim.Render(" "+leader+"l")
 	}
 	return ""
 }
@@ -143,7 +121,7 @@ func (p *accountsPopup) view(m *Model) string {
 			}
 			if !st.Expires.IsZero() {
 				exp := sDim.Render(" · ends in " + until(st.Expires))
-				if st.ExpiresSoon(renewWithin) {
+				if st.ExpiresSoon(core.RenewWithin) {
 					exp = sYellow.Render(" · ends in " + until(st.Expires))
 				}
 				state += exp

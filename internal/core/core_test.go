@@ -134,7 +134,7 @@ func TestPruneClosedKeepsOpenPRs(t *testing.T) {
 	gitIn(t, elsewhere, "update-ref", "refs/prowl/pr-9-claude", "HEAD")
 	orphan := agent.WorktreePath("o/r", 3, "claude")
 	gitIn(t, repo, "worktree", "add", "-q", "--detach", orphan, "HEAD")
-	if _, err := co.Update(func(c *config.Config) error { c.RepoRoots = []string{root}; return nil }); err != nil {
+	if _, err := co.UpdateConfig(func(c *config.Config) error { c.RepoRoots = []string{root}; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	refresh(t, co)
@@ -185,7 +185,7 @@ func TestChangesSinceLastRun(t *testing.T) {
 // Watching a repo saves it in the config and brings in all its open PRs.
 func TestWatch(t *testing.T) {
 	co, _ := newCore(t, &ghtest.GitHub{Others: []gh.PR{ghtest.PR("infra", 5, "chore: release", "bob")}})
-	if err := co.Watch("o/infra", true); err != nil {
+	if err := co.WatchRepo("o/infra", true); err != nil {
 		t.Fatal(err)
 	}
 	if saved, _ := config.Load(); !slices.Contains(saved.WatchRepos, "o/infra") || !slices.Contains(co.Config().WatchRepos, "o/infra") {
@@ -194,7 +194,7 @@ func TestWatch(t *testing.T) {
 	if _, ok := find(refresh(t, co), "o/infra#5"); !ok {
 		t.Fatal("a watched repo's PR is missing")
 	}
-	if err := co.Watch("o/infra", false); err != nil {
+	if err := co.WatchRepo("o/infra", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := find(refresh(t, co), "o/infra#5"); ok {
@@ -386,7 +386,7 @@ func TestFindingsAndDiscard(t *testing.T) {
 	_, st := newCore(t, &ghtest.GitHub{})
 	id, _ := st.StartRun("o/api#1", "abc", "claude", "", 0)
 	_ = st.FinishRun(id, "s1", "summary", "", []store.Finding{{Severity: "must-fix", Title: "a"}, {Severity: "nit", Title: "b"}})
-	_ = st.AddReviewLog("o/api#1", "claude", "you", "drop b")
+	_ = st.AddNote("o/api#1", "claude", "you", "drop b")
 	co := core.New(config.Default(), mustClient(t), st)
 	if err := co.SetExcluded(id, 0, true); err != nil {
 		t.Fatal(err)
@@ -662,6 +662,9 @@ func TestLoggedOut(t *testing.T) {
 	if i < 0 || accts[i].Auth.LoggedIn || !accts[i].Auth.Known {
 		t.Fatalf("accounts: %+v", accts)
 	}
+	if due := co.LoginsDue(); len(due) != 1 || due[0].Key != "claude" {
+		t.Fatalf("logins due: %+v", due)
+	}
 	if _, err := co.Review("o/api#1", ""); err == nil || !strings.Contains(err.Error(), "isn't logged in") {
 		t.Fatalf("want a refused review, got %v", err)
 	}
@@ -676,11 +679,11 @@ func TestLoggedOut(t *testing.T) {
 	}
 }
 
-// Update saves and applies a setting; an edit to the file made outside
+// UpdateConfig saves and applies a setting; an edit to the file made outside
 // prowl is picked up by Run and reported.
 func TestConfigChanges(t *testing.T) {
 	co, _ := newCore(t, &ghtest.GitHub{})
-	if _, err := co.Update(func(c *config.Config) error { c.GroupBy = "repo"; return nil }); err != nil {
+	if _, err := co.UpdateConfig(func(c *config.Config) error { c.GroupBy = "repo"; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if saved, _ := config.Load(); saved.GroupBy != "repo" || co.Config().GroupBy != "repo" {
@@ -856,7 +859,7 @@ echo '{"type":"result","session_id":"s1","structured_output":{"summary":"A panic
 	_ = os.WriteFile(filepath.Join(bin, "notify-send"), []byte("#!/bin/sh\n"), 0o755)
 	_ = os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\n"), 0o755)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+path)
-	if _, err := co.Update(func(c *config.Config) error { c.Agent.RunImages = map[string]string{"*": "golang:1.27"}; return nil }); err != nil {
+	if _, err := co.UpdateConfig(func(c *config.Config) error { c.Agent.RunImages = map[string]string{"*": "golang:1.27"}; return nil }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1269,7 +1272,7 @@ func TestReviewsOf(t *testing.T) {
 	_ = st.FinishRun(a, "s1", "first", "", nil)
 	b, _ := st.StartRun("o/r#1", "h2", "codex", "", 0)
 	c, _ := st.StartRun("o/r#1", "h2", "claude", "", 0)
-	_ = st.AddReviewLog("o/r#1", "codex", "you", "hi")
+	_ = st.AddNote("o/r#1", "codex", "you", "hi")
 	reviews, notes, err := core.ReviewsOf(st, "o/r#1")
 	if err != nil || len(reviews) != 3 || reviews[0].ID != c {
 		t.Fatalf("reviews = %d, %v", len(reviews), err)

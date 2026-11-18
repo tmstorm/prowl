@@ -451,7 +451,7 @@ func saveOption(m *Model, o option, v string) error {
 	if err := o.set(&config.Config{}, v); err != nil {
 		return err
 	}
-	_, err := m.core.Update(func(c *config.Config) error { return o.set(c, v) })
+	_, err := m.core.UpdateConfig(func(c *config.Config) error { return o.set(c, v) })
 	return err
 }
 

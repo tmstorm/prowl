@@ -291,7 +291,7 @@ func (m *Model) askIcons() {
 	m.confirm = &confirm{
 		prompt: "Do you see three icons here: \uf09b  \ue725  \uf00c ? Yes turns on Nerd Font icons.",
 		yes: func() tea.Cmd {
-			if _, err := m.core.Update(func(c *config.Config) error { c.NerdFont = true; return nil }); err != nil {
+			if _, err := m.core.UpdateConfig(func(c *config.Config) error { c.NerdFont = true; return nil }); err != nil {
 				m.fail(err.Error())
 				return nil
 			}
@@ -449,7 +449,7 @@ func (m *Model) toggleWatch(it *core.PR) tea.Cmd {
 		return nil
 	}
 	on := !slices.Contains(m.cfg.WatchRepos, repo)
-	if err := m.core.Watch(repo, on); err != nil {
+	if err := m.core.WatchRepo(repo, on); err != nil {
 		m.fail(err.Error())
 		return nil
 	}
@@ -1413,7 +1413,7 @@ func (m *Model) leader(key string) tea.Cmd {
 	case leaderPress:
 		m.popup = newFinder(m)
 	case "g":
-		next, err := m.core.Update(func(c *config.Config) error {
+		next, err := m.core.UpdateConfig(func(c *config.Config) error {
 			if m.cfg.GroupBy == "repo" {
 				c.GroupBy = "status"
 			} else {

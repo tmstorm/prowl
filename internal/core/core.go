@@ -296,7 +296,7 @@ func New(cfg config.Config, c *gh.Client, st *store.Store) *Core {
 	return co
 }
 
-// SetConfig replaces the config without saving it. Update saves.
+// SetConfig replaces the config without saving it. UpdateConfig saves.
 func (co *Core) SetConfig(cfg config.Config) {
 	accts := accountList(cfg)
 	co.mu.Lock()
@@ -719,10 +719,10 @@ func (co *Core) Config() config.Config {
 	return co.cfg
 }
 
-// Watch adds repo (owner/name) to watch_repos, or removes it, and saves the
+// WatchRepo adds repo (owner/name) to watch_repos, or removes it, and saves the
 // config. The next Refresh fetches every open PR in a watched repo.
-func (co *Core) Watch(repo string, on bool) error {
-	_, err := co.Update(func(c *config.Config) error {
+func (co *Core) WatchRepo(repo string, on bool) error {
+	_, err := co.UpdateConfig(func(c *config.Config) error {
 		c.WatchRepos = slices.DeleteFunc(c.WatchRepos, func(r string) bool { return r == repo })
 		if on {
 			c.WatchRepos = append(c.WatchRepos, repo)

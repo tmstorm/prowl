@@ -479,35 +479,35 @@ func (s *Store) DeleteReviews(key string) error {
 	return nil
 }
 
-// ---- conversation with the review agent (local only, never posted)
+// ---- notes between you and a review agent (local only, never posted)
 
-type LogEntry struct {
+type Note struct {
 	At        time.Time
 	Who, Text string
 }
 
-func (s *Store) AddReviewLog(key, reviewer, who, text string) error {
+func (s *Store) AddNote(key, reviewer, who, text string) error {
 	_, err := s.db.Exec(`INSERT INTO review_notes (key, reviewer, at, who, text) VALUES (?,?,?,?,?)`, key, reviewer, time.Now().UnixNano(), who, text)
-	return wrap("add review log", err)
+	return wrap("add note", err)
 }
 
-func (s *Store) ClearReviewLog(key, reviewer string) error {
+func (s *Store) ClearNotes(key, reviewer string) error {
 	_, err := s.db.Exec(`DELETE FROM review_notes WHERE key=? AND reviewer=?`, key, reviewer)
-	return wrap("clear review log", err)
+	return wrap("clear notes", err)
 }
 
-func (s *Store) ReviewLog(key, reviewer string) ([]LogEntry, error) {
+func (s *Store) Notes(key, reviewer string) ([]Note, error) {
 	rows, err := s.db.Query(`SELECT at, who, text FROM review_notes WHERE key=? AND reviewer=? ORDER BY at`, key, reviewer)
 	if err != nil {
-		return nil, fmt.Errorf("review log: %w", err)
+		return nil, fmt.Errorf("notes: %w", err)
 	}
 	defer rows.Close()
-	var out []LogEntry
+	var out []Note
 	for rows.Next() {
-		var e LogEntry
+		var e Note
 		var at int64
 		if err := rows.Scan(&at, &e.Who, &e.Text); err != nil {
-			return nil, fmt.Errorf("review log: %w", err)
+			return nil, fmt.Errorf("notes: %w", err)
 		}
 		e.At = time.Unix(0, at)
 		out = append(out, e)
