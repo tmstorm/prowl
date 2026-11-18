@@ -324,9 +324,8 @@ func (co *Core) afterReview(key string, event ReviewEvent) (string, error) {
 	sl, cfg := co.slack, co.cfg
 	loggedOut := co.authErr("slack")
 	s, shared := co.slackShares[key]
-	it, _ := co.item(key)
 	co.mu.Unlock()
-	state := map[ReviewEvent]string{EventApprove: "APPROVED", EventRequestChanges: "CHANGES_REQUESTED", EventComment: "COMMENTED"}[event]
+	state := reviewStates[event]
 	if sl == nil || !shared || state == "" || cfg.SlackAfterReview == "off" {
 		return "", nil
 	}
@@ -344,8 +343,7 @@ func (co *Core) afterReview(key string, event ReviewEvent) (string, error) {
 		}
 		return note, co.setReaction(sl, s, emoji)
 	case "reply":
-		it.MyLastReview = &gh.Review{State: state}
-		return "replied in " + where, sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), co.SlackLine(it, true))
+		return "replied in " + where, sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), co.SlackLine(key, event, true))
 	}
 	return "", nil
 }

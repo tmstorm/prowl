@@ -133,7 +133,7 @@ func (co *Core) withLocals(items []inbox.Item) []inbox.Item {
 		if pr.Repository.Name == "" {
 			pr.Repository.Name = l.Repo
 		}
-		items = append(items, inbox.Item{PR: pr, Bucket: inbox.Local, Since: l.At, Reason: "local review of " + l.Branch})
+		items = append(items, inbox.Item{PR: pr, Bucket: inbox.Local, Why: inbox.LocalReview, Since: l.At, Reason: "local review of " + l.Branch})
 	}
 	return items
 }

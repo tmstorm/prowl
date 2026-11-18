@@ -14,7 +14,6 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/tmstorm/prowl/internal/gh"
-	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/slack"
 )
 
@@ -201,10 +200,20 @@ func (co *Core) loadSlackUsers(sl *slack.Client) ([]slack.User, error) {
 	return users, nil
 }
 
-// SlackLine is the Slack line for a PR. A post mentions an author that
-// slack_names maps to a Slack user; a copy names them by the display name
-// Slack completes @ with when you paste it.
-func (co *Core) SlackLine(it inbox.Item, post bool) string {
+// reviewStates are the states GitHub gives reviews posted with each event.
+var reviewStates = map[ReviewEvent]string{EventApprove: "APPROVED", EventRequestChanges: "CHANGES_REQUESTED", EventComment: "COMMENTED"}
+
+// SlackLine is the Slack line for a PR, as of a review you just posted with
+// event, which the inbox may not show yet ("" for none). A post mentions an
+// author that slack_names maps to a Slack user; a copy names them by the
+// display name Slack completes @ with when you paste it.
+func (co *Core) SlackLine(key string, event ReviewEvent, post bool) string {
+	co.mu.Lock()
+	it, _ := co.item(key)
+	co.mu.Unlock()
+	if state := reviewStates[event]; state != "" {
+		it.MyLastReview = &gh.Review{State: state}
+	}
 	login := it.PR.AuthorLogin()
 	co.mu.Lock()
 	name := co.cfg.SlackNames[login]
@@ -227,9 +236,10 @@ func (co *Core) SlackLine(it inbox.Item, post bool) string {
 var ErrNoSlackUser = errors.New("no Slack user for the author")
 
 // DMAuthor sends the PR's author its Slack line in a direct message.
-func (co *Core) DMAuthor(it inbox.Item) error {
+func (co *Core) DMAuthor(key string) error {
 	co.mu.Lock()
 	sl, err := co.slackFor()
+	it, _ := co.item(key)
 	id := co.cfg.SlackNames[it.PR.AuthorLogin()]
 	co.mu.Unlock()
 	if err != nil {
@@ -238,7 +248,7 @@ func (co *Core) DMAuthor(it inbox.Item) error {
 	if !slack.IsUserID(id) {
 		return ErrNoSlackUser
 	}
-	if err := sl.DM(context.Background(), id, co.SlackLine(it, true)); err != nil {
+	if err := sl.DM(context.Background(), id, co.SlackLine(key, "", true)); err != nil {
 		return fmt.Errorf("DM %s: %w", it.PR.AuthorLogin(), err)
 	}
 	return nil

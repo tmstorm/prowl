@@ -38,7 +38,7 @@ type Core struct {
 	cfgMod      time.Time // the config file's mtime when last read or written
 	quiet       bool      // this process never notifies (prowl list)
 	accounts    []Account
-	inbox       Inbox
+	inbox       classified
 	peek        map[string]bool  // repos (owner/name) whose open PRs are fetched this session
 	opened      map[string]prRef // PRs opened by link this session, kept through syncs
 	runs        map[string][]*Review
@@ -82,11 +82,154 @@ type prRef struct {
 
 // Inbox is the classified inbox as of the last sync.
 type Inbox struct {
+	Items   []PR
+	Snoozed map[string]time.Time
+	Viewer  string
+	At      time.Time
+}
+
+// classified is the inbox as core keeps it.
+type classified struct {
 	Items   []inbox.Item
 	Snoozed map[string]time.Time
 	Viewer  string
 	Teams   []string // your teams, for classifying a single PR later
 	At      time.Time
+}
+
+// Bucket is an inbox section. It is the classifier's own type, with its
+// order and names.
+type Bucket = inbox.Bucket
+
+const (
+	NeedsReview     = inbox.NeedsReview
+	ReReview        = inbox.ReReview
+	Addressed       = inbox.Addressed
+	Activity        = inbox.Activity
+	TeamRequest     = inbox.TeamRequest
+	Mine            = inbox.Mine
+	WaitingOnAuthor = inbox.WaitingOnAuthor
+	Approved        = inbox.Approved
+	Involved        = inbox.Involved
+	ReApprove       = inbox.ReApprove
+	Unclaimed       = inbox.Unclaimed
+	Watching        = inbox.Watching
+	Recheck         = inbox.Recheck
+	Local           = inbox.Local
+	Shared          = inbox.Shared
+)
+
+// Why is the reason a PR is in its bucket, as a code: compare it, not
+// Reason, whose wording can change.
+type Why = inbox.Why
+
+// PR is a pull request in the inbox, or a local branch reviewed before it
+// has one, with where it sits in the inbox and why.
+type PR struct {
+	Key            string
+	Repo, RepoName string // owner/name, and name alone
+	Number         int    // 0 for a local review
+	Title, Body    string
+	URL            string
+	Author         string
+	Branch, Base   string
+	HeadOid        string
+	Draft          bool
+	ReviewDecision string // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED or ""
+	Mergeable      string // MERGEABLE, CONFLICTING, UNKNOWN
+	CI             string // the head commit's checks: SUCCESS, FAILURE, PENDING, ERROR, EXPECTED or ""
+	Additions      int
+	Deletions      int
+	ChangedFiles   int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Requests       []ReviewRequest // who is asked to review now
+	Reviews        []PRReview
+
+	Bucket               Bucket
+	Why                  Why
+	Reason               string    // Why for people, e.g. "re-requested, 2 commits since your review"
+	Since                time.Time // when the ball landed in your court, or the state began
+	ReviewStatus         string    // approved | changes requested | needs review | needs rebase | draft
+	ChangedSinceApproval bool      // you approved and it changed since, but your approval still counts
+	LastReviewedOid      string    // the commit you last reviewed, if any
+	MyLastReview         *PRReview
+	UnresolvedCount      int
+	ThreadCount          int    // review threads, resolved or not
+	SlackLink            string // the Slack message that shared it
+	SlackReactions       string // on your PR: who reacted on its Slack share, e.g. "#reviews: Bob ✅"
+}
+
+// Local reports whether this is a local branch, not a pull request.
+func (p PR) Local() bool { return p.Number == 0 }
+
+// ReviewRequest is a person, or a team of the repo's org, asked to review.
+type ReviewRequest struct {
+	Login      string // a person's
+	Team, Name string // a team's slug and name
+}
+
+// PRReview is a review on GitHub, by a person or a bot.
+type PRReview struct {
+	ID            string
+	Author        Actor
+	State         string // APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
+	PreviousState string // what a DISMISSED review was, when known
+	SubmittedAt   time.Time
+	Body          string
+}
+
+// Actor is a GitHub account. A deleted one is "ghost", and counts as a bot.
+type Actor struct {
+	Login string
+	Bot   bool // an app, Actions, a [bot] login, or in the bots setting
+}
+
+func actorOf(a *gh.Actor, bots map[string]bool) Actor {
+	if a == nil {
+		return Actor{Login: "ghost", Bot: true}
+	}
+	return Actor{Login: a.Login, Bot: a.IsBot(bots)}
+}
+
+func prReviewOf(r gh.Review, bots map[string]bool) PRReview {
+	return PRReview{ID: r.ID, Author: actorOf(r.Author, bots), State: r.State, PreviousState: r.PreviousState,
+		SubmittedAt: r.SubmittedAt, Body: r.Body}
+}
+
+func prsOf(items []inbox.Item, bots map[string]bool) []PR {
+	out := make([]PR, 0, len(items))
+	for _, it := range items {
+		out = append(out, prOf(it, bots))
+	}
+	return out
+}
+
+func prOf(it inbox.Item, bots map[string]bool) PR {
+	pr := it.PR
+	p := PR{Key: pr.Key(), Repo: pr.Repository.NameWithOwner, RepoName: pr.Repository.Name, Number: pr.Number,
+		Title: pr.Title, Body: pr.Body, URL: pr.URL, Author: pr.AuthorLogin(), Branch: pr.HeadRefName,
+		Base: pr.BaseRefName, HeadOid: pr.HeadRefOid, Draft: pr.IsDraft, ReviewDecision: pr.ReviewDecision,
+		Mergeable: pr.Mergeable, CI: pr.CIState(), Additions: pr.Additions, Deletions: pr.Deletions,
+		ChangedFiles: pr.ChangedFiles, CreatedAt: pr.CreatedAt, UpdatedAt: pr.UpdatedAt,
+		Bucket: it.Bucket, Why: it.Why, Reason: it.Reason, Since: it.Since, ReviewStatus: it.ReviewStatus,
+		ChangedSinceApproval: it.ChangedSinceApproval, LastReviewedOid: it.LastReviewedOid,
+		UnresolvedCount: it.UnresolvedCount, ThreadCount: it.ThreadCount, SlackLink: it.SlackLink, SlackReactions: it.SlackReactions}
+	if it.SharedToo != "" {
+		p.Reason += " · " + it.SharedToo
+	}
+	for _, rr := range pr.ReviewRequests.Nodes {
+		r := rr.RequestedReviewer
+		p.Requests = append(p.Requests, ReviewRequest{Login: r.Login, Team: r.Slug, Name: r.Name})
+	}
+	for _, r := range pr.Reviews.Nodes {
+		p.Reviews = append(p.Reviews, prReviewOf(r, bots))
+	}
+	if it.MyLastReview != nil {
+		r := prReviewOf(*it.MyLastReview, bots)
+		p.MyLastReview = &r
+	}
+	return p
 }
 
 // New starts from the inbox saved by the last sync, if any, so a UI can
@@ -111,7 +254,7 @@ func New(cfg config.Config, c *gh.Client, st *store.Store) *Core {
 	co.shared, co.reactions, co.slackLinks = in.Shared, in.Reactions, in.SlackLinks
 	items := co.classify(&in)
 	snoozed, _ := st.Snoozed(heads(items))
-	co.inbox = Inbox{Items: items, Snoozed: snoozed, Viewer: in.Viewer, Teams: in.Teams, At: at}
+	co.inbox = classified{Items: items, Snoozed: snoozed, Viewer: in.Viewer, Teams: in.Teams, At: at}
 	co.inbox.Items = co.withLocals(items)
 	return co
 }
@@ -135,11 +278,8 @@ func (co *Core) SetConfig(cfg config.Config) {
 func (co *Core) Inbox() Inbox {
 	co.mu.Lock()
 	defer co.mu.Unlock()
-	in := co.inbox
-	in.Items = slices.Clone(in.Items)
-	in.Snoozed = maps.Clone(in.Snoozed)
-	in.Teams = slices.Clone(in.Teams)
-	return in
+	return Inbox{Items: prsOf(co.inbox.Items, co.cfg.BotSet()), Snoozed: maps.Clone(co.inbox.Snoozed),
+		Viewer: co.inbox.Viewer, At: co.inbox.At}
 }
 
 // Peek fetches every open PR of repo on each sync this session, as if it
@@ -162,10 +302,10 @@ func (co *Core) Unpeek() {
 
 // Open fetches a PR outside the inbox (a link from Slack, say) and keeps it
 // in the inbox for the rest of the session.
-func (co *Core) Open(repo string, n int) (inbox.Item, error) {
+func (co *Core) Open(repo string, n int) (PR, error) {
 	pr, err := co.gh.PR(repo, n)
 	if err != nil {
-		return inbox.Item{}, fmt.Errorf("open %s#%d: %w", repo, n, err)
+		return PR{}, fmt.Errorf("open %s#%d: %w", repo, n, err)
 	}
 	co.mu.Lock()
 	defer co.mu.Unlock()
@@ -175,9 +315,9 @@ func (co *Core) Open(repo string, n int) (inbox.Item, error) {
 	co.opened[pr.Key()] = prRef{repo, n}
 	co.inbox.Items = co.withOpened(co.inbox.Items, []gh.PR{*pr}, co.inbox.Viewer)
 	if it, ok := co.item(pr.Key()); ok {
-		return it, nil
+		return prOf(it, co.cfg.BotSet()), nil
 	}
-	return inbox.Item{}, fmt.Errorf("open %s#%d: not classified", repo, n)
+	return PR{}, fmt.Errorf("open %s#%d: not classified", repo, n)
 }
 
 // Refresh syncs the inbox with GitHub and returns what changed since the
@@ -185,7 +325,7 @@ func (co *Core) Open(repo string, n int) (inbox.Item, error) {
 // doesn't notify): PRs that newly need you, moved section, or
 // were pushed to while addressed, and your own PRs that moved. Snoozed PRs
 // are left out. Before the first sync ever, every such PR is a change.
-func (co *Core) Refresh() ([]inbox.Item, error) {
+func (co *Core) Refresh() ([]PR, error) {
 	co.syncing.Lock()
 	defer co.syncing.Unlock()
 	co.mu.Lock()
@@ -269,7 +409,7 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	co.foldLocals(items, in.Viewer)
 	co.mu.Lock()
 	co.shared, co.slackShares, co.reactions, co.slackLinks = in.Shared, shares, in.Reactions, in.SlackLinks
-	co.inbox = Inbox{Items: co.withOpened(items, extra, in.Viewer), Snoozed: snoozed, Viewer: in.Viewer, Teams: in.Teams, At: time.Now()}
+	co.inbox = classified{Items: co.withOpened(items, extra, in.Viewer), Snoozed: snoozed, Viewer: in.Viewer, Teams: in.Teams, At: time.Now()}
 	co.inbox.Items = co.withLocals(co.inbox.Items)
 	co.mu.Unlock()
 	if slackOn && slackErr == nil {
@@ -282,7 +422,8 @@ func (co *Core) Refresh() ([]inbox.Item, error) {
 	co.mu.Lock()
 	co.slackErr = slackErr
 	co.mu.Unlock()
-	return slices.DeleteFunc(changes, func(it inbox.Item) bool { _, ok := snoozed[it.PR.Key()]; return ok }), nil
+	changes = slices.DeleteFunc(changes, func(it inbox.Item) bool { _, ok := snoozed[it.PR.Key()]; return ok })
+	return prsOf(changes, cfg.BotSet()), nil
 }
 
 func (co *Core) classify(in *gh.Inbox) []inbox.Item {
@@ -323,7 +464,7 @@ func changed(items []inbox.Item, prev map[string]store.PRState) []inbox.Item {
 			continue
 		}
 		p, seen := prev[it.PR.Key()]
-		if !seen || p.Bucket != int(it.Bucket) || p.Reason != lastingReason(it) ||
+		if !seen || p.Bucket != int(it.Bucket) || p.Reason != it.Reason ||
 			(it.Bucket == inbox.Addressed && p.HeadOid != it.PR.HeadRefOid) {
 			out = append(out, it)
 		}
@@ -331,17 +472,11 @@ func changed(items []inbox.Item, prev map[string]store.PRState) []inbox.Item {
 	return out
 }
 
-// lastingReason is the reason that decides whether a PR changed: without
-// where it was shared too, since Slack told you about that already.
-func lastingReason(it inbox.Item) string {
-	return strings.TrimSuffix(it.Reason, " · "+it.SharedToo)
-}
-
 func states(items []inbox.Item) []store.PRState {
 	out := make([]store.PRState, 0, len(items))
 	for _, it := range items {
 		out = append(out, store.PRState{
-			Key: it.PR.Key(), Bucket: int(it.Bucket), Reason: lastingReason(it),
+			Key: it.PR.Key(), Bucket: int(it.Bucket), Reason: it.Reason,
 			HeadOid: it.PR.HeadRefOid, Title: it.PR.Title, URL: it.PR.URL,
 		})
 	}
@@ -358,10 +493,9 @@ func heads(items []inbox.Item) map[string]string {
 
 // Notify sends a desktop notification per change, or one summary when there
 // are more than a few (the first sync ever, or catching up after a while).
-func Notify(changes []inbox.Item, timeout time.Duration) {
-	changes = slices.DeleteFunc(slices.Clone(changes), func(it inbox.Item) bool {
-		return it.Bucket == inbox.Mine && it.SlackReactions == "" &&
-			!strings.HasPrefix(it.Reason, "new feedback on your PR") && !strings.HasPrefix(it.Reason, "approved, ready to merge")
+func Notify(changes []PR, timeout time.Duration) {
+	changes = slices.DeleteFunc(slices.Clone(changes), func(it PR) bool {
+		return it.Bucket == Mine && it.SlackReactions == "" && it.Why != inbox.NewFeedback && it.Why != inbox.ReadyToMerge
 	})
 	if len(changes) > 3 {
 		need := 0
@@ -374,8 +508,8 @@ func Notify(changes []inbox.Item, timeout time.Duration) {
 		return
 	}
 	for _, it := range changes {
-		title := fmt.Sprintf("%s: %s#%d", it.Bucket, it.PR.Repository.Name, it.PR.Number)
-		platform.Notify(title, fmt.Sprintf("%s — %s\n%s", it.PR.AuthorLogin(), it.PR.Title, it.Reason), timeout)
+		title := fmt.Sprintf("%s: %s#%d", it.Bucket, it.RepoName, it.Number)
+		platform.Notify(title, fmt.Sprintf("%s — %s\n%s", it.Author, it.Title, it.Reason), timeout)
 	}
 }
 

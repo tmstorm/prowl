@@ -225,10 +225,10 @@ func run(args []string) error {
 			if !it.Bucket.NeedsMe() {
 				continue
 			}
-			if _, ok := in.Snoozed[it.PR.Key()]; ok {
+			if _, ok := in.Snoozed[it.Key]; ok {
 				continue
 			}
-			fmt.Printf("%-14s %-28s %s (%s) — %s\n", it.Bucket, it.PR.Key(), it.PR.Title, it.PR.AuthorLogin(), it.Reason)
+			fmt.Printf("%-14s %-28s %s (%s) — %s\n", it.Bucket, it.Key, it.Title, it.Author, it.Reason)
 		}
 		return nil
 	default:

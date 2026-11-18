@@ -224,7 +224,7 @@ func (m *Model) loadCheckLog(d *detail) tea.Cmd {
 	}
 	d.ciLogs[c.JobID] = ciLog{loading: true}
 	d.dirty = true
-	co, key, job := m.core, d.item.PR.Key(), c.JobID
+	co, key, job := m.core, d.item.Key, c.JobID
 	return func() tea.Msg {
 		step, lines, err := co.CheckLog(key, job)
 		return ciLogMsg{key, job, step, lines, err}

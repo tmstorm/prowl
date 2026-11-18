@@ -13,7 +13,6 @@ import (
 
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
-	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/platform"
 )
 
@@ -70,7 +69,7 @@ type findingRef struct {
 }
 
 type detail struct {
-	item inbox.Item
+	item core.PR
 	me   string
 	tab  int
 	w, h int // text width and body height
@@ -121,10 +120,10 @@ type diffMsg struct {
 	err         error
 }
 
-func newDetail(it inbox.Item, me string) *detail {
+func newDetail(it core.PR, me string) *detail {
 	d := &detail{item: it, me: me, diffs: map[bool][]diffLine{}, dirty: true, hl: map[bool]*highlighter{},
 		folds: map[string]bool{}, viewed: map[string]string{}}
-	d.sinceReview = it.LastReviewedOid != "" && it.LastReviewedOid != it.PR.HeadRefOid
+	d.sinceReview = it.LastReviewedOid != "" && it.LastReviewedOid != it.HeadOid
 	d.jumpNew = true
 	for i := range d.navs {
 		d.navs[i].scrolloff = 4
@@ -132,13 +131,13 @@ func newDetail(it inbox.Item, me string) *detail {
 	return d
 }
 
-func (d *detail) setItem(it inbox.Item) {
-	if it.PR.HeadRefOid != d.item.PR.HeadRefOid {
+func (d *detail) setItem(it core.PR) {
+	if it.HeadOid != d.item.HeadOid {
 		d.diffs = map[bool][]diffLine{}
 		d.hl = map[bool]*highlighter{}
 		d.stale = true
 	}
-	if !it.PR.UpdatedAt.Equal(d.item.PR.UpdatedAt) {
+	if !it.UpdatedAt.Equal(d.item.UpdatedAt) {
 		d.stale = true
 	}
 	d.item = it
@@ -327,7 +326,7 @@ func (d *detail) ensureLoaded(co *core.Core) tea.Cmd {
 func (d *detail) fetch(co *core.Core) tea.Cmd {
 	d.loadingDet = true
 	d.stale = false
-	key := d.item.PR.Key()
+	key := d.item.Key
 	return func() tea.Msg {
 		det, err := co.Detail(key)
 		return detailMsg{key, det, err}
@@ -343,7 +342,7 @@ func (d *detail) loadDiff(co *core.Core) tea.Cmd {
 	if _, ok := d.diffs[d.sinceReview]; ok || d.diffLoading {
 		return nil
 	}
-	key, since := d.item.PR.Key(), d.sinceReview
+	key, since := d.item.Key, d.sinceReview
 	d.diffLoading = true
 	d.diffErr = nil
 	return func() tea.Msg {
@@ -359,7 +358,7 @@ func (d *detail) handleDetail(msg detailMsg) {
 	}
 	d.det, d.detErr = msg.det, msg.err
 	if msg.det != nil {
-		d.item.PR.Body = msg.det.Body
+		d.item.Body = msg.det.Body
 		for _, f := range msg.det.Files {
 			d.viewed[f.Path] = f.ViewerViewedState
 		}
@@ -565,7 +564,7 @@ func (d *detail) summaryRows(a *rowAdder, w int) {
 		folded := d.folded("summary", false)
 		a.begin("summary", "", folded)
 		head := " " + foldGlyph(folded) + sSection.Render("AI summary") + sDim.Render(" · "+modelName(d.summary.Model)+" · for "+gh.Short(d.summary.HeadOid))
-		if d.summary.HeadOid != d.item.PR.HeadRefOid {
+		if d.summary.HeadOid != d.item.HeadOid {
 			head += sYellow.Render(" · new commits since, " + leader + "ca to refresh")
 		}
 		a.add(head)
@@ -615,7 +614,7 @@ func (d *detail) buildOverview() []brow {
 	}
 
 	a.end()
-	local := d.item.PR.Local()
+	local := d.item.Local()
 	descFolded := d.folded("desc", !d.seenAt.IsZero() && !local)
 	a.begin("desc", "", descFolded)
 	title := "Description"
@@ -663,10 +662,10 @@ func (d *detail) buildOverview() []brow {
 			summary = append(summary, sDim.Render(n+" commented"))
 		}
 	}
-	for _, rr := range d.item.PR.ReviewRequests.Nodes {
-		n := rr.RequestedReviewer.Login
+	for _, rr := range d.item.Requests {
+		n := rr.Login
 		if n == "" {
-			n = "@" + rr.RequestedReviewer.Slug
+			n = "@" + rr.Team
 		}
 		summary = append(summary, sYellow.Render("waiting on "+n))
 	}
@@ -912,7 +911,7 @@ func (m *Model) detailKey(d *detail, key string) tea.Cmd {
 			return m.commentOnSelection(d, true)
 		case "dd":
 			if v.cur < len(rows) && rows[v.cur].diff >= 0 && d.removePending(commentLine(rows[v.cur], lines)) {
-				m.core.SetPending(d.item.PR.Key(), d.pending)
+				m.core.SetPending(d.item.Key, d.pending)
 				m.info("dropped pending comment")
 			}
 		}
@@ -945,7 +944,7 @@ func (m *Model) detailKey(d *detail, key string) tea.Cmd {
 					r.Findings[i].Excluded = key == "m" && r.Findings[i].Severity != core.MustFix
 				}
 			}
-			if err := m.core.MustFixOnly(d.item.PR.Key(), key == "m"); err != nil {
+			if err := m.core.MustFixOnly(d.item.Key, key == "m"); err != nil {
 				m.fail(err.Error())
 				return nil
 			}
@@ -997,7 +996,7 @@ func (m *Model) toggleViewed(d *detail) tea.Cmd {
 			break
 		}
 	}
-	co, key := m.core, d.item.PR.Key()
+	co, key := m.core, d.item.Key
 	return func() tea.Msg {
 		return viewedMsg{key: key, path: path, viewed: viewed, err: co.SetFileViewed(key, path, viewed)}
 	}
@@ -1254,18 +1253,18 @@ func (d *detail) threadAtCursor() *gh.Thread {
 
 // header returns the fixed lines above the tab body.
 func (d *detail) header(m *Model) []string {
-	pr := d.item.PR
+	pr := d.item
 	w := d.w
 	if pr.Local() {
 		return []string{
 			fit(styledTitle(pr.Title, true), w),
-			fit(sPink.Render("⌂ "+pr.HeadRefName)+sDim.Render(" → "+pr.BaseRefName+" · reviewed "+agoText(d.item.Since)), w),
+			fit(sPink.Render("⌂ "+pr.Branch)+sDim.Render(" → "+pr.Base+" · reviewed "+agoText(d.item.Since)), w),
 			fit(bucketStyle(d.item.Bucket).Render("local")+sDim.Render(": "+d.item.Reason), w),
 		}
 	}
 	meta := []string{
-		sPink.Render(pr.AuthorLogin()),
-		sDim.Render(pr.HeadRefName + " → " + pr.BaseRefName),
+		sPink.Render(pr.Author),
+		sDim.Render(pr.Branch + " → " + pr.Base),
 		sGreen.Render(fmt.Sprintf("+%d", pr.Additions)) + " " + sRed.Render(fmt.Sprintf("-%d", pr.Deletions)) + sDim.Render(fmt.Sprintf(" in %d files", pr.ChangedFiles)),
 		sDim.Render("opened " + agoText(pr.CreatedAt)),
 	}
@@ -1274,7 +1273,7 @@ func (d *detail) header(m *Model) []string {
 		reason = ansi.SetHyperlink(d.item.SlackLink) + reason + ansi.ResetHyperlink()
 	}
 	status := []string{reason, statusBadge(d.item.ReviewStatus)}
-	if ci := pr.CIState(); ci != "" {
+	if ci := pr.CI; ci != "" {
 		status = append(status, ciBadge(ci)+sDim.Render(" ci"))
 	}
 	if d.item.UnresolvedCount > 0 {

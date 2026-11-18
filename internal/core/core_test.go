@@ -19,7 +19,6 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/ghtest"
-	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
@@ -48,10 +47,10 @@ func refresh(t *testing.T, co *core.Core) core.Inbox {
 	return co.Inbox()
 }
 
-func find(in core.Inbox, key string) (inbox.Item, bool) {
-	i := slices.IndexFunc(in.Items, func(it inbox.Item) bool { return it.PR.Key() == key })
+func find(in core.Inbox, key string) (core.PR, bool) {
+	i := slices.IndexFunc(in.Items, func(it core.PR) bool { return it.Key == key })
 	if i < 0 {
-		return inbox.Item{}, false
+		return core.PR{}, false
 	}
 	return in.Items[i], true
 }
@@ -60,7 +59,7 @@ func find(in core.Inbox, key string) (inbox.Item, bool) {
 func TestRefreshAndRestart(t *testing.T) {
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me")}}
 	co, st := newCore(t, fake)
-	if it, ok := find(refresh(t, co), "o/api#1"); !ok || it.Bucket != inbox.NeedsReview {
+	if it, ok := find(refresh(t, co), "o/api#1"); !ok || it.Bucket != core.NeedsReview {
 		t.Fatalf("want o/api#1 in needs review, got %+v", it)
 	}
 	c, _ := fake.Client()
@@ -93,7 +92,7 @@ func TestOpenByLink(t *testing.T) {
 func TestPeek(t *testing.T) {
 	co, _ := newCore(t, &ghtest.GitHub{Others: []gh.PR{ghtest.PR("infra", 5, "chore: release", "bob")}})
 	co.Peek("o/infra")
-	if it, ok := find(refresh(t, co), "o/infra#5"); !ok || it.Bucket != inbox.Unclaimed {
+	if it, ok := find(refresh(t, co), "o/infra#5"); !ok || it.Bucket != core.Unclaimed {
 		t.Fatalf("want the peeked repo's PR as unclaimed, got %+v", it)
 	}
 	co.Unpeek()
@@ -178,7 +177,7 @@ func TestChangesSinceLastRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes) != 1 || changes[0].PR.Key() != "o/api#2" {
+	if len(changes) != 1 || changes[0].Key != "o/api#2" {
 		t.Fatalf("want only the PR that arrived while prowl was off, got %v", changes)
 	}
 }
@@ -359,7 +358,7 @@ func TestRunShowsLocalReviewStartedElsewhere(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEvent(t, co, core.LocalsChanged)
-	if it, ok := find(co.Inbox(), key); !ok || it.Bucket != inbox.Local {
+	if it, ok := find(co.Inbox(), key); !ok || it.Bucket != core.Local {
 		t.Fatalf("the local review isn't in the inbox: %+v", co.Inbox().Items)
 	}
 }
@@ -564,7 +563,7 @@ func TestApproveWithPending(t *testing.T) {
 	if posts, _ := st.Posts(time.Time{}); len(posts) != 0 {
 		t.Fatal("your own review isn't an agent post")
 	}
-	if it, ok := find(co.Inbox(), "o/api#7"); !ok || it.Bucket != inbox.Approved {
+	if it, ok := find(co.Inbox(), "o/api#7"); !ok || it.Bucket != core.Approved {
 		t.Fatalf("after approving, the PR should be approved at once: %+v", it)
 	}
 }
@@ -889,7 +888,7 @@ echo '{"type":"result","session_id":"s1","structured_output":{"summary":"A panic
 	}
 
 	it, ok := find(co.Inbox(), key)
-	if !ok || it.Bucket != inbox.Local || !it.PR.Local() || it.PR.Title != "feat: add A" {
+	if !ok || it.Bucket != core.Local || !it.Local() || it.Title != "feat: add A" {
 		t.Fatalf("local item: %+v", it)
 	}
 	det, _ := co.Detail(key)
@@ -1056,7 +1055,7 @@ func TestOnlyTheNotifierTakesChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(watch.StopWatching)
-	if changes, _ := watch.Refresh(); len(changes) != 1 || changes[0].PR.Key() != "o/api#2" {
+	if changes, _ := watch.Refresh(); len(changes) != 1 || changes[0].Key != "o/api#2" {
 		t.Fatalf("the watcher should still see the new PR: %v", changes)
 	}
 }
@@ -1242,7 +1241,7 @@ func TestDismissedChangeRequest(t *testing.T) {
 	pr.TimelineItems.Nodes = []gh.TimelineItem{ti}
 	co, _ := newCore(t, &ghtest.GitHub{PRs: []gh.PR{pr}})
 	it, ok := find(refresh(t, co), "o/api#7")
-	if !ok || it.Bucket != inbox.ReReview || it.Reason != "re-requested" {
+	if !ok || it.Bucket != core.ReReview || it.Reason != "re-requested" {
 		t.Fatalf("dismissed change request: %v %q", it.Bucket, it.Reason)
 	}
 }

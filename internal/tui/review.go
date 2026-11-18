@@ -100,7 +100,7 @@ func (d *detail) agentSection(run *core.Review, cur []*core.Review) []brow {
 		if run.Origin == "local" {
 			head += sDim.Render(" · in your checkout, before the PR")
 		}
-		if run.HeadOid != d.item.PR.HeadRefOid {
+		if run.HeadOid != d.item.HeadOid {
 			head += sYellow.Render(" · new commits since")
 		}
 	}

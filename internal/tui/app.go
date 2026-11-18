@@ -17,7 +17,6 @@ import (
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
-	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/slack"
 )
@@ -69,7 +68,7 @@ func (m mode) String() string {
 
 type listRow struct {
 	header  bool
-	bucket  inbox.Bucket
+	bucket  core.Bucket
 	repo    string // repo header (group by repo)
 	count   int
 	needsMe int // repo header: PRs that need you
@@ -98,7 +97,7 @@ type Model struct {
 	cfg  config.Config
 	core *core.Core
 
-	items    []inbox.Item
+	items    []core.PR
 	snoozed  map[string]time.Time
 	runs     map[string][]*core.Review // every PR's review runs, newest first
 	running  int                       // agents reviewing right now, across PRs
@@ -211,7 +210,7 @@ func New(co *core.Core) *Model {
 // ---- messages
 
 type refreshMsg struct {
-	changes []inbox.Item
+	changes []core.PR
 	err     error
 }
 type coreEvent core.Event
@@ -259,7 +258,7 @@ func (m *Model) takeInbox(sel string) {
 	in := m.core.Inbox()
 	m.items, m.snoozed, m.viewer, m.lastSync = in.Items, in.Snoozed, in.Viewer, in.At
 	for _, it := range m.items {
-		if d := m.details[it.PR.Key()]; d != nil {
+		if d := m.details[it.Key]; d != nil {
 			d.setItem(it)
 		}
 	}
@@ -312,7 +311,7 @@ func (m *Model) askIcons() {
 // applySync takes the inbox after a sync and notifies what changed, except
 // on the first sync, whose changes are on screen already, and while
 // prowl watch runs: it sends the notifications then.
-func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
+func (m *Model) applySync(changes []core.PR, err error) tea.Cmd {
 	m.loading, m.waking = false, false
 	if err != nil {
 		m.syncErr = err
@@ -432,19 +431,19 @@ type claimedMsg struct {
 
 // claim requests you as a reviewer on GitHub, for a PR shared without
 // asking you (a link in Slack, say).
-func (m *Model) claim(it inbox.Item) tea.Cmd {
-	co, key := m.core, it.PR.Key()
+func (m *Model) claim(it core.PR) tea.Cmd {
+	co, key := m.core, it.Key
 	m.info("requesting you as reviewer on " + key + "…")
 	return func() tea.Msg { return claimedMsg{key, co.Claim(key)} }
 }
 
 // toggleWatch adds or removes the current repo (focused, or the selected
 // PR's) from watch_repos.
-func (m *Model) toggleWatch(it *inbox.Item) tea.Cmd {
+func (m *Model) toggleWatch(it *core.PR) tea.Cmd {
 	repo := ""
 	switch {
 	case it != nil:
-		repo = it.PR.Repository.NameWithOwner
+		repo = it.Repo
 	case m.repoFocus != "":
 		repo = m.repoFocus
 	}
@@ -467,7 +466,7 @@ func (m *Model) toggleWatch(it *inbox.Item) tea.Cmd {
 }
 
 type prFetchedMsg struct {
-	item inbox.Item
+	item core.PR
 	err  error
 }
 
@@ -488,7 +487,7 @@ func (m *Model) openFetched(msg prFetchedMsg) tea.Cmd {
 		m.fail(msg.err.Error())
 		return nil
 	}
-	key := msg.item.PR.Key()
+	key := msg.item.Key
 	m.filter = fAll
 	m.takeInbox(key)
 	m.focus = fDetail
@@ -765,28 +764,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // visibleItem is true for PRs in the current tab and focus, and for the
 // sticky PR: the one under the cursor when a sync moved it out of the tab
 // stays until you move off it, so the PR pane never switches by itself.
-func (m *Model) visibleItem(it inbox.Item) bool {
-	if it.PR.Key() == m.sticky {
+func (m *Model) visibleItem(it core.PR) bool {
+	if it.Key == m.sticky {
 		return true
 	}
-	if _, sn := m.snoozed[it.PR.Key()]; sn && !m.showSnoozed {
+	if _, sn := m.snoozed[it.Key]; sn && !m.showSnoozed {
 		return false
 	}
-	if m.repoFocus != "" && it.PR.Repository.NameWithOwner != m.repoFocus {
+	if m.repoFocus != "" && it.Repo != m.repoFocus {
 		return false
 	}
-	if m.typeFocus != "" && titleType(it.PR.Title) != m.typeFocus {
+	if m.typeFocus != "" && titleType(it.Title) != m.typeFocus {
 		return false
 	}
 	switch m.filter {
 	case fNeedsMe:
 		return it.Bucket.NeedsMe()
 	case fMine:
-		return it.Bucket == inbox.Mine || it.Bucket == inbox.Local
+		return it.Bucket == core.Mine || it.Bucket == core.Local
 	case fApproved:
-		return it.Bucket == inbox.Approved || it.Bucket == inbox.Recheck || it.Bucket == inbox.Mine && it.PR.ReviewDecision == "APPROVED"
+		return it.Bucket == core.Approved || it.Bucket == core.Recheck || it.Bucket == core.Mine && it.ReviewDecision == "APPROVED"
 	case fWaiting:
-		return it.Bucket == inbox.WaitingOnAuthor || it.Bucket == inbox.TeamRequest || it.Bucket == inbox.Involved
+		return it.Bucket == core.WaitingOnAuthor || it.Bucket == core.TeamRequest || it.Bucket == core.Involved
 	}
 	return true
 }
@@ -835,7 +834,7 @@ func (m *Model) selectionKey() string {
 // selectedKey is the selected PR's key, or "" (safe while rows are stale).
 func (m *Model) selectedKey() string {
 	if it := m.selectedItem(); it != nil {
-		return it.PR.Key()
+		return it.Key
 	}
 	return ""
 }
@@ -855,14 +854,14 @@ func (m *Model) rebuildRowsKeeping(selKey string) {
 
 	sort.SliceStable(idx, func(a, b int) bool {
 		x, y := m.items[idx[a]], m.items[idx[b]]
-		if byRepo && x.PR.Repository.NameWithOwner != y.PR.Repository.NameWithOwner {
-			return x.PR.Repository.NameWithOwner < y.PR.Repository.NameWithOwner
+		if byRepo && x.Repo != y.Repo {
+			return x.Repo < y.Repo
 		}
 		if x.Bucket != y.Bucket {
 			return x.Bucket.Rank() < y.Bucket.Rank()
 		}
 		if m.cfg.SortByType {
-			if rx, ry := inbox.TypeRank(inbox.ParseTitle(x.PR.Title), order), inbox.TypeRank(inbox.ParseTitle(y.PR.Title), order); rx != ry {
+			if rx, ry := core.TypeRank(core.ParseTitle(x.Title), order), core.TypeRank(core.ParseTitle(y.Title), order); rx != ry {
 				return rx < ry
 			}
 		}
@@ -876,7 +875,7 @@ func (m *Model) rebuildRowsKeeping(selKey string) {
 		if k > 0 {
 			prev := m.items[idx[k-1]]
 			if byRepo {
-				newGroup = prev.PR.Repository.NameWithOwner != it.PR.Repository.NameWithOwner
+				newGroup = prev.Repo != it.Repo
 			} else {
 				newGroup = prev.Bucket != it.Bucket
 			}
@@ -884,7 +883,7 @@ func (m *Model) rebuildRowsKeeping(selKey string) {
 		if newGroup {
 			h := listRow{header: true, bucket: it.Bucket}
 			if byRepo {
-				h.repo = it.PR.Repository.Name
+				h.repo = it.RepoName
 			}
 			m.rows = append(m.rows, h)
 			head = len(m.rows) - 1
@@ -894,7 +893,7 @@ func (m *Model) rebuildRowsKeeping(selKey string) {
 		if it.Bucket.NeedsMe() {
 			h.needsMe++
 		}
-		if it.PR.Key() == selKey {
+		if it.Key == selKey {
 			selGroup = groupID(*h)
 		}
 		if !m.collapsed[groupID(*h)] {
@@ -903,7 +902,7 @@ func (m *Model) rebuildRowsKeeping(selKey string) {
 	}
 	m.layoutNavs()
 	for i, r := range m.rows {
-		if selKey != "" && !r.header && m.items[r.item].PR.Key() == selKey ||
+		if selKey != "" && !r.header && m.items[r.item].Key == selKey ||
 			r.header && selGroup != "" && groupID(r) == selGroup && m.collapsed[selGroup] ||
 			r.header && selKey == "group:"+groupID(r) {
 			m.list.jump(i)
@@ -988,7 +987,7 @@ func (m *Model) listFold(key string) {
 	}
 }
 
-func (m *Model) selectedItem() *inbox.Item {
+func (m *Model) selectedItem() *core.PR {
 	if m.list.cur < 0 || m.list.cur >= len(m.rows) || m.rows[m.list.cur].header {
 		return nil
 	}
@@ -999,8 +998,8 @@ func (m *Model) selectedItem() *inbox.Item {
 	return &m.items[i]
 }
 
-func (m *Model) detailFor(it inbox.Item) *detail {
-	key := it.PR.Key()
+func (m *Model) detailFor(it core.PR) *detail {
+	key := it.Key
 	d := m.details[key]
 	if d == nil {
 		d = newDetail(it, m.viewer)
@@ -1021,7 +1020,7 @@ func (m *Model) markSeen(d *detail) {
 		return
 	}
 	d.seenLoaded = true
-	if prev, err := m.core.MarkViewed(d.item.PR.Key()); err == nil {
+	if prev, err := m.core.MarkViewed(d.item.Key); err == nil {
 		d.seenAt = prev
 		d.dirty = true
 	}
@@ -1030,7 +1029,7 @@ func (m *Model) markSeen(d *detail) {
 // current is the detail shown in the right pane.
 func (m *Model) current() *detail {
 	if it := m.selectedItem(); it != nil {
-		return m.details[it.PR.Key()]
+		return m.details[it.Key]
 	}
 	return nil
 }
@@ -1041,13 +1040,13 @@ func (m *Model) schedulePreview() tea.Cmd {
 		m.rebuildRows()
 	}
 	it := m.selectedItem()
-	if it == nil || it.PR.Key() == m.previewKey {
+	if it == nil || it.Key == m.previewKey {
 		return nil
 	}
-	m.previewKey = it.PR.Key()
+	m.previewKey = it.Key
 	m.previewSeq++
 	seq := m.previewSeq
-	if d := m.details[it.PR.Key()]; d != nil && d.det != nil {
+	if d := m.details[it.Key]; d != nil && d.det != nil {
 		return func() tea.Msg { return previewMsg{seq} }
 	}
 	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg { return previewMsg{seq} })
@@ -1276,11 +1275,11 @@ func (m *Model) normal(key string) tea.Cmd {
 			}
 		}
 		if it := m.selectedItem(); it != nil {
-			if it.PR.Local() {
+			if it.Local() {
 				m.info("a local review isn't on GitHub")
 				return nil
 			}
-			return openURL(it.PR.URL)
+			return openURL(it.URL)
 		}
 	case "yy":
 		if m.focus == fDetail && d != nil {
@@ -1291,11 +1290,11 @@ func (m *Model) normal(key string) tea.Cmd {
 			return m.copySlack(*it)
 		}
 	case "yu":
-		if it := m.selectedItem(); it != nil && !it.PR.Local() {
-			if err := platform.Copy(it.PR.URL); err != nil {
+		if it := m.selectedItem(); it != nil && !it.Local() {
+			if err := platform.Copy(it.URL); err != nil {
 				m.fail(err.Error())
 			} else {
-				m.info("copied " + it.PR.URL)
+				m.info("copied " + it.URL)
 			}
 		}
 	default:
@@ -1398,8 +1397,8 @@ func (m *Model) leader(key string) tea.Cmd {
 		return true
 	}
 	onGitHub := func() bool {
-		if need() && it.PR.Local() {
-			m.fail("a local review isn't on GitHub; open a pull request for " + it.PR.HeadRefName + " first")
+		if need() && it.Local() {
+			m.fail("a local review isn't on GitHub; open a pull request for " + it.Branch + " first")
 			return false
 		}
 		return it != nil
@@ -1456,11 +1455,11 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 	case "x":
 		if onGitHub() {
-			return m.editReview(*it, m.core.Draft(it.PR.Key(), core.EventRequestChanges))
+			return m.editReview(*it, m.core.Draft(it.Key, core.EventRequestChanges))
 		}
 	case "m":
 		if onGitHub() {
-			return m.editReview(*it, m.core.Draft(it.PR.Key(), core.EventComment))
+			return m.editReview(*it, m.core.Draft(it.Key, core.EventComment))
 		}
 	case "p":
 		if onGitHub() {
@@ -1476,7 +1475,7 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 	case "o":
 		if onGitHub() {
-			return openURL(it.PR.URL)
+			return openURL(it.URL)
 		}
 	case "O":
 		if !need() {
@@ -1505,23 +1504,23 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 	case "X":
 		if onGitHub() {
-			d := m.core.Draft(it.PR.Key(), core.EventClose)
-			if action, reason := m.suggestedAction(it.PR.Key()); action == "close" {
+			d := m.core.Draft(it.Key, core.EventClose)
+			if action, reason := m.suggestedAction(it.Key); action == "close" {
 				d.Body = reason
 			}
 			return m.editReview(*it, d)
 		}
 	case "D":
 		if onGitHub() {
-			if it.PR.IsDraft {
-				co, key := m.core, it.PR.Key()
-				m.confirm = &confirm{prompt: "mark " + prName(it.PR) + " ready for review?", yes: func() tea.Cmd {
+			if it.Draft {
+				co, key := m.core, it.Key
+				m.confirm = &confirm{prompt: "mark " + prName(*it) + " ready for review?", yes: func() tea.Cmd {
 					return func() tea.Msg { return threadDoneMsg{key, "marked ready for review", co.MarkReady(key)} }
 				}}
 				return nil
 			}
-			d := m.core.Draft(it.PR.Key(), core.EventDraft)
-			if action, reason := m.suggestedAction(it.PR.Key()); action == "draft" {
+			d := m.core.Draft(it.Key, core.EventDraft)
+			if action, reason := m.suggestedAction(it.Key); action == "draft" {
 				d.Body = reason
 			}
 			return m.editReview(*it, d)
@@ -1530,13 +1529,13 @@ func (m *Model) leader(key string) tea.Cmd {
 		return m.toggleWatch(it)
 	case "S":
 		if need() {
-			if err := m.core.Unsnooze(it.PR.Key()); err != nil {
+			if err := m.core.Unsnooze(it.Key); err != nil {
 				m.fail(err.Error())
 				return nil
 			}
 			m.snoozed = m.core.Inbox().Snoozed
 			m.rebuildRows()
-			m.info("unsnoozed " + it.PR.Key())
+			m.info("unsnoozed " + it.Key)
 		}
 	default:
 		m.fail("no leader mapping for " + key)
@@ -1568,7 +1567,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 		m.fail("no PR selected")
 		return nil
 	}
-	k := it.PR.Key()
+	k := it.Key
 	target := m.targetRun(*it)
 	switch key {
 	case "c":
@@ -1613,7 +1612,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 			m.fail("no finished review to hand off")
 			return nil
 		}
-		prompt := core.HandoffPrompt(core.FindingsMarkdown(done, m.core.Notes(k), k, it.PR.HeadRefOid, false))
+		prompt := core.HandoffPrompt(core.FindingsMarkdown(done, m.core.Notes(k), k, it.HeadOid, false))
 		if err := platform.Copy(prompt); err != nil {
 			m.fail(err.Error())
 			return nil
@@ -1667,7 +1666,7 @@ func (m *Model) threadAction(key string) tea.Cmd {
 		m.fail("put the cursor on a review thread (overview or diff) first; ]t jumps to the next one")
 		return nil
 	}
-	co, key2, id := m.core, d.item.PR.Key(), t.ID
+	co, key2, id := m.core, d.item.Key, t.ID
 	switch key {
 	case "r":
 		if t.IsResolved {
@@ -1832,7 +1831,7 @@ func (m *Model) searchLines() []string {
 	for i, r := range m.rows {
 		if !r.header {
 			it := m.items[r.item]
-			out[i] = it.PR.Repository.Name + " " + it.PR.Title + " " + it.PR.AuthorLogin() + " #" + strconv.Itoa(it.PR.Number)
+			out[i] = it.RepoName + " " + it.Title + " " + it.Author + " #" + strconv.Itoa(it.Number)
 		}
 	}
 	return out
@@ -1840,8 +1839,8 @@ func (m *Model) searchLines() []string {
 
 // ---- actions
 
-func (m *Model) copySlack(it inbox.Item) tea.Cmd {
-	line := m.core.SlackLine(it, false)
+func (m *Model) copySlack(it core.PR) tea.Cmd {
+	line := m.core.SlackLine(it.Key, "", false)
 	if err := platform.Copy(line); err != nil {
 		m.fail(err.Error())
 		return nil
@@ -1852,13 +1851,13 @@ func (m *Model) copySlack(it inbox.Item) tea.Cmd {
 
 // postSlack posts the Slack line in the thread of the message that shared
 // the PR, once you confirm, or copies it when no message did.
-func (m *Model) postSlack(it inbox.Item) tea.Cmd {
-	where := m.core.SharedIn(it.PR.Key())
+func (m *Model) postSlack(it core.PR) tea.Cmd {
+	where := m.core.SharedIn(it.Key)
 	if where == "" {
 		return m.copySlack(it)
 	}
-	line := m.core.SlackLine(it, true)
-	co, key := m.core, it.PR.Key()
+	line := m.core.SlackLine(it.Key, "", true)
+	co, key := m.core, it.Key
 	m.confirm = &confirm{prompt: "post in the " + where + " thread: " + ansi.Strip(line), yes: func() tea.Cmd {
 		return func() tea.Msg {
 			where, err := co.PostInThread(key, line)
@@ -1870,12 +1869,12 @@ func (m *Model) postSlack(it inbox.Item) tea.Cmd {
 
 // dmAuthor sends the PR's author its Slack line in a DM, once you confirm.
 // An author with no Slack user yet opens the Slack names to pick one.
-func (m *Model) dmAuthor(it inbox.Item) tea.Cmd {
-	login := it.PR.AuthorLogin()
+func (m *Model) dmAuthor(it core.PR) tea.Cmd {
+	login := it.Author
 	if !slack.IsUserID(m.cfg.SlackNames[login]) {
-		key := it.PR.Key()
+		key := it.Key
 		cmd := m.matchSlackNames(namesProposedMsg{focus: login, then: func(m *Model) tea.Cmd {
-			i := slices.IndexFunc(m.items, func(it inbox.Item) bool { return it.PR.Key() == key })
+			i := slices.IndexFunc(m.items, func(it core.PR) bool { return it.Key == key })
 			if i < 0 || !slack.IsUserID(m.cfg.SlackNames[login]) {
 				return nil
 			}
@@ -1884,11 +1883,11 @@ func (m *Model) dmAuthor(it inbox.Item) tea.Cmd {
 		m.info("no Slack user for " + login + " yet: matching names…")
 		return cmd
 	}
-	line := m.core.SlackLine(it, false)
+	line := m.core.SlackLine(it.Key, "", false)
 	co := m.core
 	m.confirm = &confirm{prompt: "DM " + login + ": " + ansi.Strip(line), yes: func() tea.Cmd {
 		return func() tea.Msg {
-			return slackPostedMsg{done: "sent " + login + " a DM", err: co.DMAuthor(it)}
+			return slackPostedMsg{done: "sent " + login + " a DM", err: co.DMAuthor(it.Key)}
 		}
 	}}
 	return nil
@@ -1899,9 +1898,9 @@ type slackPostedMsg struct {
 	err  error
 }
 
-func (m *Model) askApprove(it inbox.Item) tea.Cmd {
-	d := m.core.Draft(it.PR.Key(), core.EventApprove)
-	prompt := "approve " + prName(it.PR)
+func (m *Model) askApprove(it core.PR) tea.Cmd {
+	d := m.core.Draft(it.Key, core.EventApprove)
+	prompt := "approve " + prName(it)
 	if len(d.Comments) > 0 {
 		prompt += " with " + count(len(d.Comments), "inline comment")
 	}
@@ -1909,8 +1908,8 @@ func (m *Model) askApprove(it inbox.Item) tea.Cmd {
 	return nil
 }
 
-func (m *Model) submit(it inbox.Item, d core.Draft) tea.Cmd {
-	co, key := m.core, it.PR.Key()
+func (m *Model) submit(it core.PR, d core.Draft) tea.Cmd {
+	co, key := m.core, it.Key
 	m.info("submitting " + strings.ToLower(strings.ReplaceAll(string(d.Event), "_", " ")) + "…")
 	return func() tea.Msg {
 		sent, err := co.Submit(key, d)
@@ -1943,18 +1942,9 @@ func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 	if msg.slack != "" {
 		note += " · " + msg.slack
 	}
-	for _, it := range m.items {
-		if msg.slack != "" || msg.event == core.EventClose || msg.event == core.EventDraft || msg.event == core.EventNote {
-			break
-		}
-		if it.PR.Key() != msg.key {
-			continue
-		}
-		cp := it
-		cp.MyLastReview = &gh.Review{State: map[core.ReviewEvent]string{
-			core.EventApprove: "APPROVED", core.EventRequestChanges: "CHANGES_REQUESTED", core.EventComment: "COMMENTED",
-		}[msg.event]}
-		if err := platform.Copy(m.core.SlackLine(cp, false)); err == nil {
+	if msg.slack == "" && msg.event != core.EventClose && msg.event != core.EventDraft && msg.event != core.EventNote &&
+		slices.ContainsFunc(m.items, func(it core.PR) bool { return it.Key == msg.key }) {
+		if err := platform.Copy(m.core.SlackLine(msg.key, msg.event, false)); err == nil {
 			note += " · slack line yanked"
 		}
 	}
@@ -1971,8 +1961,8 @@ type summaryMsg struct {
 }
 
 // startSummary has the main agent write a plain-language summary of a PR.
-func (m *Model) startSummary(it inbox.Item) tea.Cmd {
-	key := it.PR.Key()
+func (m *Model) startSummary(it core.PR) tea.Cmd {
+	key := it.Key
 	if slices.Contains(m.core.Summarizing(), key) {
 		m.info("already writing the summary of " + key)
 		return nil
@@ -2018,7 +2008,7 @@ func (m *Model) applyPR(msg prRefreshedMsg) {
 }
 
 // startReviews runs a review by each reviewer at once.
-func (m *Model) startReviews(it inbox.Item, reviewers []string) tea.Cmd {
+func (m *Model) startReviews(it core.PR, reviewers []string) tea.Cmd {
 	var started, problems []string
 	for _, name := range reviewers {
 		title, err := m.launchReview(it, "", false, name)
@@ -2045,7 +2035,7 @@ func (m *Model) startReviews(it inbox.Item, reviewers []string) tea.Cmd {
 
 // startReview runs one reviewer: an agent ("" = the main one), or
 // agent:profile. A revise or sync continues that reviewer's current run.
-func (m *Model) startReview(it inbox.Item, refine string, sync bool, reviewer string) tea.Cmd {
+func (m *Model) startReview(it core.PR, refine string, sync bool, reviewer string) tea.Cmd {
 	title, err := m.launchReview(it, refine, sync, reviewer)
 	if err != nil {
 		m.fail(err.Error())
@@ -2065,7 +2055,7 @@ func (m *Model) startReview(it inbox.Item, refine string, sync bool, reviewer st
 
 // startProfile runs a review profile with its reviewers (the main agent when
 // it names none).
-func (m *Model) startProfile(it inbox.Item, p config.Profile) tea.Cmd {
+func (m *Model) startProfile(it core.PR, p config.Profile) tea.Cmd {
 	agents := p.Reviewers
 	if len(agents) == 0 {
 		agents = []string{m.cfg.Agent.Main()}
@@ -2079,8 +2069,8 @@ func (m *Model) startProfile(it inbox.Item, p config.Profile) tea.Cmd {
 
 // launchReview starts one reviewer (agent or agent:profile; "" is the main
 // agent), revising its current run when refine is set.
-func (m *Model) launchReview(it inbox.Item, refine string, sync bool, reviewer string) (string, error) {
-	key := it.PR.Key()
+func (m *Model) launchReview(it core.PR, refine string, sync bool, reviewer string) (string, error) {
+	key := it.Key
 	if cs := m.chats[chatKey(key, reviewer)]; cs != nil {
 		return "", fmt.Errorf("the %s chat for this PR is still open; end it (%s) first so the session isn't used twice", core.ReviewerTitle(reviewer), cs.quit)
 	}
@@ -2115,16 +2105,16 @@ func (m *Model) loadRuns() {
 		d.setRuns(m.runs[k])
 	}
 	if d := m.current(); d != nil {
-		d.setLogs(m.core.Notes(d.item.PR.Key()))
+		d.setLogs(m.core.Notes(d.item.Key))
 	}
 }
 
 // targetRun is the review an agent action applies to: the agent whose
 // section the cursor is in on the AI review tab, else the main reviewer's,
 // else whichever agent has reviewed the PR.
-func (m *Model) targetRun(it inbox.Item) *core.Review {
-	runs := m.runs[it.PR.Key()]
-	if d := m.details[it.PR.Key()]; d != nil && d.tab == tabReview && m.focus == fDetail {
+func (m *Model) targetRun(it core.PR) *core.Review {
+	runs := m.runs[it.Key]
+	if d := m.details[it.Key]; d != nil && d.tab == tabReview && m.focus == fDetail {
 		v := &d.navs[tabReview]
 		if rows := d.rows[tabReview]; v.cur < len(rows) && rows[v.cur].agent != "" {
 			return core.Latest(runs, rows[v.cur].agent)
@@ -2141,8 +2131,8 @@ func (m *Model) targetRun(it inbox.Item) *core.Review {
 
 // postReview opens one GitHub review in your editor made from every agent's
 // included findings.
-func (m *Model) postReview(it inbox.Item) tea.Cmd {
-	d, err := m.core.AgentDraft(it.PR.Key())
+func (m *Model) postReview(it core.PR) tea.Cmd {
+	d, err := m.core.AgentDraft(it.Key)
 	if err != nil {
 		m.fail(err.Error())
 		return nil

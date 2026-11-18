@@ -18,7 +18,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tmstorm/prowl/internal/core"
-	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/platform"
 )
 
@@ -35,7 +34,7 @@ type chatSession struct {
 	key   string // chatKey: the PR and the agent
 	title string // agent name for the popup title
 	quit  string // what ends the session, e.g. /exit
-	item  inbox.Item
+	item  core.PR
 	cmd   *exec.Cmd
 	pty   *os.File
 	emu   *vt.SafeEmulator
@@ -70,13 +69,13 @@ func (m *Model) chatSize() (int, int) {
 func chatKey(pr, reviewer string) string { return pr + "/" + reviewer }
 
 // openChat shows an agent's chat for a PR, starting it if needed.
-func (m *Model) openChat(it inbox.Item, reviewer string) tea.Cmd {
-	key := chatKey(it.PR.Key(), reviewer)
+func (m *Model) openChat(it core.PR, reviewer string) tea.Cmd {
+	key := chatKey(it.Key, reviewer)
 	if cs := m.chats[key]; cs != nil {
 		m.popup = &chatPopup{cs: cs}
 		return nil
 	}
-	spec, err := m.core.Chat(it.PR.Key(), reviewer)
+	spec, err := m.core.Chat(it.Key, reviewer)
 	if err != nil {
 		m.fail(err.Error())
 		return nil
@@ -105,7 +104,7 @@ func (m *Model) openChat(it inbox.Item, reviewer string) tea.Cmd {
 // startChat runs cmd in a pseudo-terminal feeding a terminal emulator. The
 // emulator is never closed: its Close races its Read in the vt library, so
 // the goroutine copying its replies to the pty stays parked after the chat.
-func startChat(key string, it inbox.Item, cmd *exec.Cmd, w, h int) (*chatSession, error) {
+func startChat(key string, it core.PR, cmd *exec.Cmd, w, h int) (*chatSession, error) {
 	cmd.Env = append(cmd.Env, "TERM=xterm-256color", "COLORTERM=truecolor")
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
 	if err != nil {
@@ -165,13 +164,13 @@ func (m *Model) chatExited(msg chatExitMsg) tea.Cmd {
 	}
 	i := strings.LastIndex(msg.key, "/")
 	pr, name := msg.key[:i], msg.key[i+1:]
-	var it inbox.Item
+	var it core.PR
 	if cs != nil {
 		it = cs.item
 	} else {
 		found := false
 		for _, x := range m.items {
-			if x.PR.Key() == pr {
+			if x.Key == pr {
 				it, found = x, true
 			}
 		}

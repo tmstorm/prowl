@@ -18,7 +18,6 @@ import (
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
-	"github.com/tmstorm/prowl/internal/inbox"
 )
 
 func popBox(title string, body string, w int, color string) string {
@@ -42,14 +41,14 @@ const (
 type textPopup struct {
 	kind     popKind
 	agent    string // popRefine: who revises
-	item     inbox.Item
+	item     core.PR
 	sel      []diffLine
 	thread   *gh.Thread
 	replyRun int64 // popReply: the review run whose drafted reply this is, 0 for your own
 	ta       textarea.Model
 }
 
-func newTextPopup(m *Model, kind popKind, it inbox.Item, sel []diffLine, value string) *textPopup {
+func newTextPopup(m *Model, kind popKind, it core.PR, sel []diffLine, value string) *textPopup {
 	ta := textarea.New()
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
@@ -107,9 +106,9 @@ func (p *textPopup) commit(m *Model) tea.Cmd {
 	body := strings.TrimSpace(p.ta.Value())
 	switch p.kind {
 	case popInline:
-		if d := m.details[p.item.PR.Key()]; d != nil {
+		if d := m.details[p.item.Key]; d != nil {
 			d.setPending(p.sel, body)
-			m.core.SetPending(d.item.PR.Key(), d.pending)
+			m.core.SetPending(d.item.Key, d.pending)
 			if body == "" {
 				m.info("comment removed")
 			} else {
@@ -124,7 +123,7 @@ func (p *textPopup) commit(m *Model) tea.Cmd {
 		if body == "" {
 			return nil
 		}
-		co, key, id, run := m.core, p.item.PR.Key(), p.thread.ID, p.replyRun
+		co, key, id, run := m.core, p.item.Key, p.thread.ID, p.replyRun
 		m.info("posting reply…")
 		return func() tea.Msg {
 			if run != 0 {
@@ -158,7 +157,7 @@ func (p *textPopup) view(m *Model) string {
 		}
 		help = "ctrl+s / esc save as pending · ctrl+e edit in " + m.cfg.EditorCmd() + " · ctrl+c discard"
 	case popRefine:
-		title = "Ask " + core.ReviewerTitle(p.agent) + " to revise · " + p.item.PR.Key()
+		title = "Ask " + core.ReviewerTitle(p.agent) + " to revise · " + p.item.Key
 		help = "ctrl+s send · ctrl+e edit in " + m.cfg.EditorCmd() + " · esc cancel"
 	case popReply:
 		line := p.thread.Line
@@ -188,7 +187,7 @@ func (p *textPopup) view(m *Model) string {
 // ---- snooze
 
 type snoozePopup struct {
-	item inbox.Item
+	item core.PR
 	nav
 }
 
@@ -197,8 +196,8 @@ var snoozeChoices = []struct {
 	d     time.Duration
 }{{"1 hour", time.Hour}, {"4 hours", 4 * time.Hour}, {"1 day", 24 * time.Hour}, {"1 week", 7 * 24 * time.Hour}}
 
-func newSnooze(it inbox.Item) *snoozePopup { return &snoozePopup{item: it} }
-func (p *snoozePopup) mode() mode          { return modeNormal }
+func newSnooze(it core.PR) *snoozePopup { return &snoozePopup{item: it} }
+func (p *snoozePopup) mode() mode       { return modeNormal }
 
 func (p *snoozePopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
@@ -209,7 +208,7 @@ func (p *snoozePopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		fallthrough
 	case "enter", "l":
 		c := snoozeChoices[p.cur]
-		key := p.item.PR.Key()
+		key := p.item.Key
 		m.popup = nil
 		if err := m.core.Snooze(key, c.d); err != nil {
 			m.fail(err.Error())
@@ -232,7 +231,7 @@ func (p *snoozePopup) view(m *Model) string {
 		}
 		rows = append(rows, row)
 	}
-	return popBox("Snooze "+p.item.PR.Key(), strings.Join(rows, "\n")+"\n\n"+sDim.Render("1-4 or j/k enter · esc"), 36, pal.Accent)
+	return popBox("Snooze "+p.item.Key, strings.Join(rows, "\n")+"\n\n"+sDim.Render("1-4 or j/k enter · esc"), 36, pal.Accent)
 }
 
 // ---- fuzzy finder (telescope-ish)
@@ -273,7 +272,7 @@ func parseRef(s string, m *Model) (prRef, bool) {
 	}
 	var repos []string
 	for _, it := range m.items {
-		if nwo := it.PR.Repository.NameWithOwner; it.PR.Repository.Name == g[2] && !slices.Contains(repos, nwo) {
+		if nwo := it.Repo; it.RepoName == g[2] && !slices.Contains(repos, nwo) {
 			repos = append(repos, nwo)
 		}
 	}
@@ -312,7 +311,7 @@ func (f *finder) filter(m *Model) {
 	q := strings.ToLower(f.input.Value())
 	var res []finderHit
 	for i, it := range m.items {
-		hay := strings.ToLower(prName(it.PR) + " " + it.PR.HeadRefName + " " + it.PR.Title + " " + it.PR.AuthorLogin())
+		hay := strings.ToLower(prName(it) + " " + it.Branch + " " + it.Title + " " + it.Author)
 		if s, ok := fuzzy(q, hay); ok {
 			res = append(res, finderHit{i, s})
 		}
@@ -328,7 +327,7 @@ func (f *finder) filter(m *Model) {
 		key := fmt.Sprintf("%s#%d", ref.repo, ref.n)
 		f.remote = &ref
 		for i, it := range m.items {
-			if it.PR.Key() == key {
+			if it.Key == key {
 				f.remote, f.results = nil, []int{i}
 			}
 		}
@@ -418,7 +417,7 @@ func (f *finder) update(m *Model, k tea.KeyMsg) tea.Cmd {
 			m.rebuildRows()
 		}
 		for i, r := range m.rows {
-			if !r.header && m.items[r.item].PR.Key() == target.PR.Key() {
+			if !r.header && m.items[r.item].Key == target.Key {
 				m.list.jump(i)
 				m.list.align('z')
 			}
@@ -439,8 +438,8 @@ func (f *finder) view(m *Model) string {
 			it := m.items[f.results[j]]
 			row = fmt.Sprintf(" %s %s %s %s",
 				fit(bucketStyle(it.Bucket).Render(it.Bucket.String()), 17),
-				sDim.Render(shortRepo(it.PR.Repository.Name)+prNumber(it.PR)),
-				it.PR.Title, sPink.Render(it.PR.AuthorLogin()))
+				sDim.Render(shortRepo(it.RepoName)+prNumber(it)),
+				it.Title, sPink.Render(it.Author))
 		} else {
 			row = " " + sTitle.Render("↗ open ") + sBold.Render(fmt.Sprintf("%s#%d", f.remote.repo, f.remote.n)) + sDim.Render(" from GitHub (not in your inbox)")
 		}
@@ -576,9 +575,9 @@ type repoCount struct {
 func newRepoPicker(m *Model) *repoPicker {
 	counts := map[string]*repoCount{}
 	for _, it := range m.items {
-		nwo := it.PR.Repository.NameWithOwner
+		nwo := it.Repo
 		if counts[nwo] == nil {
-			counts[nwo] = &repoCount{name: it.PR.Repository.Name, nwo: nwo}
+			counts[nwo] = &repoCount{name: it.RepoName, nwo: nwo}
 		}
 		counts[nwo].total++
 		if it.Bucket.NeedsMe() {
@@ -706,7 +705,7 @@ func (p *repoPicker) view(m *Model) string {
 func newTypePicker(m *Model) *repoPicker {
 	counts := map[string]*repoCount{}
 	for _, it := range m.items {
-		n := titleType(it.PR.Title)
+		n := titleType(it.Title)
 		if counts[n] == nil {
 			counts[n] = &repoCount{name: n}
 		}
@@ -721,8 +720,8 @@ func newTypePicker(m *Model) *repoPicker {
 		p.all = append(p.all, *c)
 	}
 	sort.SliceStable(p.all, func(i, j int) bool {
-		ri := inbox.TypeRank(inbox.Title{Type: p.all[i].name, OK: p.all[i].name != "other"}, order)
-		rj := inbox.TypeRank(inbox.Title{Type: p.all[j].name, OK: p.all[j].name != "other"}, order)
+		ri := core.TypeRank(core.Title{Type: p.all[i].name, OK: p.all[i].name != "other"}, order)
+		rj := core.TypeRank(core.Title{Type: p.all[j].name, OK: p.all[j].name != "other"}, order)
 		if ri != rj {
 			return ri < rj
 		}
@@ -735,13 +734,13 @@ func newTypePicker(m *Model) *repoPicker {
 // ---- agent picker: run one review with a different agent
 
 type agentPicker struct {
-	item  inbox.Item
+	item  core.PR
 	names []string
 	errs  []error
 	nav
 }
 
-func newAgentPicker(m *Model, it inbox.Item) *agentPicker {
+func newAgentPicker(m *Model, it core.PR) *agentPicker {
 	p := &agentPicker{item: it}
 	for _, n := range agent.Names() {
 		p.names = append(p.names, n)
@@ -792,7 +791,7 @@ func (p *agentPicker) view(m *Model) string {
 		note = "\n" + sErr.Render(" "+err.Error())
 	}
 	body := strings.Join(rows, "\n") + "\n" + note + "\n" + sDim.Render(" enter review with it · esc cancel · the default is set in options")
-	return popBox("Review "+p.item.PR.Key()+" with", body, w, pal.Accent)
+	return popBox("Review "+p.item.Key+" with", body, w, pal.Accent)
 }
 
 // ---- mouse: where each list popup draws its rows (see rowPopup)
@@ -820,7 +819,7 @@ func (p *agentPicker) list(*Model) (*nav, int) {
 // ---- profile picker: run a named review profile
 
 type profilePicker struct {
-	item     inbox.Item
+	item     core.PR
 	profiles []config.Profile
 	nav
 }
@@ -854,7 +853,7 @@ func (p *profilePicker) view(m *Model) string {
 		rows = append(rows, row)
 	}
 	help := sDim.Render(" enter run it · esc cancel · add your own under [[agent.profiles]]")
-	return popBox("Run a review profile on "+p.item.PR.Key(), strings.Join(rows, "\n")+"\n\n"+help, w, pal.Accent)
+	return popBox("Run a review profile on "+p.item.Key, strings.Join(rows, "\n")+"\n\n"+help, w, pal.Accent)
 }
 
 func (p *profilePicker) list(*Model) (*nav, int) {
@@ -865,7 +864,7 @@ func (p *profilePicker) list(*Model) (*nav, int) {
 // reviewerPicker asks people and teams to review a PR: everyone who can
 // review it, filtered as you type, with the ones it's with already first.
 type reviewerPicker struct {
-	item    inbox.Item
+	item    core.PR
 	all     []reviewerRow
 	input   filterInput
 	results []int // indexes into all
@@ -879,21 +878,21 @@ type reviewerRow struct {
 }
 
 type candidatesMsg struct {
-	item                  inbox.Item
+	item                  core.PR
 	candidates, suggested []core.Candidate
 	err                   error
 }
 
 // askForReviews loads who can review the PR, then opens the picker.
-func (m *Model) askForReviews(it inbox.Item) tea.Cmd {
+func (m *Model) askForReviews(it core.PR) tea.Cmd {
 	co := m.core
 	m.info("loading who can review…")
 	return func() tea.Msg {
-		c, err := co.ReviewCandidates(it.PR.Key())
+		c, err := co.ReviewCandidates(it.Key)
 		if err != nil {
 			return candidatesMsg{item: it, err: err}
 		}
-		s, err := co.SuggestedReviewers(it.PR.Key())
+		s, err := co.SuggestedReviewers(it.Key)
 		return candidatesMsg{item: it, candidates: c, suggested: s, err: err}
 	}
 }
@@ -902,7 +901,7 @@ func (m *Model) askForReviews(it inbox.Item) tea.Cmd {
 // who reviewed (not you, the author or a bot), then the people GitHub
 // suggests, then everyone else who can review. Someone who reviewed and
 // isn't asked now starts checked, to ask them again.
-func newReviewerPicker(m *Model, it inbox.Item, candidates, suggested []core.Candidate) *reviewerPicker {
+func newReviewerPicker(m *Model, it core.PR, candidates, suggested []core.Candidate) *reviewerPicker {
 	p := &reviewerPicker{item: it}
 	seen := map[string]bool{}
 	add := func(r reviewerRow) {
@@ -911,31 +910,31 @@ func newReviewerPicker(m *Model, it inbox.Item, candidates, suggested []core.Can
 			p.all = append(p.all, r)
 		}
 	}
-	for _, rr := range it.PR.ReviewRequests.Nodes {
-		if n := rr.RequestedReviewer.Login; n != "" && n != m.viewer {
+	for _, rr := range it.Requests {
+		if n := rr.Login; n != "" && n != m.viewer {
 			add(reviewerRow{login: n, state: "asked"})
-		} else if slug := rr.RequestedReviewer.Slug; n == "" && slug != "" {
-			owner, _, _ := strings.Cut(it.PR.Repository.NameWithOwner, "/")
-			add(reviewerRow{login: owner + "/" + slug, name: rr.RequestedReviewer.Name, state: "asked"})
+		} else if slug := rr.Team; n == "" && slug != "" {
+			owner, _, _ := strings.Cut(it.Repo, "/")
+			add(reviewerRow{login: owner + "/" + slug, name: rr.Name, state: "asked"})
 		}
 	}
 	states := map[string]string{"APPROVED": "approved", "CHANGES_REQUESTED": "changes requested", "COMMENTED": "commented", "DISMISSED": "dismissed"}
-	reviews := slices.Clone(it.PR.Reviews.Nodes)
-	slices.SortStableFunc(reviews, func(a, b gh.Review) int { return b.SubmittedAt.Compare(a.SubmittedAt) })
+	reviews := slices.Clone(it.Reviews)
+	slices.SortStableFunc(reviews, func(a, b core.PRReview) int { return b.SubmittedAt.Compare(a.SubmittedAt) })
 	for _, r := range reviews {
-		n := author(r.Author)
-		if r.Author.IsBot(botLogins) || n == m.viewer || n == it.PR.AuthorLogin() || states[r.State] == "" {
+		n := r.Author.Login
+		if r.Author.Bot || n == m.viewer || n == it.Author || states[r.State] == "" {
 			continue
 		}
 		add(reviewerRow{login: n, state: states[r.State], on: true})
 	}
 	for _, c := range suggested {
-		if c.Login != m.viewer && c.Login != it.PR.AuthorLogin() {
+		if c.Login != m.viewer && c.Login != it.Author {
 			add(reviewerRow{login: c.Login, name: c.Name, state: "suggested"})
 		}
 	}
 	for _, c := range candidates {
-		if c.Login != m.viewer && c.Login != it.PR.AuthorLogin() {
+		if c.Login != m.viewer && c.Login != it.Author {
 			add(reviewerRow{login: c.Login, name: c.Name})
 		}
 	}
@@ -1002,7 +1001,7 @@ func (p *reviewerPicker) ask(m *Model) tea.Cmd {
 	if len(names) == 0 {
 		return nil
 	}
-	co, key, who := m.core, p.item.PR.Key(), strings.Join(names, ", ")
+	co, key, who := m.core, p.item.Key, strings.Join(names, ", ")
 	m.info("asking " + who + " to review…")
 	return func() tea.Msg {
 		return threadDoneMsg{key, "asked " + who + " to review", co.RequestReviews(key, names)}
@@ -1044,6 +1043,6 @@ func (p *reviewerPicker) view(m *Model) string {
 		lines = lines[p.top:min(p.top+p.h, p.n)]
 	}
 	help := sDim.Render(" type to filter · ↑↓ move · space or click check · enter ask · esc cancel")
-	return popBox("Ask for reviews on "+prName(p.item.PR), p.input.View()+"\n"+sBorder.Render(strings.Repeat("─", w-4))+"\n"+
+	return popBox("Ask for reviews on "+prName(p.item), p.input.View()+"\n"+sBorder.Render(strings.Repeat("─", w-4))+"\n"+
 		strings.Join(lines, "\n")+"\n\n"+help, w, pal.Accent)
 }

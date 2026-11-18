@@ -15,7 +15,6 @@ import (
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
-	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/platform"
 )
 
@@ -92,14 +91,14 @@ func (m *Model) editText(value string, done func(m *Model, text string)) tea.Cmd
 var eventLine = regexp.MustCompile(`(?mi)^event:\s*(\S+)`)
 
 // editReview opens a review draft in the editor and submits it on :wq.
-func (m *Model) editReview(it inbox.Item, d core.Draft) tea.Cmd {
-	pr := it.PR
+func (m *Model) editReview(it core.PR, d core.Draft) tea.Cmd {
+	pr := it
 	if d.Reopened {
 		m.info("this is the review you wrote that didn't go out")
 	}
 	event, body, comments, fromAgent := d.Event, d.Body, d.Comments, len(d.Runs) > 0
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s#%d  %s  (%s)\n\n", pr.Repository.NameWithOwner, pr.Number, pr.Title, pr.AuthorLogin())
+	fmt.Fprintf(&b, "%s#%d  %s  (%s)\n\n", pr.Repo, pr.Number, pr.Title, pr.Author)
 	b.WriteString("Write the review below this block. :wq submits it.\n")
 	b.WriteString(":q! or :cq cancels. An empty comment or request-changes review cancels\n")
 	b.WriteString("too, unless it has inline comments or replies: they post with no body.\n\n")
@@ -108,7 +107,7 @@ func (m *Model) editReview(it inbox.Item, d core.Draft) tea.Cmd {
 	b.WriteString("       close and draft post this as a comment, then close the PR or make it a draft.\n")
 	b.WriteString("       note posts a plain comment in the conversation, not a review; pending\n")
 	b.WriteString("       inline comments stay pending.\n")
-	if action, reason := m.suggestedAction(pr.Key()); action != "" && string(event) != strings.ToUpper(action) {
+	if action, reason := m.suggestedAction(pr.Key); action != "" && string(event) != strings.ToUpper(action) {
 		first, _, _ := strings.Cut(reason, "\n")
 		fmt.Fprintf(&b, "       The agent suggests %s: %s\n", map[string]string{"close": "closing", "draft": "a draft"}[action], first)
 	}
@@ -143,7 +142,7 @@ func (m *Model) editReview(it inbox.Item, d core.Draft) tea.Cmd {
 	if body != "" {
 		b.WriteString("\n")
 	}
-	name := fmt.Sprintf("review-%s-%d.md", pr.Repository.Name, pr.Number)
+	name := fmt.Sprintf("review-%s-%d.md", pr.RepoName, pr.Number)
 	return m.openEditor(name, b.String(), func(m *Model, text string, saved bool) tea.Cmd {
 		if !saved {
 			m.info("review cancelled")

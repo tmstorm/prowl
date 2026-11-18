@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/tmstorm/prowl/internal/agent"
-	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
@@ -21,9 +20,9 @@ import (
 // Changes a UI made itself through a call are not reported.
 type Event struct {
 	Kind    EventKind
-	Changes []inbox.Item // InboxChanged: what changed, as Refresh returns it
-	Key     string       // SummaryChanged: the PR
-	Err     error        // InboxChanged, SummaryChanged, ConfigChanged: what failed
+	Changes []PR   // InboxChanged: what changed, as Refresh returns it
+	Key     string // SummaryChanged: the PR
+	Err     error  // InboxChanged, SummaryChanged, ConfigChanged: what failed
 }
 
 type EventKind int
