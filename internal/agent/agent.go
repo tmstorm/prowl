@@ -454,154 +454,184 @@ type result struct {
 // only resumes there. A failure from a logged-out agent is reported as that,
 // whatever the agent printed.
 func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
-	key := j.Key()
-	if cfg.NotifyTimeout.Duration > 0 {
-		notifyTimeout = cfg.NotifyTimeout.Duration
-	}
-	var prev *store.Run
+	r := &jobRun{cfg: cfg, st: st, c: c, j: j, key: j.Key()}
 	if j.RunID != 0 {
-		if prev, _ = st.Run(j.RunID); prev != nil {
-			j.Agent, j.Profile = prev.Agent, prev.Profile
+		if r.prev, _ = st.Run(j.RunID); r.prev != nil {
+			r.j.Agent, r.j.Profile = r.prev.Agent, r.prev.Profile
 		}
 	}
-	if j.Agent == "" {
-		j.Agent = cfg.Agent.Main()
+	if r.j.Agent == "" {
+		r.j.Agent = cfg.Agent.Main()
 	}
-	if j.RunID == 0 {
-		id, err := st.StartRun(key, j.Head, j.Agent, j.Profile, os.Getpid())
+	if r.j.RunID == 0 {
+		id, err := st.StartRun(r.key, r.j.Head, r.j.Agent, r.j.Profile, os.Getpid())
 		if err != nil {
 			return fmt.Errorf("run: %w", err)
 		}
-		j.RunID = id
+		r.j.RunID = id
 	}
-	id := j.RunID
-	_ = st.SetRunPID(id, os.Getpid())
-	be, err := For(cfg, j.Agent)
+	r.id = r.j.RunID
+	_ = st.SetRunPID(r.id, os.Getpid())
+	be, err := For(cfg, r.j.Agent)
 	if err != nil {
-		_ = st.FailRun(id, err.Error())
+		_ = st.FailRun(r.id, err.Error())
 		return err
 	}
-	fail := func(err error) error {
-		if a := be.Auth(); a.Known && !a.LoggedIn {
-			err = fmt.Errorf("%s isn't logged in; log in again from prowl's accounts", Title(be.Name()))
+	r.be = be
+	r.wt = r.j.Dir
+	if r.wt == "" {
+		_ = st.SetRunActivity(r.id, "preparing worktree")
+		if r.wt, err = prepareWorktree(cfg, r.j); err != nil {
+			return r.fail(err)
 		}
-		if j.Refine != "" && prev != nil {
-			_ = st.EndRevise(id)
-			_ = st.AddReviewLog(key, store.Reviewer(be.Name(), j.Profile), "note", "the revise failed, so the review is as it was: "+err.Error())
-			notify(Title(be.Name())+" revise failed", key+": "+err.Error())
-			return err
-		}
-		_ = st.FailRun(id, err.Error())
-		notify(Title(be.Name())+" review failed", key+": "+err.Error())
+	}
+	r.tools = ToolServerCommand(cfg, be, r.j.Repo, r.wt, r.j.Dir != "", false)
+	if r.j.Refine != "" {
+		return r.revise()
+	}
+	return r.review()
+}
+
+// jobRun is a job as it runs: what its review or revise turns share.
+type jobRun struct {
+	cfg     config.Config
+	st      *store.Store
+	c       *gh.Client
+	j       Job
+	key     string
+	id      int64
+	prev    *store.Run // the run a revise continues
+	be      Backend
+	wt      string   // the checkout the agent works in
+	tools   []string // the tool server command, nil for none
+	threads map[string]store.ThreadReply
+}
+
+func (r *jobRun) reviewer() string { return store.Reviewer(r.be.Name(), r.j.Profile) }
+
+func (r *jobRun) notify(title, body string) {
+	platform.Notify(title, body, r.cfg.NotifyTimeout.Duration)
+}
+
+// fail ends the run with err, or for a revise keeps the review as it was.
+func (r *jobRun) fail(err error) error {
+	if a := r.be.Auth(); a.Known && !a.LoggedIn {
+		err = fmt.Errorf("%s isn't logged in; log in again from prowl's accounts", Title(r.be.Name()))
+	}
+	if r.j.Refine != "" && r.prev != nil {
+		_ = r.st.EndRevise(r.id)
+		_ = r.st.AddReviewLog(r.key, r.reviewer(), "note", "the revise failed, so the review is as it was: "+err.Error())
+		r.notify(Title(r.be.Name())+" revise failed", r.key+": "+err.Error())
 		return err
 	}
+	_ = r.st.FailRun(r.id, err.Error())
+	r.notify(Title(r.be.Name())+" review failed", r.key+": "+err.Error())
+	return err
+}
 
-	wt := j.Dir
-	if wt == "" {
-		_ = st.SetRunActivity(id, "preparing worktree")
-		if wt, err = prepareWorktree(cfg, j); err != nil {
-			return fail(err)
+func (r *jobRun) turn(input, session, phase string) (*result, string, error) {
+	_ = r.st.SetRunActivity(r.id, phase)
+	return r.be.Review(Turn{
+		Dir: r.wt, Prompt: input, Session: session, Model: r.cfg.Agent.Model(r.be.Name()),
+		Schema:      Schema(r.cfg.Agent.Severities()),
+		ContextDirs: existingDirs(r.cfg.ExpandedContextDirs()),
+		ToolServer:  r.tools,
+		Activity:    func(s string) { _ = r.st.SetRunActivity(r.id, phase+": "+s) },
+		SetModel:    func(m string) { _ = r.st.SetRunModel(r.id, m) },
+	})
+}
+
+// fresh is the full prompt for a turn that starts without a session: the
+// PR's history, guidelines and what you dismissed before.
+func (r *jobRun) fresh() string {
+	j, st, wt := r.j, r.st, r.wt
+	runs, _ := st.Runs(r.key)
+	var hist history
+	var changed []string
+	if j.Dir != "" {
+		hist = localHistory(wt, j, runs, r.id)
+		changed = localChanges(wt, hist.base)
+	} else {
+		_ = st.SetRunActivity(r.id, "reading review history")
+		hist = loadHistory(r.c, j, r.cfg.BotSet())
+		r.threads = hist.threads
+		if hist.lastOid == "" && hist.reader != "" && hist.reader == j.Author {
+			hist.lastOid, hist.lastAt, hist.byAgent = lastRun(runs, store.Reviewer(j.Agent, j.Profile), r.id)
 		}
-	}
-	tools := ToolServerCommand(cfg, be, j.Repo, wt, j.Dir != "", false)
-	turn := func(input, session, phase string) (*result, string, error) {
-		_ = st.SetRunActivity(id, phase)
-		return be.Review(Turn{
-			Dir: wt, Prompt: input, Session: session, Model: cfg.Agent.Model(be.Name()),
-			Schema:      Schema(cfg.Agent.Severities()),
-			ContextDirs: existingDirs(cfg.ExpandedContextDirs()),
-			ToolServer:  tools,
-			Activity:    func(s string) { _ = st.SetRunActivity(id, phase+": "+s) },
-			SetModel:    func(m string) { _ = st.SetRunModel(id, m) },
-		})
-	}
-
-	var threads map[string]store.ThreadReply
-	fresh := func() string {
-		runs, _ := st.Runs(key)
-		var hist history
-		var changed []string
-		if j.Dir != "" {
-			hist = localHistory(wt, j, runs, id)
-			changed = localChanges(wt, hist.base)
-		} else {
-			_ = st.SetRunActivity(id, "reading review history")
-			hist = loadHistory(c, j, cfg.BotSet())
-			threads = hist.threads
-			if hist.lastOid == "" && hist.reader != "" && hist.reader == j.Author {
-				hist.lastOid, hist.lastAt, hist.byAgent = lastRun(runs, store.Reviewer(j.Agent, j.Profile), id)
+		if hist.lastOid != "" {
+			_ = git(wt, "fetch", "--quiet", "origin", hist.lastOid)
+			if git(wt, "cat-file", "-e", hist.lastOid+"^{commit}") != nil {
+				hist.lastOidMissing = true
 			}
-			if hist.lastOid != "" {
-				_ = git(wt, "fetch", "--quiet", "origin", hist.lastOid)
-				if git(wt, "cat-file", "-e", hist.lastOid+"^{commit}") != nil {
-					hist.lastOidMissing = true
-				}
-			}
-			out, _ := gitOutput(wt, "diff", "--name-only", "origin/"+j.Base+"...HEAD")
-			changed = strings.Fields(string(out))
 		}
-		_ = st.SetRunActivity(id, "finding repo guidelines")
-		var examples string
-		if n := cfg.Agent.EditExamples; n > 0 {
-			posts, _ := st.Posts(time.Time{})
-			examples = editExamples(posts, n)
-		}
-		return prompt(j, cfg, be, findGuidelines(wt, changed), hist, dismissedSection(runs, id), examples, tools != nil)
+		out, _ := gitOutput(wt, "diff", "--name-only", "origin/"+j.Base+"...HEAD")
+		changed = strings.Fields(string(out))
 	}
-
-	if j.Refine != "" {
-		if prev == nil || (be.Resumes() && prev.SessionID == "") {
-			return fail(fmt.Errorf("no previous review to revise"))
-		}
-		if !j.Sync {
-			_ = st.AddReviewLog(key, store.Reviewer(be.Name(), j.Profile), "you", j.Refine)
-		}
-		instruction := "Revise your review per this instruction from the reviewer, then return the complete updated review " +
-			"(all findings you still stand behind, not just the changes). Put one or two sentences to the reviewer " +
-			"about what you changed and why in `note`:\n\n" + j.Refine
-		if j.Sync {
-			instruction = j.Refine
-			_ = st.AddReviewLog(key, store.Reviewer(be.Name(), j.Profile), "note", "synced the review from your chat")
-		}
-		instruction += reviseReplies
-		session := prev.SessionID
-		if !be.Resumes() {
-			instruction = fresh() + previousReview(prev) + instruction
-			session = ""
-		}
-		res, sid, err := turn(instruction, session, "revising")
-		if err != nil {
-			return fail(err)
-		}
-		if res.Note != "" {
-			_ = st.AddReviewLog(key, store.Reviewer(be.Name(), j.Profile), "agent", res.Note)
-		}
-		keepState(res.Findings, prev.Findings)
-		if threads == nil && j.Dir == "" {
-			threads = loadHistory(c, j, cfg.BotSet()).threads
-		}
-		return finish(st, be, id, key, sid, res, prev.Guidance, 0, cfg.Agent.Severities(), threadReplies(res, threads, prev.Replies))
+	_ = st.SetRunActivity(r.id, "finding repo guidelines")
+	var examples string
+	if n := r.cfg.Agent.EditExamples; n > 0 {
+		posts, _ := st.Posts(time.Time{})
+		examples = editExamples(posts, n)
 	}
+	return prompt(j, r.cfg, r.be, findGuidelines(wt, changed), hist, dismissedSection(runs, r.id), examples, r.tools != nil)
+}
 
-	_ = st.ClearReviewLog(key, store.Reviewer(be.Name(), j.Profile))
-	input := fresh()
-	first, sid, err := turn(input, "", "reviewing")
+// revise sends the job's instruction to the review's own session.
+func (r *jobRun) revise() error {
+	j, prev := r.j, r.prev
+	if prev == nil || (r.be.Resumes() && prev.SessionID == "") {
+		return r.fail(fmt.Errorf("no previous review to revise"))
+	}
+	if !j.Sync {
+		_ = r.st.AddReviewLog(r.key, r.reviewer(), "you", j.Refine)
+	}
+	instruction := "Revise your review per this instruction from the reviewer, then return the complete updated review " +
+		"(all findings you still stand behind, not just the changes). Put one or two sentences to the reviewer " +
+		"about what you changed and why in `note`:\n\n" + j.Refine
+	if j.Sync {
+		instruction = j.Refine
+		_ = r.st.AddReviewLog(r.key, r.reviewer(), "note", "synced the review from your chat")
+	}
+	instruction += reviseReplies
+	session := prev.SessionID
+	if !r.be.Resumes() {
+		instruction = r.fresh() + previousReview(prev) + instruction
+		session = ""
+	}
+	res, sid, err := r.turn(instruction, session, "revising")
 	if err != nil {
-		return fail(err)
+		return r.fail(err)
 	}
+	if res.Note != "" {
+		_ = r.st.AddReviewLog(r.key, r.reviewer(), "agent", res.Note)
+	}
+	keepState(res.Findings, prev.Findings)
+	if r.threads == nil && j.Dir == "" {
+		r.threads = loadHistory(r.c, j, r.cfg.BotSet()).threads
+	}
+	return r.finish(sid, res, prev.Guidance, 0, threadReplies(res, r.threads, prev.Replies))
+}
 
+// review runs a fresh review, then a turn that verifies its findings.
+func (r *jobRun) review() error {
+	_ = r.st.ClearReviewLog(r.key, r.reviewer())
+	input := r.fresh()
+	first, sid, err := r.turn(input, "", "reviewing")
+	if err != nil {
+		return r.fail(err)
+	}
 	verify, session := verifyPrompt, sid
-	if !be.Resumes() {
+	if !r.be.Resumes() {
 		verify, session = input+draftReview(first)+verifyPrompt, ""
 	}
-	final, sid2, err := turn(verify, session, "verifying findings")
+	final, sid2, err := r.turn(verify, session, "verifying findings")
 	if err != nil || final == nil {
 		final, sid2 = first, sid
 	}
 	if final.Note != "" {
-		_ = st.AddReviewLog(key, store.Reviewer(be.Name(), j.Profile), "agent", final.Note)
+		_ = r.st.AddReviewLog(r.key, r.reviewer(), "agent", final.Note)
 	}
-	return finish(st, be, id, key, sid2, final, "", len(first.Findings), cfg.Agent.Severities(), threadReplies(final, threads, nil))
+	return r.finish(sid2, final, "", len(first.Findings), threadReplies(final, r.threads, nil))
 }
 
 // clean takes control characters out of everything the agent wrote: it
@@ -709,12 +739,13 @@ Return the complete final review in the same format. Do not mention this verific
 
 // finish stores the review. drafted is the finding count before verification
 // (0 when there was no verification pass).
-func finish(st *store.Store, be Backend, id int64, key, sessionID string, res *result, prevGuidance string, drafted int, severities []string, replies []store.ThreadReply) error {
+func (r *jobRun) finish(sessionID string, res *result, prevGuidance string, drafted int, replies []store.ThreadReply) error {
+	st, id := r.st, r.id
 	res.clean()
 	for i := range replies {
 		replies[i].Body = gh.Clean(replies[i].Body)
 	}
-	res.Findings = allowed(res.Findings, severities)
+	res.Findings = allowed(res.Findings, r.cfg.Agent.Severities())
 	summary := res.Summary
 	if res.Verdict != "" {
 		summary = "**Verdict: " + strings.ReplaceAll(res.Verdict, "_", " ") + "**\n\n" + summary
@@ -746,7 +777,7 @@ func finish(st *store.Store, be Backend, id int64, key, sessionID string, res *r
 	if err := st.SaveAction(id, action, res.PRReason); err != nil {
 		return fmt.Errorf("finish: %w", err)
 	}
-	notify(Title(be.Name())+" review ready", readyText(key, &store.Run{Findings: res.Findings, Replies: replies, Points: res.Points, Action: action}))
+	r.notify(Title(r.be.Name())+" review ready", readyText(r.key, &store.Run{Findings: res.Findings, Replies: replies, Points: res.Points, Action: action}))
 	return nil
 }
 
@@ -783,10 +814,6 @@ func readyText(key string, r *store.Run) string {
 	}
 	return pr + ": " + text
 }
-
-var notifyTimeout = 8 * time.Second
-
-func notify(title, body string) { platform.Notify(title, body, notifyTimeout) }
 
 // canRun is whether a review of repo gets the run tool: the repo has an
 // image, and docker is installed.
