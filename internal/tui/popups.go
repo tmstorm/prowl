@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -125,9 +126,9 @@ func (p *textPopup) commit(m *Model) tea.Cmd {
 		m.info("posting reply…")
 		return func() tea.Msg {
 			if run != 0 {
-				return threadDoneMsg{key, "replied", co.PostReply(run, id, body)}
+				return threadDoneMsg{key, "replied", co.PostReply(context.Background(), run, id, body)}
 			}
-			return threadDoneMsg{key, "replied", co.Reply(id, body)}
+			return threadDoneMsg{key, "replied", co.Reply(context.Background(), id, body)}
 		}
 	}
 	return nil
@@ -886,11 +887,11 @@ func (m *Model) askForReviews(it core.PR) tea.Cmd {
 	co := m.core
 	m.info("loading who can review…")
 	return func() tea.Msg {
-		c, err := co.ReviewCandidates(it.Key)
+		c, err := co.ReviewCandidates(context.Background(), it.Key)
 		if err != nil {
 			return candidatesMsg{item: it, err: err}
 		}
-		s, err := co.SuggestedReviewers(it.Key)
+		s, err := co.SuggestedReviewers(context.Background(), it.Key)
 		return candidatesMsg{item: it, candidates: c, suggested: s, err: err}
 	}
 }
@@ -1002,7 +1003,7 @@ func (p *reviewerPicker) ask(m *Model) tea.Cmd {
 	co, key, who := m.core, p.item.Key, strings.Join(names, ", ")
 	m.info("asking " + who + " to review…")
 	return func() tea.Msg {
-		return threadDoneMsg{key, "asked " + who + " to review", co.RequestReviews(key, names)}
+		return threadDoneMsg{key, "asked " + who + " to review", co.RequestReviews(context.Background(), key, names)}
 	}
 }
 

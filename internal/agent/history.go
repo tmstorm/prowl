@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -49,16 +50,16 @@ func login(a *gh.Actor) string {
 
 func day(t time.Time) string { return t.Format("2006-01-02 15:04") }
 
-func loadHistory(c *gh.Client, j Job, bots map[string]bool) history {
+func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool) history {
 	h := history{reader: j.Viewer}
 	if c == nil {
 		h.text = "(review history unavailable: not logged in to GitHub)\n"
 		return h
 	}
 	if h.reader == "" {
-		h.reader, _ = c.Viewer()
+		h.reader, _ = c.Viewer(ctx)
 	}
-	det, err := c.FetchDetail(j.Repo, j.Number)
+	det, err := c.FetchDetail(ctx, j.Repo, j.Number)
 	if err != nil {
 		h.text = "(review history unavailable: " + err.Error() + ")\n"
 		return h

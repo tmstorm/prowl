@@ -115,7 +115,7 @@ func TestSlackShares(t *testing.T) {
 		match(now, "U1", "me", "C1", "reviews", "o/api/pull/9") + "," +
 		match(now, "U3", "carol", "D1", "", "o/api/pull/10"))
 
-	changes, err := co.Refresh()
+	changes, err := co.Refresh(t.Context())
 	if err != nil || co.SlackErr() != nil {
 		t.Fatal(err, co.SlackErr())
 	}
@@ -148,7 +148,7 @@ func TestSlackShares(t *testing.T) {
 	if _, ok := find(in, "o/api#7"); ok {
 		t.Fatal("merged o/api#7 is still in the inbox")
 	}
-	co.PruneClosed()
+	co.PruneClosed(t.Context())
 	shares, _ := st.SlackShares()
 	for _, s := range shares {
 		if s.PRKey == "o/api#7" {
@@ -196,7 +196,7 @@ func TestSlackReactions(t *testing.T) {
 		t.Fatalf("a sync with nothing new: %q", calls)
 	}
 
-	sent, err := co.Submit("o/api#7", core.Draft{Event: "APPROVE"})
+	sent, err := co.Submit(t.Context(), "o/api#7", core.Draft{Event: "APPROVE"})
 	if err != nil || sent.Slack != "reacted :white_check_mark: in #reviews" {
 		t.Fatalf("submit: %+v, %v", sent, err)
 	}
@@ -220,7 +220,7 @@ func TestSlackReply(t *testing.T) {
 	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
 	refresh(t, co)
 
-	sent, err := co.Submit("o/api#7", core.Draft{Event: "APPROVE"})
+	sent, err := co.Submit(t.Context(), "o/api#7", core.Draft{Event: "APPROVE"})
 	if err != nil || sent.Slack != "replied in #reviews" {
 		t.Fatalf("submit: %+v, %v", sent, err)
 	}
@@ -249,7 +249,7 @@ func TestReactionsOnYours(t *testing.T) {
 	sl.set(match(ts, "U1", "me", "C1", "reviews", "o/api/pull/3"))
 	sl.react(`{"name":"eyes","users":["U3","U1","U2"]},{"name":"white_check_mark","users":["U2"]},{"name":"tada","users":["U3"]}`)
 
-	changes, err := co.Refresh()
+	changes, err := co.Refresh(t.Context())
 	if err != nil || co.SlackErr() != nil {
 		t.Fatal(err, co.SlackErr())
 	}
@@ -260,11 +260,11 @@ func TestReactionsOnYours(t *testing.T) {
 	if len(changes) != 1 {
 		t.Fatalf("changes = %v", changes)
 	}
-	if changes, _ := co.Refresh(); len(changes) != 0 {
+	if changes, _ := co.Refresh(t.Context()); len(changes) != 0 {
 		t.Fatalf("nothing new, but changes = %v", changes)
 	}
 	sl.react(`{"name":"x","users":["U3"]},{"name":"white_check_mark","users":["U2"]}`)
-	changes, _ = co.Refresh()
+	changes, _ = co.Refresh(t.Context())
 	if it, _ := find(co.Inbox(), "o/api#3"); len(changes) != 1 || it.Reason != "awaiting reviewers · #reviews: Carol Diaz ❌, Bob ✅" {
 		t.Fatalf("after carol's change: %q, %v", it.Reason, changes)
 	}
@@ -290,7 +290,7 @@ func TestSlackActivity(t *testing.T) {
 		match(ts, "U3", "carol", "D1", "", "o/api/pull/7"))
 	sl.set(strings.Join(matches, ","))
 
-	channels, dms, err := co.SlackActivity()
+	channels, dms, err := co.SlackActivity(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,11 +338,11 @@ func TestShareOfRequestedPRDoesNotNotify(t *testing.T) {
 	co.SetConfig(cfg)
 	sl := &fakeSlack{}
 	co.UseSlack(sl.client(t))
-	if changes, _ := co.Refresh(); len(changes) != 1 {
+	if changes, _ := co.Refresh(t.Context()); len(changes) != 1 {
 		t.Fatalf("first sync: %v", changes)
 	}
 	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
-	changes, err := co.Refresh()
+	changes, err := co.Refresh(t.Context())
 	if err != nil || len(changes) != 0 {
 		t.Fatalf("after the share: %v, %v", changes, err)
 	}
@@ -357,7 +357,7 @@ func TestShareOfRequestedPRDoesNotNotify(t *testing.T) {
 func TestSlackAccount(t *testing.T) {
 	co, _ := newCore(t, &ghtest.GitHub{})
 	slackAuth := func() agent.Auth {
-		co.CheckAuth()
+		co.CheckAuth(t.Context())
 		accts := co.Accounts()
 		i := slices.IndexFunc(accts, func(a core.Account) bool { return a.Key == "slack" })
 		if i < 0 {
@@ -391,20 +391,20 @@ func TestSlackLoggedOutInSync(t *testing.T) {
 	co, _ := newCore(t, &ghtest.GitHub{})
 	sl := &fakeSlack{authErr: "token_revoked"}
 	co.UseSlack(sl.client(t))
-	if _, err := co.Refresh(); err != nil || co.SlackErr() != nil {
+	if _, err := co.Refresh(t.Context()); err != nil || co.SlackErr() != nil {
 		t.Fatalf("sync: %v, Slack: %v", err, co.SlackErr())
 	}
-	if err := co.DMAuthor(""); err == nil || err.Error() != "Slack isn't logged in" {
+	if err := co.DMAuthor(t.Context(), ""); err == nil || err.Error() != "Slack isn't logged in" {
 		t.Fatalf("DM while logged out: %v", err)
 	}
-	if _, _, err := co.SlackActivity(); err == nil || err.Error() != "Slack isn't logged in" {
+	if _, _, err := co.SlackActivity(t.Context()); err == nil || err.Error() != "Slack isn't logged in" {
 		t.Fatalf("channels while logged out: %v", err)
 	}
 	sl.mu.Lock()
 	sl.authErr = ""
 	sl.mu.Unlock()
-	co.CheckAuth()
-	if _, _, err := co.SlackActivity(); err != nil {
+	co.CheckAuth(t.Context())
+	if _, _, err := co.SlackActivity(t.Context()); err != nil {
 		t.Fatalf("channels after logging in: %v", err)
 	}
 }
@@ -425,9 +425,9 @@ func TestAfterReviewOffLoggedOut(t *testing.T) {
 	sl.mu.Lock()
 	sl.authErr = "token_revoked"
 	sl.mu.Unlock()
-	co.CheckAuth()
+	co.CheckAuth(t.Context())
 
-	if sent, err := co.Submit("o/api#7", core.Draft{Event: "APPROVE"}); err != nil || sent.Slack != "" {
+	if sent, err := co.Submit(t.Context(), "o/api#7", core.Draft{Event: "APPROVE"}); err != nil || sent.Slack != "" {
 		t.Fatalf("submit: %+v, %v", sent, err)
 	}
 }

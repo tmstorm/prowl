@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"slices"
@@ -27,7 +28,7 @@ const renewWithin = 72 * time.Hour
 func (m *Model) checkAuth() tea.Cmd {
 	co := m.core
 	return func() tea.Msg {
-		co.CheckAuth()
+		co.CheckAuth(context.Background())
 		return authCheckedMsg{}
 	}
 }
@@ -38,7 +39,7 @@ func (m *Model) slackSignedIn() tea.Cmd {
 	co := m.core
 	return func() tea.Msg {
 		err := co.LoadSlack()
-		co.CheckAuth()
+		co.CheckAuth(context.Background())
 		return authCheckedMsg{err}
 	}
 }

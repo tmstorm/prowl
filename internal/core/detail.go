@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -79,7 +80,7 @@ type Annotation struct {
 
 // Detail fetches what a PR page shows: the description, activity, review
 // threads and changed files.
-func (co *Core) Detail(key string) (*Detail, error) {
+func (co *Core) Detail(ctx context.Context, key string) (*Detail, error) {
 	if l, err := co.local(key); err == nil {
 		return &Detail{Body: localBody(l)}, nil
 	}
@@ -87,7 +88,7 @@ func (co *Core) Detail(key string) (*Detail, error) {
 	if err != nil {
 		return nil, fmt.Errorf("detail: %w", err)
 	}
-	det, err := co.gh.FetchDetail(repo, n)
+	det, err := co.gh.FetchDetail(ctx, repo, n)
 	if err != nil {
 		return nil, fmt.Errorf("detail %s: %w", key, err)
 	}

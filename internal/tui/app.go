@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sort"
@@ -231,7 +232,7 @@ func (m *Model) refresh() tea.Cmd {
 	m.loading = true
 	co := m.core
 	return tea.Batch(func() tea.Msg {
-		changes, err := co.Refresh()
+		changes, err := co.Refresh(context.Background())
 		return refreshMsg{changes, err}
 	}, m.startAnim())
 }
@@ -417,7 +418,7 @@ func (m *Model) loadOrgRepos() tea.Cmd {
 		return nil
 	}
 	co := m.core
-	return func() tea.Msg { return orgReposMsg{co.OrgRepos()} }
+	return func() tea.Msg { return orgReposMsg{co.OrgRepos(context.Background())} }
 }
 
 type claimedMsg struct {
@@ -430,7 +431,7 @@ type claimedMsg struct {
 func (m *Model) claim(it core.PR) tea.Cmd {
 	co, key := m.core, it.Key
 	m.info("requesting you as reviewer on " + key + "…")
-	return func() tea.Msg { return claimedMsg{key, co.Claim(key)} }
+	return func() tea.Msg { return claimedMsg{key, co.Claim(context.Background(), key)} }
 }
 
 // toggleWatch adds or removes the current repo (focused, or the selected
@@ -471,7 +472,7 @@ func (m *Model) fetchPR(ref prRef) tea.Cmd {
 	co := m.core
 	m.info(fmt.Sprintf("fetching %s#%d…", ref.repo, ref.n))
 	return func() tea.Msg {
-		it, err := co.Open(ref.repo, ref.n)
+		it, err := co.Open(context.Background(), ref.repo, ref.n)
 		return prFetchedMsg{it, err}
 	}
 }
@@ -1511,7 +1512,9 @@ func (m *Model) leader(key string) tea.Cmd {
 			if it.Draft {
 				co, key := m.core, it.Key
 				m.confirm = &confirm{prompt: "mark " + prName(*it) + " ready for review?", yes: func() tea.Cmd {
-					return func() tea.Msg { return threadDoneMsg{key, "marked ready for review", co.MarkReady(key)} }
+					return func() tea.Msg {
+						return threadDoneMsg{key, "marked ready for review", co.MarkReady(context.Background(), key)}
+					}
 				}}
 				return nil
 			}
@@ -1671,7 +1674,9 @@ func (m *Model) threadAction(key string) tea.Cmd {
 		}
 		t.Resolved = true
 		d.dirty = true
-		return func() tea.Msg { return threadDoneMsg{key2, "resolved thread", co.Resolve(id, true)} }
+		return func() tea.Msg {
+			return threadDoneMsg{key2, "resolved thread", co.Resolve(context.Background(), id, true)}
+		}
 	case "u":
 		if !t.Resolved {
 			m.info("thread isn't resolved")
@@ -1679,7 +1684,9 @@ func (m *Model) threadAction(key string) tea.Cmd {
 		}
 		t.Resolved = false
 		d.dirty = true
-		return func() tea.Msg { return threadDoneMsg{key2, "unresolved thread", co.Resolve(id, false)} }
+		return func() tea.Msg {
+			return threadDoneMsg{key2, "unresolved thread", co.Resolve(context.Background(), id, false)}
+		}
 	case "c":
 		return m.replyPopup(d, t.ID)
 	}
@@ -1856,7 +1863,7 @@ func (m *Model) postSlack(it core.PR) tea.Cmd {
 	co, key := m.core, it.Key
 	m.confirm = &confirm{prompt: "post in the " + where + " thread: " + ansi.Strip(line), yes: func() tea.Cmd {
 		return func() tea.Msg {
-			where, err := co.PostInThread(key, line)
+			where, err := co.PostInThread(context.Background(), key, line)
 			return slackPostedMsg{done: "posted in the " + where + " thread", err: err}
 		}
 	}}
@@ -1883,7 +1890,7 @@ func (m *Model) dmAuthor(it core.PR) tea.Cmd {
 	co := m.core
 	m.confirm = &confirm{prompt: "DM " + login + ": " + ansi.Strip(line), yes: func() tea.Cmd {
 		return func() tea.Msg {
-			return slackPostedMsg{done: "sent " + login + " a DM", err: co.DMAuthor(it.Key)}
+			return slackPostedMsg{done: "sent " + login + " a DM", err: co.DMAuthor(context.Background(), it.Key)}
 		}
 	}}
 	return nil
@@ -1908,7 +1915,7 @@ func (m *Model) submit(it core.PR, d core.Draft) tea.Cmd {
 	co, key := m.core, it.Key
 	m.info("submitting " + strings.ToLower(strings.ReplaceAll(string(d.Event), "_", " ")) + "…")
 	return func() tea.Msg {
-		sent, err := co.Submit(key, d)
+		sent, err := co.Submit(context.Background(), key, d)
 		return submittedMsg{key: key, event: d.Event, posted: sent.Review, slack: sent.Slack, err: err}
 	}
 }
@@ -1968,7 +1975,7 @@ func (m *Model) startSummary(it core.PR) tea.Cmd {
 	}
 	co := m.core
 	return tea.Batch(m.startAnim(), func() tea.Msg {
-		_, err := co.Summarize(key)
+		_, err := co.Summarize(context.Background(), key)
 		return summaryMsg{key, err}
 	})
 }
@@ -1991,7 +1998,7 @@ type prRefreshedMsg struct {
 // refreshPR re-fetches one PR after you acted on it.
 func (m *Model) refreshPR(key string) tea.Cmd {
 	co := m.core
-	return func() tea.Msg { return prRefreshedMsg{key, co.RefreshPR(key)} }
+	return func() tea.Msg { return prRefreshedMsg{key, co.RefreshPR(context.Background(), key)} }
 }
 
 // applyPR shows a re-fetched PR in its new section, or drops it once it's

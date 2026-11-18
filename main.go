@@ -84,6 +84,7 @@ func run(args []string) error {
 	if runtime.GOOS == "windows" {
 		_ = os.Remove(core.OldBinary(core.Executable()))
 	}
+	ctx := context.Background()
 	cmd, rest := "", []string(nil)
 	if len(args) > 0 {
 		cmd, rest = args[0], args[1:]
@@ -117,7 +118,7 @@ func run(args []string) error {
 			return err
 		}
 		c, _ := gh.New()
-		return agent.Run(cfg, st, c, job)
+		return agent.Run(ctx, cfg, st, c, job)
 	case "agent-tools":
 		if len(args) < 3 {
 			return fmt.Errorf("agent-tools needs a repo and a directory")
@@ -126,12 +127,12 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		return s.Run(context.Background(), &mcp.StdioTransport{})
+		return s.Run(ctx, &mcp.StdioTransport{})
 	case "version", "--version":
 		fmt.Println("prowl", core.BuildVersion())
 		if c, err := gh.New(); err == nil {
 			co := core.New(cfg, c, st)
-			_ = co.CheckRelease(false)
+			_ = co.CheckRelease(ctx, false)
 			if r := co.Release(core.Executable()); r.Newer() && !r.Installed {
 				fmt.Println(tui.UpdateNote(cfg, r, fmt.Sprintf("prowl %s is out: %s", r.Latest, cmp.Or(r.Command, "prowl update"))))
 			}
@@ -142,7 +143,7 @@ func run(args []string) error {
 	case "service":
 		return service(args[1:])
 	case "slack":
-		return connectSlack(cfg, st, args[1:])
+		return connectSlack(ctx, cfg, st, args[1:])
 	case "uninstall":
 		return uninstall(cfg, st, args[1:])
 	case "edits":
@@ -198,11 +199,11 @@ func run(args []string) error {
 	}
 	switch cmd {
 	case "review":
-		return review(cfg, c, st, args[1:])
+		return review(ctx, cfg, c, st, args[1:])
 	case "update":
-		return update(core.New(cfg, c, st))
+		return update(ctx, core.New(cfg, c, st))
 	case "":
-		ctx, stop := context.WithCancel(context.Background())
+		ctx, stop := context.WithCancel(ctx)
 		defer stop()
 		co := withSlack(core.New(cfg, c, st))
 		go co.Run(ctx)
@@ -213,11 +214,11 @@ func run(args []string) error {
 		}
 		return err
 	case "watch":
-		return watch(cfg, c, st)
+		return watch(ctx, cfg, c, st)
 	case "list":
 		co := withSlack(core.New(cfg, c, st))
 		co.Quiet()
-		if _, err := co.Refresh(); err != nil {
+		if _, err := co.Refresh(ctx); err != nil {
 			return err
 		}
 		in := co.Inbox()
@@ -237,7 +238,7 @@ func run(args []string) error {
 	}
 }
 
-func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
+func watch(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store) error {
 	interval := cfg.PollInterval.Duration
 	if interval < 30*time.Second {
 		interval = 30 * time.Second
@@ -267,15 +268,15 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 		}
 		if time.Since(authAt) > time.Hour {
 			authAt = time.Now()
-			co.CheckAuth()
+			co.CheckAuth(ctx)
 			reminded = remindLogin(co, reminded)
 		}
-		if v, err := co.AutoUpgrade(exe); err != nil {
+		if v, err := co.AutoUpgrade(ctx, exe); err != nil {
 			fmt.Fprintln(os.Stderr, time.Now().Format(time.TimeOnly), "update failed:", err)
 		} else if v != "" {
 			fmt.Println(time.Now().Format(time.TimeOnly), "installed prowl", v)
 		}
-		changes, err := co.Refresh()
+		changes, err := co.Refresh(ctx)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, time.Now().Format(time.TimeOnly), "refresh failed:", err)
 		} else {
@@ -284,7 +285,7 @@ func watch(cfg config.Config, c *gh.Client, st *store.Store) error {
 			if err := co.SlackErr(); err != nil {
 				fmt.Fprintln(os.Stderr, time.Now().Format(time.TimeOnly), "slack:", err)
 			}
-			co.PruneClosed()
+			co.PruneClosed(ctx)
 		}
 		time.Sleep(interval)
 	}
@@ -512,9 +513,9 @@ func printMarkdown(md string) {
 
 // update installs the newest release over this prowl, or says which command
 // does when a package manager owns it.
-func update(co *core.Core) error {
+func update(ctx context.Context, co *core.Core) error {
 	exe := core.Executable()
-	if err := co.CheckRelease(true); err != nil {
+	if err := co.CheckRelease(ctx, true); err != nil {
 		return err
 	}
 	r := co.Release(exe)
@@ -532,7 +533,7 @@ func update(co *core.Core) error {
 		return nil
 	}
 	stop := showProgress(co, time.Now(), func(time.Time) string { return co.Updating() })
-	_, err := co.Upgrade(exe)
+	_, err := co.Upgrade(ctx, exe)
 	stop()
 	if err != nil {
 		return err
@@ -613,7 +614,7 @@ func noGitHub() error {
 
 // review runs a local review of the branch checked out in the current
 // directory and prints its findings.
-func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) error {
+func review(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store, args []string) error {
 	detach, reviewer := false, ""
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
@@ -634,7 +635,7 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 	}
 	co := core.New(cfg, c, st)
 	if detach {
-		key, err := co.ReviewLocal(dir, reviewer, false)
+		key, err := co.ReviewLocal(ctx, dir, reviewer, false)
 		if errors.Is(err, core.ErrNothingToReview) {
 			fmt.Fprintln(os.Stderr, err)
 			return nil
@@ -656,7 +657,7 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 		}
 		return ""
 	})
-	_, err = co.ReviewLocal(dir, reviewer, true)
+	_, err = co.ReviewLocal(ctx, dir, reviewer, true)
 	stop()
 	if errors.Is(err, core.ErrNothingToReview) {
 		fmt.Fprintln(os.Stderr, err)
@@ -795,7 +796,7 @@ func withSlack(co *core.Core) *core.Core {
 
 // connectSlack signs in to the team's Slack app, or shows how to make one,
 // and keeps the user token in the keyring.
-func connectSlack(cfg config.Config, st *store.Store, args []string) error {
+func connectSlack(ctx context.Context, cfg config.Config, st *store.Store, args []string) error {
 	switch {
 	case slices.Contains(args, "--off"):
 		if err := slack.DeleteToken(); err != nil {
@@ -809,7 +810,6 @@ func connectSlack(cfg config.Config, st *store.Store, args []string) error {
 	case len(args) > 0:
 		return fmt.Errorf("usage: prowl slack [--off]")
 	}
-	ctx := context.Background()
 	var token slack.Token
 	if cfg.SlackClientID == "" {
 		fmt.Print("prowl needs a Slack app to sign in to. Your team needs only one: if someone\n" +

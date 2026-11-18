@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -61,7 +62,7 @@ var ErrNothingToReview = errors.New("nothing to review")
 // agent:profile). With wait it runs in the foreground and returns when the
 // review is done; otherwise it runs in the background. It returns the
 // review's key.
-func (co *Core) ReviewLocal(dir, reviewer string, wait bool) (string, error) {
+func (co *Core) ReviewLocal(ctx context.Context, dir, reviewer string, wait bool) (string, error) {
 	l, err := checkout(dir)
 	if err != nil {
 		return "", err
@@ -75,7 +76,7 @@ func (co *Core) ReviewLocal(dir, reviewer string, wait bool) (string, error) {
 	co.mu.Lock()
 	if co.inbox.Viewer == "" && co.gh != nil {
 		co.mu.Unlock()
-		viewer, _ := co.gh.Viewer()
+		viewer, _ := co.gh.Viewer(ctx)
 		co.mu.Lock()
 		co.inbox.Viewer = viewer
 	}
@@ -86,7 +87,7 @@ func (co *Core) ReviewLocal(dir, reviewer string, wait bool) (string, error) {
 		return "", err
 	}
 	if wait {
-		err = agent.Run(co.Config(), co.st, nil, job)
+		err = agent.Run(ctx, co.Config(), co.st, nil, job)
 	} else {
 		err = agent.Launch(co.st, job)
 	}

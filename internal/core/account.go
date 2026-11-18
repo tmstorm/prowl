@@ -44,15 +44,15 @@ func (co *Core) Accounts() []Account {
 
 // CheckAuth asks GitHub, every installed agent and Slack whether you're
 // logged in. It runs their status commands, so it takes a moment.
-func (co *Core) CheckAuth() {
+func (co *Core) CheckAuth(ctx context.Context) {
 	accts := accountList(co.Config())
 	for i, a := range accts {
 		switch {
 		case a.Missing != nil:
 		case a.Key == "slack":
-			accts[i].Auth = co.checkSlack()
+			accts[i].Auth = co.checkSlack(ctx)
 		case a.Key == "github":
-			out, err := exec.Command("gh", "auth", "status", "--active").CombinedOutput()
+			out, err := exec.CommandContext(ctx, "gh", "auth", "status", "--active").CombinedOutput()
 			accts[i].Auth = agent.Auth{Known: true, LoggedIn: err == nil}
 			if _, rest, ok := strings.Cut(string(out), "account "); ok {
 				accts[i].Auth.Account, _, _ = strings.Cut(rest, " ")
@@ -70,14 +70,14 @@ func (co *Core) CheckAuth() {
 
 // checkSlack asks Slack whose token prowl has. No token, or Slack refusing
 // it, means you're logged out; failing to reach Slack says nothing.
-func (co *Core) checkSlack() agent.Auth {
+func (co *Core) checkSlack(ctx context.Context) agent.Auth {
 	co.mu.Lock()
 	sl := co.slack
 	co.mu.Unlock()
 	if sl == nil {
 		return agent.Auth{Known: true}
 	}
-	id, err := sl.AuthTest(context.Background())
+	id, err := sl.AuthTest(ctx)
 	if slack.LoggedOut(err) {
 		return agent.Auth{Known: true}
 	}

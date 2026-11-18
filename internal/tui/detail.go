@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strconv"
@@ -324,7 +325,7 @@ func (d *detail) fetch(co *core.Core) tea.Cmd {
 	d.stale = false
 	key := d.item.Key
 	return func() tea.Msg {
-		det, err := co.Detail(key)
+		det, err := co.Detail(context.Background(), key)
 		return detailMsg{key, det, err}
 	}
 }
@@ -342,7 +343,7 @@ func (d *detail) loadDiff(co *core.Core) tea.Cmd {
 	d.diffLoading = true
 	d.diffErr = nil
 	return func() tea.Msg {
-		raw, err := co.Diff(key, since)
+		raw, err := co.Diff(context.Background(), key, since)
 		return diffMsg{key, since, raw, err}
 	}
 }
@@ -990,7 +991,7 @@ func (m *Model) toggleViewed(d *detail) tea.Cmd {
 	}
 	co, key := m.core, d.item.Key
 	return func() tea.Msg {
-		return viewedMsg{key: key, path: path, viewed: viewed, err: co.SetFileViewed(key, path, viewed)}
+		return viewedMsg{key: key, path: path, viewed: viewed, err: co.SetFileViewed(context.Background(), key, path, viewed)}
 	}
 }
 

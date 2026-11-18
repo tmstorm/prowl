@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -165,7 +166,7 @@ func writable(dir string) bool {
 // CheckRelease asks GitHub for prowl's newest release and remembers it. It
 // asks at most once a day, unless force, and never for a build from source
 // or with check_updates off.
-func (co *Core) CheckRelease(force bool) error {
+func (co *Core) CheckRelease(ctx context.Context, force bool) error {
 	if releaseVersion() == "" || (!force && !co.Config().CheckUpdates) {
 		return nil
 	}
@@ -175,7 +176,7 @@ func (co *Core) CheckRelease(force bool) error {
 	if co.gh == nil {
 		return errors.New("check for updates: not logged in to GitHub")
 	}
-	r, err := co.gh.LatestRelease(releaseRepo)
+	r, err := co.gh.LatestRelease(ctx, releaseRepo)
 	if err != nil {
 		return err
 	}
@@ -186,7 +187,7 @@ func (co *Core) CheckRelease(force bool) error {
 // version, or "" when exe is already the newest. The archive must match
 // checksums.txt, and checksums.txt must carry a valid signature from
 // ReleaseKey; otherwise exe is left as it was.
-func (co *Core) Upgrade(exe string) (string, error) {
+func (co *Core) Upgrade(ctx context.Context, exe string) (string, error) {
 	running := releaseVersion()
 	if running == "" {
 		return "", errors.New("this prowl was built from source; update it with git pull and go build")
@@ -199,7 +200,7 @@ func (co *Core) Upgrade(exe string) (string, error) {
 	}
 	co.setUpdating("checking for a newer prowl")
 	defer co.setUpdating("")
-	r, err := co.gh.LatestRelease(releaseRepo)
+	r, err := co.gh.LatestRelease(ctx, releaseRepo)
 	if err != nil {
 		return "", err
 	}
@@ -217,11 +218,11 @@ func (co *Core) Upgrade(exe string) (string, error) {
 		bin = "prowl.exe"
 	}
 	co.setUpdating("verifying prowl " + r.Tag)
-	sums, err := co.gh.Download(releaseRepo, r, "checksums.txt")
+	sums, err := co.gh.Download(ctx, releaseRepo, r, "checksums.txt")
 	if err != nil {
 		return "", err
 	}
-	sig, err := co.gh.Download(releaseRepo, r, "checksums.txt.minisig")
+	sig, err := co.gh.Download(ctx, releaseRepo, r, "checksums.txt.minisig")
 	if err != nil {
 		return "", err
 	}
@@ -229,7 +230,7 @@ func (co *Core) Upgrade(exe string) (string, error) {
 		return "", fmt.Errorf("update to %s: %w: %w", r.Tag, errUnverified, err)
 	}
 	co.setUpdating("downloading prowl " + r.Tag)
-	archive, err := co.gh.Download(releaseRepo, r, name)
+	archive, err := co.gh.Download(ctx, releaseRepo, r, name)
 	if err != nil {
 		return "", err
 	}
@@ -252,8 +253,8 @@ func (co *Core) Upgrade(exe string) (string, error) {
 // prowl owning exe, installs it. A release that fails verification isn't
 // downloaded again (`prowl update` tries again); any other failure is tried
 // again an hour later. It returns the version it installed, or "".
-func (co *Core) AutoUpgrade(exe string) (string, error) {
-	if err := co.CheckRelease(false); err != nil {
+func (co *Core) AutoUpgrade(ctx context.Context, exe string) (string, error) {
+	if err := co.CheckRelease(ctx, false); err != nil {
 		return "", err
 	}
 	cfg, r := co.Config(), co.Release(exe)
@@ -269,7 +270,7 @@ func (co *Core) AutoUpgrade(exe string) (string, error) {
 	if wait {
 		return "", nil
 	}
-	v, err := co.Upgrade(exe)
+	v, err := co.Upgrade(ctx, exe)
 	switch {
 	case errors.Is(err, errUnverified):
 		_ = co.st.SetAttempted(r.Latest)

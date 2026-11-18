@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"time"
@@ -43,12 +44,12 @@ func (co *Core) Summarizing() []string {
 
 // Summarize has the main agent write a plain-language summary of a PR and
 // keeps it. It takes seconds; a UI calls it off its own loop.
-func (co *Core) Summarize(key string) (Summary, error) {
+func (co *Core) Summarize(ctx context.Context, key string) (Summary, error) {
 	it, cfg, err := co.beginSummary(key)
 	if err != nil {
 		return Summary{}, err
 	}
-	sum, err := co.finishSummary(it, cfg)
+	sum, err := co.finishSummary(ctx, it, cfg)
 	return Summary{HeadOid: sum.HeadOid, Text: sum.Text, Model: sum.Model}, err
 }
 
@@ -73,10 +74,10 @@ func (co *Core) beginSummary(key string) (inbox.Item, config.Config, error) {
 	return it, co.cfg, nil
 }
 
-func (co *Core) finishSummary(it inbox.Item, cfg config.Config) (store.Summary, error) {
+func (co *Core) finishSummary(ctx context.Context, it inbox.Item, cfg config.Config) (store.Summary, error) {
 	pr := it.PR
 	key := pr.Key()
-	sum, err := co.writeSummary(it, cfg)
+	sum, err := co.writeSummary(ctx, it, cfg)
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	delete(co.summarizing, key)
@@ -92,7 +93,7 @@ func (co *Core) finishSummary(it inbox.Item, cfg config.Config) (store.Summary, 
 	return sum, nil
 }
 
-func (co *Core) writeSummary(it inbox.Item, cfg config.Config) (store.Summary, error) {
+func (co *Core) writeSummary(ctx context.Context, it inbox.Item, cfg config.Config) (store.Summary, error) {
 	be, err := agent.For(cfg, "")
 	if err == nil {
 		err = be.Check()
@@ -102,7 +103,7 @@ func (co *Core) writeSummary(it inbox.Item, cfg config.Config) (store.Summary, e
 	}
 	pr := it.PR
 	key := pr.Key()
-	diff, err := co.Diff(key, false)
+	diff, err := co.Diff(ctx, key, false)
 	if err != nil {
 		return store.Summary{}, fmt.Errorf("summarize %s: %w", key, err)
 	}
@@ -121,7 +122,7 @@ func (co *Core) writeSummary(it inbox.Item, cfg config.Config) (store.Summary, e
 // autoSummaries starts summaries, with auto_summary on, for PRs that need
 // you and have none, a few at a time. Each reports a SummaryChanged event.
 // A summary that failed isn't tried again until the PR is pushed to.
-func (co *Core) autoSummaries() {
+func (co *Core) autoSummaries(ctx context.Context) {
 	if co.loggedIn(co.Config().Agent.Main()) != nil {
 		return
 	}
@@ -147,7 +148,7 @@ func (co *Core) autoSummaries() {
 			continue
 		}
 		go func() {
-			_, err := co.finishSummary(it, cfg)
+			_, err := co.finishSummary(ctx, it, cfg)
 			co.emit(Event{Kind: SummaryChanged, Key: key, Err: err})
 		}()
 	}

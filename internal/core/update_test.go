@@ -115,22 +115,22 @@ func TestUpdateCheck(t *testing.T) {
 	if _, err := co.Update(func(c *config.Config) error { c.CheckUpdates = false; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if err := co.CheckRelease(false); err != nil || fake.ReleaseCalls() != 0 {
+	if err := co.CheckRelease(t.Context(), false); err != nil || fake.ReleaseCalls() != 0 {
 		t.Fatalf("check_updates off asked GitHub: %v, %d calls", err, fake.ReleaseCalls())
 	}
 	_, _ = co.Update(func(c *config.Config) error { c.CheckUpdates = true; return nil })
-	if err := co.CheckRelease(false); err != nil {
+	if err := co.CheckRelease(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
 	r := co.Release(exe)
 	if !r.Newer() || r.Latest != "v0.2.0" || r.Running != "v0.1.0" || r.Command != "" || r.Installed {
 		t.Fatalf("release: %+v", r)
 	}
-	_ = co.CheckRelease(false)
+	_ = co.CheckRelease(t.Context(), false)
 	if fake.ReleaseCalls() != 1 {
 		t.Fatalf("asked GitHub %d times in a day", fake.ReleaseCalls())
 	}
-	_ = co.CheckRelease(true)
+	_ = co.CheckRelease(t.Context(), true)
 	if fake.ReleaseCalls() != 2 {
 		t.Fatal("a forced check asks again")
 	}
@@ -140,7 +140,7 @@ func TestUpdateCheck(t *testing.T) {
 		}
 	}
 	core.Version = ""
-	_ = co.CheckRelease(true)
+	_ = co.CheckRelease(t.Context(), true)
 	if fake.ReleaseCalls() != 2 || co.Release(exe).Newer() {
 		t.Error("a build from source never checks")
 	}
@@ -163,7 +163,7 @@ func TestUpgrade(t *testing.T) {
 		},
 	} {
 		bad()
-		if v, err := co.Upgrade(exe); err == nil || v != "" {
+		if v, err := co.Upgrade(t.Context(), exe); err == nil || v != "" {
 			t.Fatalf("%s: installed %q", name, v)
 		}
 		if b, _ := os.ReadFile(exe); string(b) != "v0.1.0" {
@@ -173,7 +173,7 @@ func TestUpgrade(t *testing.T) {
 	publish(t, fake, "v0.2.0", "v0.2.0", key, false)
 	var steps []string
 	fake.OnAsset = func(int64) { steps = append(steps, co.Updating()) }
-	v, err := co.Upgrade(exe)
+	v, err := co.Upgrade(t.Context(), exe)
 	if err != nil || v != "v0.2.0" {
 		t.Fatalf("upgrade: %q, %v", v, err)
 	}
@@ -192,11 +192,11 @@ func TestUpgrade(t *testing.T) {
 	if r := co.Release(exe); !r.Installed {
 		t.Errorf("a restart runs the update: %+v", r)
 	}
-	if v, err := co.Upgrade(exe); err != nil || v != "" {
+	if v, err := co.Upgrade(t.Context(), exe); err != nil || v != "" {
 		t.Errorf("an installed release isn't installed again: %q, %v", v, err)
 	}
 	if runtime.GOOS == "linux" {
-		if _, err := co.Upgrade("/usr/bin/prowl"); err == nil || !strings.Contains(err.Error(), "yay -S prowl-bin") {
+		if _, err := co.Upgrade(t.Context(), "/usr/bin/prowl"); err == nil || !strings.Contains(err.Error(), "yay -S prowl-bin") {
 			t.Errorf("a package's prowl is left to the package manager: %v", err)
 		}
 	}
@@ -211,32 +211,32 @@ func TestAutoUpgrade(t *testing.T) {
 	signer(t, 1, true)
 	co, _ := newCore(t, fake)
 	exe := installed(t)
-	if _, err := co.AutoUpgrade(exe); err == nil {
+	if _, err := co.AutoUpgrade(t.Context(), exe); err == nil {
 		t.Fatal("a release signed by another key installed")
 	}
-	if v, err := co.AutoUpgrade(exe); err != nil || v != "" {
+	if v, err := co.AutoUpgrade(t.Context(), exe); err != nil || v != "" {
 		t.Fatalf("the failed release was tried again: %q, %v", v, err)
 	}
 	_, _ = co.Update(func(c *config.Config) error { c.AutoUpdate = false; return nil })
 	key := signer(t, 3, true)
 	publish(t, fake, "v0.3.0", "v0.3.0", key, false)
-	_ = co.CheckRelease(true)
-	if v, _ := co.AutoUpgrade(exe); v != "" {
+	_ = co.CheckRelease(t.Context(), true)
+	if v, _ := co.AutoUpgrade(t.Context(), exe); v != "" {
 		t.Fatal("auto_update off installed a release")
 	}
 	_, _ = co.Update(func(c *config.Config) error { c.AutoUpdate = true; return nil })
 	assets := fake.Release.Assets
 	fake.Release.Assets = assets[:1]
-	if _, err := co.AutoUpgrade(exe); err == nil {
+	if _, err := co.AutoUpgrade(t.Context(), exe); err == nil {
 		t.Fatal("a release without checksums installed")
 	}
 	fake.Release.Assets = assets
 	calls := fake.ReleaseCalls()
-	if v, err := co.AutoUpgrade(exe); err != nil || v != "" || fake.ReleaseCalls() != calls {
+	if v, err := co.AutoUpgrade(t.Context(), exe); err != nil || v != "" || fake.ReleaseCalls() != calls {
 		t.Fatalf("the failed install was tried again within the hour: %q, %v", v, err)
 	}
 	co.RetryNow()
-	if v, err := co.AutoUpgrade(exe); err != nil || v != "v0.3.0" {
+	if v, err := co.AutoUpgrade(t.Context(), exe); err != nil || v != "v0.3.0" {
 		t.Fatalf("auto upgrade: %q, %v", v, err)
 	}
 }
@@ -250,7 +250,7 @@ func TestWhatsNew(t *testing.T) {
 	if v, _ := co.WhatsNew(); v != "" {
 		t.Fatal("no notes before the first check")
 	}
-	_ = co.CheckRelease(false)
+	_ = co.CheckRelease(t.Context(), false)
 	if v, notes := co.WhatsNew(); v != "v0.2.0" || notes != "- reviews run faster" {
 		t.Fatalf("what's new: %q %q", v, notes)
 	}

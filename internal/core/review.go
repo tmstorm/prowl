@@ -59,7 +59,7 @@ func (co *Core) emit(e Event) {
 func (co *Core) Run(ctx context.Context) {
 	var tasks sync.WaitGroup
 	tasks.Go(co.PruneOrphans)
-	tasks.Go(co.PruneClosed)
+	tasks.Go(func() { co.PruneClosed(ctx) })
 	tasks.Go(func() {
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
@@ -77,7 +77,7 @@ func (co *Core) Run(ctx context.Context) {
 				if changed, err := co.reloadConfig(); changed {
 					co.emit(Event{Kind: ConfigChanged, Err: err})
 				}
-				co.autoSummaries()
+				co.autoSummaries(ctx)
 			}
 		}
 	})
@@ -88,9 +88,9 @@ func (co *Core) Run(ctx context.Context) {
 				return
 			case <-time.After(max(co.Config().PollInterval.Duration, 30*time.Second)):
 				co.emit(Event{Kind: Syncing})
-				changes, err := co.Refresh()
+				changes, err := co.Refresh(ctx)
 				co.emit(Event{Kind: InboxChanged, Changes: changes, Err: err})
-				co.PruneClosed()
+				co.PruneClosed(ctx)
 			}
 		}
 	})
@@ -98,7 +98,7 @@ func (co *Core) Run(ctx context.Context) {
 		exe := Executable()
 		for {
 			if co.notifies() {
-				_, _ = co.AutoUpgrade(exe)
+				_, _ = co.AutoUpgrade(ctx, exe)
 			}
 			co.emit(Event{Kind: ReleaseChanged})
 			select {
@@ -110,7 +110,7 @@ func (co *Core) Run(ctx context.Context) {
 	})
 	tasks.Go(func() {
 		for {
-			co.CheckAuth()
+			co.CheckAuth(ctx)
 			co.emit(Event{Kind: AuthChanged})
 			select {
 			case <-ctx.Done():

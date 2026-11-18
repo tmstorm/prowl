@@ -2,6 +2,7 @@ package gh
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -131,14 +132,14 @@ var logStamp = regexp.MustCompile(`^\d{4}-\d\d-\d\dT[\d:.]+Z ?`)
 // the step that failed. Without an error it is the last n lines. Reading
 // stops at the error, so the post-job cleanup that ends every log is left
 // out; logs can be megabytes, and only n lines are kept while reading.
-func (c *Client) JobLogTail(repo string, jobID int64, n int) (step string, lines []string, err error) {
+func (c *Client) JobLogTail(ctx context.Context, repo string, jobID int64, n int) (step string, lines []string, err error) {
 	var job struct {
 		Steps []struct {
 			Name       string `json:"name"`
 			Conclusion string `json:"conclusion"`
 		} `json:"steps"`
 	}
-	if err := c.rest.Get(fmt.Sprintf("repos/%s/actions/jobs/%d", repo, jobID), &job); err != nil {
+	if err := c.rest.DoWithContext(ctx, "GET", fmt.Sprintf("repos/%s/actions/jobs/%d", repo, jobID), nil, &job); err != nil {
 		return "", nil, fmt.Errorf("job %d: %w", jobID, err)
 	}
 	for _, s := range job.Steps {
@@ -147,7 +148,7 @@ func (c *Client) JobLogTail(repo string, jobID int64, n int) (step string, lines
 			break
 		}
 	}
-	resp, err := c.rest.Request("GET", fmt.Sprintf("repos/%s/actions/jobs/%d/logs", repo, jobID), nil)
+	resp, err := c.rest.RequestWithContext(ctx, "GET", fmt.Sprintf("repos/%s/actions/jobs/%d/logs", repo, jobID), nil)
 	if err != nil {
 		return step, nil, fmt.Errorf("job %d log: %w", jobID, err)
 	}

@@ -1,6 +1,8 @@
 package gh_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tmstorm/prowl/internal/gh"
 
@@ -58,7 +61,7 @@ func TestFetchInboxPages(t *testing.T) {
 		}
 		return reply(200, `{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}`)
 	})
-	in, err := c.FetchInbox([]string{"o"}, nil, nil, nil)
+	in, err := c.FetchInbox(t.Context(), []string{"o"}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +112,7 @@ func TestFetchInboxKnown(t *testing.T) {
 			}
 			return reply(200, `{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}`)
 		})
-		in, err := cl.FetchInbox(nil, nil, []string{"A", "GONE"}, nil)
+		in, err := cl.FetchInbox(t.Context(), nil, nil, []string{"A", "GONE"}, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
@@ -136,7 +139,7 @@ func TestFetchInboxKeep(t *testing.T) {
 		}
 		return reply(200, `{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}`)
 	})
-	in, err := cl.FetchInbox(nil, nil, nil, []string{"S", "X"})
+	in, err := cl.FetchInbox(t.Context(), nil, nil, nil, []string{"S", "X"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +163,7 @@ func TestSubmitReviewFallback(t *testing.T) {
 			}
 			return reply(200, `{"html_url":"u"}`)
 		})
-		_, _ = cl.SubmitReview("o/r", 1, "abc", "COMMENT", "body", []gh.DraftComment{{Path: "a.go", Line: 1, Body: "x"}})
+		_, _ = cl.SubmitReview(t.Context(), "o/r", 1, "abc", "COMMENT", "body", []gh.DraftComment{{Path: "a.go", Line: 1, Body: "x"}})
 		if posts != c.posts {
 			t.Errorf("first response %d: %d posts, want %d", c.first, posts, c.posts)
 		}
@@ -183,13 +186,13 @@ func TestReplyToThread(t *testing.T) {
 		}
 		return reply(201, `{}`)
 	})
-	if err := cl.ReplyToThread("t1", "Thanks."); err != nil {
+	if err := cl.ReplyToThread(t.Context(), "t1", "Thanks."); err != nil {
 		t.Fatal(err)
 	}
 	if len(sent) != 2 || strings.Contains(sent[0], "mutation") || sent[1] != `POST /repos/o/api/pulls/7/comments/42/replies {"body":"Thanks."}` {
 		t.Fatalf("sent %q", sent)
 	}
-	if err := cl.ReplyToThread("gone", "Thanks."); err == nil {
+	if err := cl.ReplyToThread(t.Context(), "gone", "Thanks."); err == nil {
 		t.Fatal("a missing thread should be an error")
 	}
 }
@@ -221,14 +224,14 @@ func TestCleansControlCharacters(t *testing.T) {
 		}
 		return reply(200, `{"data":{"repository":{"pullRequest":{"title":"a \u001b[2J b","state":"OPEN","number":1}}}}`)
 	})
-	pr, err := c.PR("o/r", 1)
+	pr, err := c.PR(t.Context(), "o/r", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.ContainsRune(pr.Title, 0x1b) {
 		t.Fatalf("title %q", pr.Title)
 	}
-	diff, err := c.PRDiff("o/r", 1)
+	diff, err := c.PRDiff(t.Context(), "o/r", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +257,7 @@ func TestMyReviewsMergedIn(t *testing.T) {
   "mine":{"nodes":[{"id":"r0","author":{"login":"me"},"state":"CHANGES_REQUESTED","submittedAt":"2026-11-01T00:00:00Z"},
                    {"id":"r1","author":{"login":"me"},"state":"APPROVED","submittedAt":"2026-11-03T00:00:00Z"}]}}}}}`)
 	})
-	pr, err := c.PR("o/r", 1)
+	pr, err := c.PR(t.Context(), "o/r", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +281,7 @@ func TestDetailLoadsEveryPage(t *testing.T) {
   "reviewThreads":{"nodes":[{"id":"t1"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}},
   "files":{"nodes":[{"path":"a.go"}],"pageInfo":{"hasNextPage":false}}}}}}`)
 	})
-	d, err := c.FetchDetail("o/r", 1)
+	d, err := c.FetchDetail(t.Context(), "o/r", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,13 +301,13 @@ func TestViewerRetriesAfterFailure(t *testing.T) {
 		}
 		return reply(200, `{"data":{"viewer":{"login":"me"}}}`)
 	})
-	if _, err := c.Viewer(); err == nil {
+	if _, err := c.Viewer(t.Context()); err == nil {
 		t.Fatal("the first lookup should fail")
 	}
-	if me, err := c.Viewer(); err != nil || me != "me" {
+	if me, err := c.Viewer(t.Context()); err != nil || me != "me" {
 		t.Fatalf("second lookup: %q %v", me, err)
 	}
-	if _, _ = c.Viewer(); calls != 2 {
+	if _, _ = c.Viewer(t.Context()); calls != 2 {
 		t.Fatalf("a good login should be remembered: %d calls", calls)
 	}
 }
@@ -325,7 +328,7 @@ func TestNewLoginWithoutRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("GH_TOKEN", "new")
-	if me, err := c.Viewer(); err != nil || me != "me" {
+	if me, err := c.Viewer(t.Context()); err != nil || me != "me" {
 		t.Fatalf("viewer: %q %v (sent %v)", me, err, seen)
 	}
 	if strings.Join(seen, ",") != "token old,token new" {
@@ -356,10 +359,10 @@ func TestTokenStaysOnGitHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("GH_TOKEN", "new")
-	if _, err := c.Viewer(); err != nil {
+	if _, err := c.Viewer(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	b, err := c.Download("o/prowl", gh.Release{Tag: "v1", Assets: []gh.Asset{{ID: 1, Name: "prowl.tar.gz"}}}, "prowl.tar.gz")
+	b, err := c.Download(t.Context(), "o/prowl", gh.Release{Tag: "v1", Assets: []gh.Asset{{ID: 1, Name: "prowl.tar.gz"}}}, "prowl.tar.gz")
 	if err != nil || string(b) != "prowl" {
 		t.Fatalf("download: %q, %v", b, err)
 	}
@@ -386,7 +389,7 @@ func TestReviewCandidates(t *testing.T) {
 			}
 			return reply(200, c.teams)
 		})
-		got, err := cl.ReviewCandidates("acme/api")
+		got, err := cl.ReviewCandidates(t.Context(), "acme/api")
 		if err != nil || fmt.Sprint(got) != c.want {
 			t.Errorf("%s: %v, %v; want %s", c.name, got, err, c.want)
 		}
@@ -399,8 +402,28 @@ func TestSuggestedReviewers(t *testing.T) {
 		return reply(200, `{"data":{"repository":{"pullRequest":{"suggestedReviewers":[
 {"isAuthor":true,"reviewer":{"login":"alice","name":"Alice"}},{"isAuthor":false,"reviewer":{"login":"bob","name":"Bob"}}]}}}}`)
 	})
-	got, err := cl.SuggestedReviewers("acme/api", 7)
+	got, err := cl.SuggestedReviewers(t.Context(), "acme/api", 7)
 	if err != nil || fmt.Sprint(got) != "[{bob Bob false}]" {
 		t.Fatalf("suggested = %v, %v", got, err)
+	}
+}
+
+type hang struct{}
+
+func (hang) RoundTrip(r *http.Request) (*http.Response, error) {
+	<-r.Context().Done()
+	return nil, r.Context().Err()
+}
+
+// Cancelling a sync stops it waiting on GitHub.
+func TestFetchInboxCancel(t *testing.T) {
+	c, err := gh.NewWith(api.ClientOptions{Host: "github.com", AuthToken: "test", Transport: hang{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(10*time.Millisecond, cancel)
+	if _, err := c.FetchInbox(ctx, nil, nil, nil, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
 	}
 }

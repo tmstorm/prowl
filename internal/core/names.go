@@ -29,7 +29,7 @@ type NameMatch struct {
 // least: the same email, the same name, a login that holds their Slack name
 // or handle, then whoever posts most of their PRs in Slack. A Slack user is
 // proposed for one login at most.
-func (co *Core) ProposeNames() ([]NameMatch, []SlackUser, error) {
+func (co *Core) ProposeNames(ctx context.Context) ([]NameMatch, []SlackUser, error) {
 	co.mu.Lock()
 	sl, err := co.slackFor()
 	cfg, viewer, me := co.cfg, co.inbox.Viewer, co.slackMe
@@ -38,13 +38,13 @@ func (co *Core) ProposeNames() ([]NameMatch, []SlackUser, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	users, err := co.loadSlackUsers(sl)
+	users, err := co.loadSlackUsers(ctx, sl)
 	if err != nil {
 		return nil, nil, err
 	}
 	var people []gh.Person
 	for _, org := range cfg.Orgs {
-		members, err := co.gh.OrgMembers(org)
+		members, err := co.gh.OrgMembers(ctx, org)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -206,14 +206,14 @@ func fold(s string) string {
 }
 
 // loadSlackUsers reads the workspace's people once per process.
-func (co *Core) loadSlackUsers(sl *slack.Client) ([]slack.User, error) {
+func (co *Core) loadSlackUsers(ctx context.Context, sl *slack.Client) ([]slack.User, error) {
 	co.mu.Lock()
 	cached := co.slackUsers
 	co.mu.Unlock()
 	if cached != nil {
 		return cached, nil
 	}
-	users, err := sl.Users(context.Background())
+	users, err := sl.Users(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("slack users: %w", err)
 	}
@@ -259,7 +259,7 @@ func (co *Core) SlackLine(key string, event ReviewEvent, post bool) string {
 var ErrNoSlackUser = errors.New("no Slack user for the author")
 
 // DMAuthor sends the PR's author its Slack line in a direct message.
-func (co *Core) DMAuthor(key string) error {
+func (co *Core) DMAuthor(ctx context.Context, key string) error {
 	co.mu.Lock()
 	sl, err := co.slackFor()
 	it, _ := co.item(key)
@@ -271,7 +271,7 @@ func (co *Core) DMAuthor(key string) error {
 	if !slack.IsUserID(id) {
 		return ErrNoSlackUser
 	}
-	if err := sl.DM(context.Background(), id, co.SlackLine(key, "", true)); err != nil {
+	if err := sl.DM(ctx, id, co.SlackLine(key, "", true)); err != nil {
 		return fmt.Errorf("DM %s: %w", it.PR.AuthorLogin(), err)
 	}
 	return nil
