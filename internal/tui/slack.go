@@ -355,7 +355,7 @@ func (p *namesPopup) view(m *Model) string {
 		lines = append(lines, sDim.Render(" Everyone in your orgs and inbox has a Slack user."))
 	}
 	help := sDim.Render(" space accept · a accept all · e pick · x remove · enter save · esc cancel · E edit as text") + "\n" +
-		sDim.Render(" A mapped teammate is @mentioned when prowl posts, and <leader>Y DMs them.")
+		sDim.Render(" A mapped teammate is @mentioned when prowl posts, and "+leader+"Y DMs them.")
 	return popBox("Slack names", strings.Join(lines, "\n")+"\n\n"+help, w, pal.Accent)
 }
 

@@ -314,7 +314,7 @@ func summaryModelOption(name string) option {
 // built-in ones shown commented out.
 func profilesText(c *config.Config) string {
 	var b strings.Builder
-	b.WriteString("# Review profiles, run with <leader>cp. A profile named like a built-in one replaces it.\n")
+	b.WriteString("# Review profiles, run with " + leader + "cp. A profile named like a built-in one replaces it.\n")
 	b.WriteString("# reviewers and skills are optional: by default the main agent runs it with your skills.\n#\n")
 	for _, p := range config.BuiltinProfiles() {
 		fmt.Fprintf(&b, "# built in:\n# [[profiles]]\n# name = %q\n# prompt = %q\n\n", p.Name, p.Prompt)
@@ -817,8 +817,8 @@ func (p *reviewersPopup) view(m *Model) string {
 		rows = append(rows, row)
 	}
 	help := sDim.Render(" space toggle · J/K move down/up · esc back") + "\n" +
-		sDim.Render(" <leader>cc runs every checked agent. The main one is first;") + "\n" +
-		sDim.Render(" it reviews alone with <leader>cC and its summary is posted.")
+		sDim.Render(" "+leader+"cc runs every checked agent. The main one is first;") + "\n" +
+		sDim.Render(" it reviews alone with "+leader+"cC and its summary is posted.")
 	return popBox("Reviewers", strings.Join(rows, "\n")+"\n\n"+help, w, pal.Accent)
 }
 

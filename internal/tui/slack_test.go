@@ -62,7 +62,7 @@ func TestSlackNamesPopup(t *testing.T) {
 	openNames(a)
 	a.want("Proposed", "bquill", "Ben Quill · same name", "lortiz-acme", "LO (Lena Ortiz) · login matches their Slack name",
 		"MiraJVance", "Mira (Mira Vance) · login matches their Slack name", "No match", "alice", "no Slack user · e to pick",
-		"Mapped", "carafox", "Cara Fox")
+		"Mapped", "carafox", "Cara Fox", "and <space>Y DMs them")
 
 	a.keys("esc")
 	a.wantNot("Slack names not saved")
