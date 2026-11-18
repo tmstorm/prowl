@@ -357,7 +357,7 @@ func TestDraftReply(t *testing.T) {
 	a.keys("c")
 	a.want("Reply on a.go:3")
 	a.keys("ctrl+s")
-	if !a.wrote("mutation addPullRequestReviewThreadReply") {
+	if !a.wrote("POST /repos/o/api/pulls/7/comments/107/replies") {
 		t.Fatalf("the reply wasn't sent: %v", a.gh.Reviews())
 	}
 	a.waitFor("✓ sent a.go:3")
@@ -464,7 +464,7 @@ func TestSuggestAndAskForReview(t *testing.T) {
 	a.keys("space", "A")
 	a.want("Ask for reviews on api#7")
 	a.keys("newcomer", "enter")
-	a.want("asked newcomer to review")
+	a.waitFor("asked newcomer to review")
 	if !a.wrote("POST /repos/o/api/pulls/7/requested_reviewers") {
 		t.Fatal("no review request sent")
 	}

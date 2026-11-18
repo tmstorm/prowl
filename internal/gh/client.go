@@ -592,10 +592,43 @@ func (c *Client) SubmitReview(repo string, number int, commitID, event, body str
 	return post(sb.String(), nil)
 }
 
-// ReplyToThread adds a reply to an existing review thread.
+// ReplyToThread posts a reply in a review thread. It goes through REST,
+// which publishes the reply at once: GraphQL's
+// addPullRequestReviewThreadReply puts it in a pending review instead, and
+// GitHub allows one pending review per person on a PR, so the next review
+// you submit fails.
 func (c *Client) ReplyToThread(threadID, body string) error {
-	q := `mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $id, body: $body}) { comment { id } } }`
-	return c.gql.Do(q, map[string]any{"id": threadID, "body": body}, nil)
+	q := `query($id: ID!) { node(id: $id) { ... on PullRequestReviewThread {
+	  pullRequest { number repository { nameWithOwner } }
+	  comments(first: 1) { nodes { fullDatabaseId } } } } }`
+	var out struct {
+		Node struct {
+			PullRequest struct {
+				Number     int `json:"number"`
+				Repository struct {
+					NameWithOwner string `json:"nameWithOwner"`
+				} `json:"repository"`
+			} `json:"pullRequest"`
+			Comments struct {
+				Nodes []struct {
+					ID string `json:"fullDatabaseId"`
+				} `json:"nodes"`
+			} `json:"comments"`
+		} `json:"node"`
+	}
+	if err := c.gql.Do(q, map[string]any{"id": threadID}, &out); err != nil {
+		return fmt.Errorf("find thread %s: %w", threadID, err)
+	}
+	pr, first := out.Node.PullRequest, out.Node.Comments.Nodes
+	if pr.Number == 0 || len(first) == 0 || first[0].ID == "" {
+		return fmt.Errorf("thread %s not found", threadID)
+	}
+	b, _ := json.Marshal(map[string]string{"body": body})
+	path := fmt.Sprintf("repos/%s/pulls/%d/comments/%s/replies", pr.Repository.NameWithOwner, pr.Number, first[0].ID)
+	if err := c.rest.Post(path, bytes.NewReader(b), nil); err != nil {
+		return fmt.Errorf("reply in %s#%d: %w", pr.Repository.NameWithOwner, pr.Number, err)
+	}
+	return nil
 }
 
 // ResolveThread resolves a review thread, or reopens it.

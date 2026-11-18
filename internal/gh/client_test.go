@@ -167,6 +167,33 @@ func TestSubmitReviewFallback(t *testing.T) {
 	}
 }
 
+// A reply goes out through REST, under the thread's first comment, so it's
+// published at once instead of sitting in a pending review that blocks the
+// next review you submit. A thread that isn't there is an error.
+func TestReplyToThread(t *testing.T) {
+	var sent []string
+	cl := fake(t, func(r *http.Request) *http.Response {
+		b, _ := io.ReadAll(r.Body)
+		sent = append(sent, r.Method+" "+r.URL.Path+" "+string(b))
+		if strings.HasSuffix(r.URL.Path, "/graphql") {
+			if strings.Contains(string(b), `"id":"gone"`) {
+				return reply(200, `{"data":{"node":null}}`)
+			}
+			return reply(200, `{"data":{"node":{"pullRequest":{"number":7,"repository":{"nameWithOwner":"o/api"}},"comments":{"nodes":[{"fullDatabaseId":"42"}]}}}}`)
+		}
+		return reply(201, `{}`)
+	})
+	if err := cl.ReplyToThread("t1", "Thanks."); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 2 || strings.Contains(sent[0], "mutation") || sent[1] != `POST /repos/o/api/pulls/7/comments/42/replies {"body":"Thanks."}` {
+		t.Fatalf("sent %q", sent)
+	}
+	if err := cl.ReplyToThread("gone", "Thanks."); err == nil {
+		t.Fatal("a missing thread should be an error")
+	}
+}
+
 func TestIsBot(t *testing.T) {
 	for _, c := range []struct {
 		a    *gh.Actor

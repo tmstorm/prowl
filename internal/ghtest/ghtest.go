@@ -143,6 +143,22 @@ func (f *GitHub) ReleaseCalls() int {
 
 func (f *GitHub) graphql(q string, v map[string]any) any {
 	switch {
+	case strings.Contains(q, "PullRequestReviewThread"):
+		for n, threads := range f.Threads {
+			for _, t := range threads {
+				if t.ID != v["id"] {
+					continue
+				}
+				repo := "o/api"
+				if i := slices.IndexFunc(f.PRs, func(p gh.PR) bool { return p.Number == n }); i >= 0 {
+					repo = f.PRs[i].Repository.NameWithOwner
+				}
+				return map[string]any{"node": map[string]any{
+					"pullRequest": map[string]any{"number": n, "repository": map[string]any{"nameWithOwner": repo}},
+					"comments":    map[string]any{"nodes": []any{map[string]any{"fullDatabaseId": strconv.Itoa(100 + n)}}}}}
+			}
+		}
+		return map[string]any{"node": nil}
 	case strings.Contains(q, "mutation"):
 		f.writes = append(f.writes, "mutation "+strings.Fields(strings.SplitN(q, "{", 3)[1])[0])
 		return map[string]any{}
