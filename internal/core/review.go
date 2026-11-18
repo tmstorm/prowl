@@ -398,31 +398,3 @@ func ReviewerTitle(reviewer string) string {
 	}
 	return agent.Title(name) + " · " + profile
 }
-
-// quietAfter is how long a review can go without a tool call before it
-// counts as writing: the agent is thinking or writing out its review.
-const quietAfter = 5 * time.Second
-
-// owlWords are what the owl is up to while the agent writes, in turn.
-var owlWords = []string{
-	"mulling it over", "preening the findings", "sharpening its talons", "perched and pondering",
-	"ruffling its feathers", "turning its head all the way round", "blinking slowly", "hooting softly",
-}
-
-// Progress is what a running review is doing, for people: its step and the
-// agent's latest action, or once the agent has gone quiet to write, what the
-// owl is up to (plain "writing" with the owl turned off).
-func (co *Core) Progress(r *store.Run, now time.Time) string {
-	if r.Activity == "" {
-		return "starting"
-	}
-	step, _, _ := strings.Cut(r.Activity, ": ")
-	quiet := now.Sub(r.ActivityAt)
-	if r.ActivityAt.IsZero() || quiet < quietAfter || step == "preparing worktree" {
-		return r.Activity
-	}
-	if !co.Config().Playful {
-		return step + ": writing…"
-	}
-	return step + ": " + owlWords[int((quiet-quietAfter)/(4*time.Second))%len(owlWords)] + "…"
-}

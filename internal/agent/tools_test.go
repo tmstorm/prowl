@@ -22,7 +22,7 @@ func runTool(t *testing.T, ctx context.Context, repo, dir string, local bool, co
 	t.Helper()
 	cfg := config.Default()
 	cfg.Agent.RunImages = map[string]string{"*": "busybox:1.37"}
-	s, err := agent.ToolServer(cfg, repo, dir, local, nil)
+	s, err := agent.ToolServer(cfg, repo, dir, local, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,12 +45,12 @@ func runTool(t *testing.T, ctx context.Context, repo, dir string, local bool, co
 	return out, nil
 }
 
-// The chat's docs tool answers from the docs it is given, with or without a
-// run image, and a review's tool server has no docs tool.
+// The chat's docs tool reads prowl's docs, with or without a run image, and
+// a review's tool server has no docs tool.
 func TestDocsTool(t *testing.T) {
 	ctx := context.Background()
-	call := func(docs func(string) string) (*mcp.CallToolResult, error) {
-		s, err := agent.ToolServer(config.Default(), "acme/api", t.TempDir(), false, docs)
+	call := func(chat bool) (*mcp.CallToolResult, error) {
+		s, err := agent.ToolServer(config.Default(), "acme/api", t.TempDir(), false, chat)
 		if err != nil {
 			return nil, err
 		}
@@ -63,16 +63,16 @@ func TestDocsTool(t *testing.T) {
 		defer cs.Close()
 		return cs.CallTool(ctx, &mcp.CallToolParams{Name: "docs", Arguments: map[string]any{"topic": "stale_after"}})
 	}
-	res, err := call(func(topic string) string { return "about " + topic })
+	res, err := call(true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var out agent.DocsOutput
 	b, _ := json.Marshal(res.StructuredContent)
-	if err := json.Unmarshal(b, &out); err != nil || out.Text != "about stale_after" {
+	if err := json.Unmarshal(b, &out); err != nil || !strings.Contains(out.Text, "| `stale_after` |") {
 		t.Fatalf("docs: %s, %v", b, err)
 	}
-	if _, err := call(nil); err == nil {
+	if _, err := call(false); err == nil {
 		t.Fatal("with no run image and no docs, there is no tool server")
 	}
 }

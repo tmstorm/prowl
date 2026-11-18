@@ -148,15 +148,15 @@ func TestProfiles(t *testing.T) {
 func TestLeader(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	c := config.Default()
-	if c.LeaderKey() != " " || c.LeaderLabel() != "<space>" {
-		t.Fatalf("default leader: %q %q", c.LeaderKey(), c.LeaderLabel())
+	if c.Leader != "space" {
+		t.Fatalf("default leader: %q", c.Leader)
 	}
 	c.Leader = `\`
 	if err := c.Save(); err != nil {
 		t.Fatal(err)
 	}
 	got, err := config.Load()
-	if err != nil || got.LeaderKey() != `\` || got.LeaderLabel() != `\` {
+	if err != nil || got.Leader != `\` {
 		t.Fatalf("backslash leader: %v %q", err, got.Leader)
 	}
 	if err := os.WriteFile(config.Path(), []byte("leader = \"j\"\n"), 0o644); err != nil {

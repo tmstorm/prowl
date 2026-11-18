@@ -80,7 +80,7 @@ func (m *Model) namesProposed(msg namesProposedMsg) tea.Cmd {
 				n++
 			}
 		}
-		if n > 0 && m.core.NamesOffered() {
+		if n > 0 && m.core.FirstTime("slack names") {
 			m.tip = fmt.Sprintf("Slack: matched %d teammates to their Slack users. Review them: <leader>, → Slack names", n)
 		}
 		return nil

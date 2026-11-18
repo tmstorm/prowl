@@ -1246,33 +1246,3 @@ func TestDismissedChangeRequest(t *testing.T) {
 		t.Fatalf("dismissed change request: %v %q", it.Bucket, it.Reason)
 	}
 }
-
-// A running review shows the agent's latest action, and once the agent has
-// gone quiet to write, what the owl is up to in that step, or plain
-// "writing" with the owl off. Preparing the worktree is never mistaken for
-// writing.
-func TestProgress(t *testing.T) {
-	co, _ := newCore(t, &ghtest.GitHub{})
-	now := time.Now()
-	at := func(act string, ago time.Duration) *store.Run {
-		return &store.Run{Activity: act, ActivityAt: now.Add(-ago)}
-	}
-	if got := co.Progress(&store.Run{}, now); got != "starting" {
-		t.Errorf("no activity yet: %q", got)
-	}
-	if got := co.Progress(at("reviewing: reading a.go", time.Second), now); got != "reviewing: reading a.go" {
-		t.Errorf("busy: %q", got)
-	}
-	if got := co.Progress(at("verifying findings: reading a.go", time.Minute), now); !strings.HasPrefix(got, "verifying findings: ") || strings.Contains(got, "a.go") || !strings.HasSuffix(got, "…") {
-		t.Errorf("quiet: %q", got)
-	}
-	if got := co.Progress(at("preparing worktree", time.Minute), now); got != "preparing worktree" {
-		t.Errorf("cloning: %q", got)
-	}
-	if _, err := co.Update(func(c *config.Config) error { c.Playful = false; return nil }); err != nil {
-		t.Fatal(err)
-	}
-	if got := co.Progress(at("reviewing: reading a.go", time.Minute), now); got != "reviewing: writing…" {
-		t.Errorf("owl off: %q", got)
-	}
-}

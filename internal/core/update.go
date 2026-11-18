@@ -307,10 +307,6 @@ func (co *Core) WhatsNew() (string, string) {
 	return v, last.Notes
 }
 
-// FirstNews reports whether prowl hasn't yet told you that release tag is
-// out, and remembers that it now has.
-func (co *Core) FirstNews(tag string) bool { return co.st.FirstTime("release " + tag) }
-
 // OldBinary is where an update on Windows moves the running prowl.exe,
 // which Windows won't let anyone overwrite. The next start removes it.
 func OldBinary(exe string) string { return strings.TrimSuffix(exe, ".exe") + ".old.exe" }

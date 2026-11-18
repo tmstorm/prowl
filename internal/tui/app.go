@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
@@ -164,7 +165,10 @@ var leader, leaderPress = "<space>", " "
 
 // applyConfig sets the package-level display settings from cfg.
 func applyConfig(cfg config.Config) {
-	leader, leaderPress = cfg.LeaderLabel(), cfg.LeaderKey()
+	leader, leaderPress = cfg.Leader, cfg.Leader
+	if cfg.Leader == "space" || cfg.Leader == "" {
+		leader, leaderPress = "<space>", " "
+	}
 	applyTheme(cfg.Theme)
 	nerdIcons = cfg.NerdFont
 	colorRepos = cfg.ColorRepos
@@ -318,18 +322,18 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 	if m.synced && !m.core.WatchRunning() {
 		core.Notify(changes, m.cfg.NotifyTimeout.Duration)
 	}
-	if !m.synced && m.core.OfferService() {
+	if !m.synced && m.core.FirstTime("service") && !m.core.Service() {
 		m.tip = "tip: <leader>, → Background notifications tells you about PRs while prowl is closed"
 	}
-	if !m.synced && m.core.AskNerdFont() {
+	if !m.synced && !m.cfg.NerdFont && m.core.FirstTime("nerd font") {
 		m.askIcons()
 	}
 	var offerNames tea.Cmd
 	switch {
 	case m.synced:
-	case m.core.OfferChannels():
+	case m.core.SlackConnected() && len(m.cfg.SlackChannels) == 0 && m.core.FirstTime("slack channels"):
 		m.tip = "Slack: pick the channels whose PR links you want in the inbox: <leader>, → Slack channels"
-	case m.core.OfferNames():
+	case m.core.SlackConnected() && !m.core.Shown("slack names"):
 		offerNames = m.matchSlackNames(namesProposedMsg{tip: true})
 	}
 	m.synced = true
@@ -1723,7 +1727,7 @@ func helpSuggestions(q string) []string {
 		return nil
 	}
 	var out []string
-	for _, t := range core.DocTags() {
+	for _, t := range docs.Tags() {
 		if s := cmd + " " + t.Tag; !slices.Contains(out, s) {
 			out = append(out, s)
 		}

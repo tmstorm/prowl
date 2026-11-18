@@ -2,8 +2,10 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/tmstorm/prowl/internal/store"
 )
 
 const appName = "prowl"
@@ -139,4 +141,32 @@ func wakingOwl(step int, small bool) []string {
 		p = watch[(step-len(wake))%len(watch)]
 	}
 	return owl(p.eye, p.look, small)
+}
+
+// quietAfter is how long a review can go without a tool call before it
+// counts as writing: the agent is thinking or writing out its review.
+const quietAfter = 5 * time.Second
+
+// owlWords are what the owl is up to while the agent writes, in turn.
+var owlWords = []string{
+	"mulling it over", "preening the findings", "sharpening its talons", "perched and pondering",
+	"ruffling its feathers", "turning its head all the way round", "blinking slowly", "hooting softly",
+}
+
+// Progress is what a running review is doing, for people: its step and the
+// agent's latest action, or once the agent has gone quiet to write, what the
+// owl is up to, or plain "writing" when it isn't playful.
+func Progress(r *store.Run, now time.Time, playful bool) string {
+	if r.Activity == "" {
+		return "starting"
+	}
+	step, _, _ := strings.Cut(r.Activity, ": ")
+	quiet := now.Sub(r.ActivityAt)
+	if r.ActivityAt.IsZero() || quiet < quietAfter || step == "preparing worktree" {
+		return r.Activity
+	}
+	if !playful {
+		return step + ": writing…"
+	}
+	return step + ": " + owlWords[int((quiet-quietAfter)/(4*time.Second))%len(owlWords)] + "…"
 }

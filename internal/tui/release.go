@@ -46,9 +46,9 @@ func (m *Model) releaseTip() {
 	switch {
 	case r.Installed:
 		tip = fmt.Sprintf("prowl %s is installed · <leader>U restarts into it · %s", r.Latest, news)
-	case r.Newer() && r.Command != "" && m.core.FirstNews(r.Latest):
+	case r.Newer() && r.Command != "" && m.core.FirstTime("release "+r.Latest):
 		tip = fmt.Sprintf("prowl %s is out: %s · %s", r.Latest, r.Command, news)
-	case r.Newer() && r.Command == "" && !m.cfg.AutoUpdate && m.core.FirstNews(r.Latest):
+	case r.Newer() && r.Command == "" && !m.cfg.AutoUpdate && m.core.FirstTime("release "+r.Latest):
 		tip = fmt.Sprintf("prowl %s is out · <leader>U installs it · %s", r.Latest, news)
 	default:
 		if v, _ := m.core.WhatsNew(); v != "" {

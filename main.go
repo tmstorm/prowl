@@ -22,6 +22,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/term"
 
+	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
@@ -121,11 +122,7 @@ func run(args []string) error {
 		if len(args) < 3 {
 			return fmt.Errorf("agent-tools needs a repo and a directory")
 		}
-		var docs func(string) string
-		if slices.Contains(args[3:], "--chat") {
-			docs = core.DocsText
-		}
-		s, err := agent.ToolServer(cfg, args[1], args[2], slices.Contains(args[3:], "--local"), docs)
+		s, err := agent.ToolServer(cfg, args[1], args[2], slices.Contains(args[3:], "--local"), slices.Contains(args[3:], "--chat"))
 		if err != nil {
 			return err
 		}
@@ -327,7 +324,7 @@ func remindLogin(co *core.Core, last string) string {
 	}
 	state := strings.Join(states, ",")
 	if state != "" && state != last {
-		platform.Notify("prowl", strings.Join(msgs, " ")+" Press "+cfg.LeaderLabel()+"l in prowl to log in.", cfg.NotifyTimeout.Duration)
+		platform.Notify("prowl", strings.Join(msgs, " ")+" Log in again from prowl's accounts.", cfg.NotifyTimeout.Duration)
 	}
 	return state
 }
@@ -370,7 +367,7 @@ func edits(cfg config.Config, st *store.Store, args []string) error {
 		})
 	}
 	if len(posts) == 0 {
-		return fmt.Errorf("no posted AI reviews in that time; post one with %sp in prowl", cfg.LeaderLabel())
+		return errors.New("no posted AI reviews in that time; post one from prowl")
 	}
 	fmt.Print(agent.EditsMarkdown(posts))
 	return nil
@@ -444,7 +441,7 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 		if strings.HasPrefix(key, "local:") {
 			return fmt.Errorf("no finished review of %s yet; run prowl review", strings.TrimPrefix(key, "local:"))
 		}
-		return fmt.Errorf("no finished review for %s yet; open it in prowl and press %scc", key, cfg.LeaderLabel())
+		return fmt.Errorf("no finished review for %s yet; open it in prowl and run an AI review", key)
 	}
 	notes := map[string][]store.LogEntry{}
 	for _, r := range cur {
@@ -464,7 +461,7 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 
 // commandHelp prints a command's section of the prowl command's docs.
 func commandHelp(cmd string) error {
-	s, err := core.DocSection("cli", "prowl "+cmd)
+	s, err := docs.Section("cli", "prowl "+cmd)
 	if err != nil {
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", cmd)
@@ -477,26 +474,26 @@ func commandHelp(cmd string) error {
 // page's section. A topic with no tag lists the sections that mention it.
 func showDocs(args []string) error {
 	if len(args) == 0 {
-		for _, p := range core.Docs() {
+		for _, p := range docs.All() {
 			fmt.Printf("%-12s %s\n", p.Name, p.Title)
 		}
 		fmt.Println("\nprowl docs TOPIC prints a page, a section, a key or a setting, e.g. prowl docs stale_after.")
 		return nil
 	}
 	if len(args) > 1 {
-		if s, err := core.DocSection(args[0], strings.Join(args[1:], " ")); err == nil {
+		if s, err := docs.Section(args[0], strings.Join(args[1:], " ")); err == nil {
 			printMarkdown(s + "\n")
 			return nil
 		}
 	}
 	topic := strings.Join(args, " ")
-	if md := core.DocTopic(topic); md != "" {
+	if md := docs.Topic(topic); md != "" {
 		printMarkdown(md + "\n")
 		return nil
 	}
 	var sections []string
-	for _, h := range core.SearchDocs(topic) {
-		if s := "prowl docs " + h.Page + " " + core.DocAnchor(h.Heading); !slices.Contains(sections, s) {
+	for _, h := range docs.Search(topic) {
+		if s := "prowl docs " + h.Page + " " + docs.Anchor(h.Heading); !slices.Contains(sections, s) {
 			sections = append(sections, s)
 		}
 	}
@@ -662,7 +659,7 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 	stop := showProgress(co, start, func(now time.Time) string {
 		runs, _ := st.Runs(key)
 		if i := slices.IndexFunc(runs, func(r *store.Run) bool { return r.Status == "running" }); i >= 0 {
-			return co.Progress(runs[i], now)
+			return tui.Progress(runs[i], now, cfg.Playful)
 		}
 		return ""
 	})
@@ -868,7 +865,7 @@ func connectSlack(cfg config.Config, st *store.Store, args []string) error {
 		return err
 	}
 	fmt.Printf("signed in to Slack as %s in %s\n", id.User, id.Team)
-	fmt.Println("Next, in prowl's options (<leader>,), under Slack: pick the channels to watch, and\nmatch your teammates to their Slack users under Slack names.")
+	fmt.Println("Next, in prowl's options, under Slack: pick the channels to watch, and match\nyour teammates to their Slack users under Slack names.")
 	return nil
 }
 

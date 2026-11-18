@@ -231,17 +231,12 @@ func (co *Core) Service() bool {
 	return co.service
 }
 
-// OfferService reports whether to suggest background notifications: the
-// first time prowl asks, and only while they're off.
-func (co *Core) OfferService() bool {
-	return co.st.FirstTime("service") && !co.Service()
-}
+// FirstTime reports whether this is the first time prowl does name, such as
+// offering a tip, and remembers that it now has.
+func (co *Core) FirstTime(name string) bool { return co.st.FirstTime(name) }
 
-// AskNerdFont reports whether to ask if the terminal shows Nerd Font icons:
-// the first time prowl asks, and only while they're off.
-func (co *Core) AskNerdFont() bool {
-	return !co.Config().NerdFont && co.st.FirstTime("nerd font")
-}
+// Shown reports whether prowl has done name before, without marking it.
+func (co *Core) Shown(name string) bool { return co.st.Shown(name) }
 
 // SetService sets up `prowl watch` to run at login and starts it, or stops
 // and removes it. It returns what it set up, for people.

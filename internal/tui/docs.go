@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	xansi "github.com/charmbracelet/x/ansi"
 
-	"github.com/tmstorm/prowl/internal/core"
+	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/platform"
 )
 
@@ -17,7 +17,7 @@ import (
 // line, links to follow, and a search over every page.
 type docsPopup struct {
 	prev      popup // what esc goes back to
-	pages     []core.DocPage
+	pages     []docs.Page
 	page      int
 	nav            // over the page's lines
 	visual    bool // v: lines from anchor to cur are selected
@@ -47,7 +47,7 @@ func linkLabel(md string) string {
 }
 
 func newDocsPopup() *docsPopup {
-	p := &docsPopup{pages: core.Docs(), input: newFilterInput("search the docs", 50)}
+	p := &docsPopup{pages: docs.All(), input: newFilterInput("search the docs", 50)}
 	p.scrolloff = 2
 	return p
 }
@@ -60,7 +60,7 @@ func (m *Model) openDocs(topic string) tea.Cmd {
 	if topic == "" {
 		return nil
 	}
-	tags := core.FindDocTag(topic)
+	tags := docs.Find(topic)
 	if len(tags) == 1 {
 		s := p.spot(m, tags[0])
 		p.show(s.page, s.line)
@@ -80,8 +80,8 @@ func (m *Model) openDocs(topic string) tea.Cmd {
 
 // spot is where a tag is in the viewer: its heading, or the first line of its
 // table row under that heading.
-func (p *docsPopup) spot(m *Model, t core.DocTag) docsSpot {
-	page := slices.IndexFunc(p.pages, func(d core.DocPage) bool { return d.Name == t.Page })
+func (p *docsPopup) spot(m *Model, t docs.Tag) docsSpot {
+	page := slices.IndexFunc(p.pages, func(d docs.Page) bool { return d.Name == t.Page })
 	lines := p.lines(m, page)
 	at := headingLine(lines, t.Heading)
 	row := strings.Split(p.pages[page].Markdown, "\n")[t.Line]
@@ -251,12 +251,12 @@ func (p *docsPopup) followLink(m *Model) {
 		}
 	}
 	name, anchor, ok := p.target(label, nth)
-	page := slices.IndexFunc(p.pages, func(d core.DocPage) bool { return d.Name == name })
+	page := slices.IndexFunc(p.pages, func(d docs.Page) bool { return d.Name == name })
 	if !ok || page < 0 {
 		return
 	}
 	at := 0
-	if section, err := core.DocSection(name, anchor); anchor != "" && err == nil {
+	if section, err := docs.Section(name, anchor); anchor != "" && err == nil {
 		top, _, _ := strings.Cut(section, "\n")
 		at = headingLine(p.lines(m, page), strings.TrimLeft(top, "# "))
 	}
