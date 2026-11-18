@@ -18,7 +18,7 @@ Then everyone signs in, from Slack in the TUI's accounts or from a shell:
 prowl slack
 ```
 
-Enter the client ID when asked; prowl saves it as `slack_client_id`. prowl opens Slack in your browser, you approve, and prowl keeps your token in the OS keyring (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows). On a machine without a keyring, set `PROWL_SLACK_TOKEN` instead. `prowl slack --off` signs out, and `prowl uninstall --purge` deletes the token too. Slack's token expires after 12 hours, and prowl renews it as it runs. If prowl doesn't run for 30 days, the renewal expires as well and you sign in again the same way.
+Enter the client ID when asked; prowl saves it as `slack_client_id`. To use another app later, or fix an ID entered wrong, change Client ID under Slack in the options, then sign in again. prowl opens Slack in your browser, you approve, and prowl keeps your token in the OS keyring (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows). On a machine without a keyring, set `PROWL_SLACK_TOKEN` instead. `prowl slack --off` signs out, and `prowl uninstall --purge` deletes the token too. Slack's token expires after 12 hours, and prowl renews it as it runs. If prowl doesn't run for 30 days, the renewal expires as well and you sign in again the same way.
 
 Prefer your own app? Create it from the same manifest, install it, and paste its user token (`xoxp-...`) at the prompt instead of a client ID.
 
