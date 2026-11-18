@@ -357,7 +357,7 @@ func TestDraftReply(t *testing.T) {
 	a.keys("c")
 	a.want("Reply on a.go:3")
 	a.keys("ctrl+s")
-	if !a.wrote("mutation addPullRequestReviewThreadReply") {
+	if !a.wrote("POST /repos/o/api/pulls/7/comments/107/replies") {
 		t.Fatalf("the reply wasn't sent: %v", a.gh.Reviews())
 	}
 	a.waitFor("✓ sent a.go:3")

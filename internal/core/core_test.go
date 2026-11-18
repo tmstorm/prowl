@@ -282,7 +282,8 @@ func TestDetailAndDiff(t *testing.T) {
 
 // Marking a file viewed, replying to a thread and resolving it go to GitHub.
 func TestFilesAndThreads(t *testing.T) {
-	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me")}}
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me")},
+		Threads: map[int][]gh.Thread{1: {{ID: "thread-1"}}}}
 	co, _ := newCore(t, fake)
 	refresh(t, co)
 	if err := co.SetFileViewed("o/api#1", "a.go", true); err != nil {
@@ -297,7 +298,7 @@ func TestFilesAndThreads(t *testing.T) {
 	if err := co.Resolve("thread-1", false); err != nil {
 		t.Fatal(err)
 	}
-	for _, w := range []string{"mutation markFileAsViewed", "mutation addPullRequestReviewThreadReply", "mutation resolveReviewThread", "mutation unresolveReviewThread"} {
+	for _, w := range []string{"mutation markFileAsViewed", "POST /repos/o/api/pulls/1/comments/101/replies", "mutation resolveReviewThread", "mutation unresolveReviewThread"} {
 		if !fake.Wrote(w) {
 			t.Errorf("missing %s", w)
 		}
@@ -746,7 +747,7 @@ func rerun(c map[string]any, d time.Duration) map[string]any {
 // PostReply sends a drafted reply as you edited it, marks it sent and keeps
 // the draft beside what you sent.
 func TestPostReply(t *testing.T) {
-	fake := &ghtest.GitHub{}
+	fake := &ghtest.GitHub{Threads: map[int][]gh.Thread{7: {{ID: "t1"}}}}
 	co, st := newCore(t, fake)
 	id, _ := st.StartRun("o/api#7", "abc", "claude", "", 0)
 	_ = st.FinishRun(id, "s1", "fine", "", nil)
@@ -754,7 +755,7 @@ func TestPostReply(t *testing.T) {
 	if err := co.PostReply(id, "t1", "Thanks, the wrap helps."); err != nil {
 		t.Fatal(err)
 	}
-	if !fake.Wrote("mutation addPullRequestReviewThreadReply") {
+	if !fake.Wrote("POST /repos/o/api/pulls/7/comments/107/replies") {
 		t.Fatal("the reply wasn't sent")
 	}
 	if r, _ := st.Run(id); !r.Replies[0].Posted {
@@ -993,7 +994,8 @@ func TestWatchRunning(t *testing.T) {
 // An agent draft carries the draft replies you kept; submitting it posts
 // the review, then sends each one in its thread. One you left out stays.
 func TestDraftWithReplies(t *testing.T) {
-	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")},
+		Threads: map[int][]gh.Thread{7: {{ID: "t1"}, {ID: "t2"}}}}
 	_, st := newCore(t, fake)
 	id, _ := st.StartRun("o/api#7", "abc1234", "claude", "", 0)
 	_ = st.FinishRun(id, "s1", "fine", "", nil)
@@ -1016,7 +1018,7 @@ func TestDraftWithReplies(t *testing.T) {
 	if _, err := co.Submit("o/api#7", d); err != nil {
 		t.Fatal(err)
 	}
-	if !fake.Wrote("POST /repos/o/api/pulls/7/reviews") || !fake.Wrote("mutation addPullRequestReviewThreadReply") {
+	if !fake.Wrote("POST /repos/o/api/pulls/7/reviews") || !fake.Wrote("POST /repos/o/api/pulls/7/comments/107/replies") {
 		t.Fatal("the review and its reply weren't both sent")
 	}
 	r, _ := st.Run(id)
@@ -1152,7 +1154,8 @@ func TestUnsentReopensForItsEvent(t *testing.T) {
 // A draft emptied down to its replies sends the replies and no review, says
 // it posted, and leaves the agent's review unposted.
 func TestRepliesOnly(t *testing.T) {
-	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")},
+		Threads: map[int][]gh.Thread{7: {{ID: "t1"}}}}
 	_, st := newCore(t, fake)
 	id, _ := st.StartRun("o/api#7", "abc1234", "claude", "", 0)
 	_ = st.FinishRun(id, "s1", "", "", nil)
@@ -1169,7 +1172,7 @@ func TestRepliesOnly(t *testing.T) {
 	if err != nil || !sent.Review || sent.URL != "" {
 		t.Fatalf("submitted %+v, %v", sent, err)
 	}
-	if len(fake.Reviews()) != 0 || !fake.Wrote("mutation addPullRequestReviewThreadReply") {
+	if len(fake.Reviews()) != 0 || !fake.Wrote("POST /repos/o/api/pulls/7/comments/107/replies") {
 		t.Fatal("want the reply and no review")
 	}
 	if r, _ := st.Run(id); r.Status != "done" || !r.Replies[0].Posted {
