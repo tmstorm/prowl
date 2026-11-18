@@ -32,6 +32,8 @@ prowl has two panes: the inbox on the left and the PR pane on the right. Under 1
 
 `yy` copies the cursor's line. `v` starts a selection, the motion keys extend it, and `y` copies it; dragging the mouse over lines selects them the same way. A diff line is copied as its code, without the line numbers or the `+`/`-`. Hold Shift while dragging to select with your terminal instead, for part of a line.
 
+The keys work the same in these docs (`:help`), which copy lines as they read on screen.
+
 ## Mouse
 
 Everything on screen also works with the mouse (`mouse = false` turns it off). Click a PR, tab or section header; click a fold head in the PR pane to open or close it; scroll either pane, and drag over lines to select them (see [Copying text](#copying-text)). In menus and pickers, a click selects a row and a second click chooses it, and a click outside closes the menu. Clicking a finding again includes or excludes it, and clicking a diff line again starts a comment on it. The leader menu's entries, confirm prompts' `[ yes ]`/`[ no ]`, the statusline's sync text (refresh) and login warning (Accounts) are clickable too. Clicks and the wheel inside the chat window go to the agent. Nothing posts to GitHub on a single click: approving still asks `[y/N]`.

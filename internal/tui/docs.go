@@ -11,6 +11,7 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/tmstorm/prowl/internal/core"
+	"github.com/tmstorm/prowl/internal/platform"
 )
 
 // docsPopup reads prowl's built-in docs: one page at a time with a cursor
@@ -19,6 +20,9 @@ type docsPopup struct {
 	prev           popup // what esc goes back to
 	pages          []core.DocPage
 	page, cur, top int
+	visual         bool // v: lines from anchor to cur are selected
+	anchor         int
+	yanking        bool       // y pressed once: a second y copies the line
 	back           []docsSpot // where links were followed from, for backspace
 	searching      bool
 	input          textinput.Model
@@ -112,14 +116,48 @@ func (p *docsPopup) lines(m *Model, page int) []string {
 }
 
 func (p *docsPopup) mode() mode {
-	if p.searching {
+	switch {
+	case p.searching:
 		return modeInsert
+	case p.visual:
+		return modeVisual
 	}
 	return modeNormal
 }
 
 func (p *docsPopup) show(page, line int) {
-	p.page, p.cur, p.top = page, line, max(line-2, 0)
+	p.page, p.cur, p.top, p.visual = page, line, max(line-2, 0), false
+}
+
+// selection is the lines v covers, or the cursor's line alone.
+func (p *docsPopup) selection() (int, int) {
+	if p.visual {
+		return min(p.anchor, p.cur), max(p.anchor, p.cur)
+	}
+	return p.cur, p.cur
+}
+
+// yank copies the selected lines as they read on screen. A wider terminal
+// makes a page shorter, so the selection may run past its end.
+func (p *docsPopup) yank(m *Model) {
+	lines := p.lines(m, p.page)
+	a, b := p.selection()
+	b = min(b, len(lines)-1)
+	a = min(a, b)
+	p.visual = false
+	var out []string
+	for _, l := range lines[a : b+1] {
+		out = append(out, strings.TrimRight(strings.ReplaceAll(strings.TrimPrefix(xansi.Strip(l), " "), "\u00a0", " "), " "))
+	}
+	if err := platform.Copy(strings.Join(out, "\n")); err != nil {
+		m.fail(err.Error())
+		return
+	}
+	if len(out) == 1 {
+		m.info("copied 1 line")
+	} else {
+		m.info(fmt.Sprintf("copied %d lines", len(out)))
+	}
 }
 
 func (p *docsPopup) forward(_ *Model, msg tea.Msg) tea.Cmd {
@@ -136,6 +174,8 @@ func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		return p.updateSearch(m, k)
 	}
 	n := len(p.lines(m, p.page))
+	yanking := p.yanking
+	p.yanking = false
 	switch k.String() {
 	case "j", "down":
 		p.cur = min(p.cur+1, n-1)
@@ -162,10 +202,22 @@ func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 			p.show(s.page, s.line)
 		}
 	case "/":
-		p.searching, p.hits, p.hit = true, nil, 0
+		p.searching, p.hits, p.hit, p.visual = true, nil, 0, false
 		p.input.SetValue("")
 		return p.input.Focus()
+	case "v":
+		p.visual, p.anchor = !p.visual, p.cur
+	case "y":
+		if p.visual || yanking {
+			p.yank(m)
+		} else {
+			p.yanking = true
+		}
 	case "esc", "q":
+		if p.visual {
+			p.visual = false
+			return nil
+		}
 		m.popup = p.prev
 	}
 	return nil
@@ -377,12 +429,16 @@ func (p *docsPopup) view(m *Model) string {
 	p.top = min(max(p.top, p.cur-h+1), p.cur)
 	p.top = max(min(p.top, len(lines)-h), 0)
 	shown := lines[p.top:min(p.top+h, len(lines))]
+	a, b := p.selection()
 	for i := range shown {
 		shown[i] = fit(shown[i], w-4)
-		if p.top+i == p.cur {
+		switch {
+		case p.visual && p.top+i >= a && p.top+i <= b:
+			shown[i] = highlight(shown[i], w-4, sPink)
+		case p.top+i == p.cur:
 			shown[i] = highlight(shown[i], w-4, sTitle)
 		}
 	}
-	foot := sDim.Render(fmt.Sprintf(" j/k move · tab page · enter follow link · backspace back · / search · esc close   %d/%d", p.cur+1, len(lines)))
+	foot := sDim.Render(fmt.Sprintf(" j/k move · tab page · enter follow link · backspace back · / search · v y copy · esc close   %d/%d", p.cur+1, len(lines)))
 	return popBox("prowl docs · "+p.pages[p.page].Title, head+"\n"+strings.Join(shown, "\n")+"\n\n"+foot, w, pal.Accent)
 }

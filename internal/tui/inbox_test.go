@@ -711,6 +711,32 @@ func TestDocsUnderCursor(t *testing.T) {
 	}
 }
 
+// In the docs, yy copies the cursor's line and v selects lines for y to
+// copy, as they read on screen; esc leaves the selection before it closes. A
+// selection past the end of a page that got shorter in a wider terminal
+// copies what is left.
+func TestDocsCopy(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.keys("?", "d", "/", "Snoozing", "enter")
+	a.keys("y", "y")
+	if got := a.copied(); got != "Snoozing" {
+		t.Fatalf("yy copied %q", got)
+	}
+	a.want("copied 1 line")
+	a.keys("v", "j", "esc")
+	a.want("prowl docs")
+	a.keys("k", "v", "j", "j", "y")
+	if got := a.copied(); !strings.HasPrefix(got, "Snoozing\n\n") || !strings.Contains(got, "snoozes a PR for 1 hour") {
+		t.Fatalf("v j j y copied %q", got)
+	}
+	a.want("copied 3 lines", "prowl docs")
+	a.resize(80, 40)
+	a.keys("G", "v", "k")
+	a.resize(200, 40)
+	a.keys("y")
+	a.want("copied 1 line", "prowl docs")
+}
+
 // Links in the docs show as [label] and follow from prose, from a table, and
 // within a page. Of two links with the same label, each goes to its own
 // target: reviewing.md links [Slack] to slack.md#keys in a table first. A
