@@ -83,15 +83,15 @@ func run(args []string) error {
 	if runtime.GOOS == "windows" {
 		_ = os.Remove(core.OldBinary(core.Executable()))
 	}
-	cmd := ""
+	cmd, rest := "", []string(nil)
 	if len(args) > 0 {
-		cmd = args[0]
+		cmd, rest = args[0], args[1:]
 	}
 	switch {
 	case cmd == "-h" || cmd == "--help" || cmd == "help":
 		fmt.Print(usage)
 		return nil
-	case slices.Contains(args[1:], "-h") || slices.Contains(args[1:], "--help"):
+	case slices.Contains(rest, "-h") || slices.Contains(rest, "--help"):
 		return commandHelp(cmd)
 	case cmd == "docs":
 		return showDocs(args[1:])
