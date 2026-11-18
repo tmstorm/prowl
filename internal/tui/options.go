@@ -113,7 +113,7 @@ var options = []option{
 		}},
 	mapOpt("Inbox", "Commit type colors", "type_colors", "# commit type = color: red, green, orange, pink, yellow, purple, cyan, dim or \"#rrggbb\"\n# wip = \"orange\"\n",
 		func(c *config.Config) *map[string]string { return &c.TypeColors }),
-	durationOpt("Inbox", "Overdue after", "stale_after", "A PR waiting on you longer than this turns yellow, and red at twice that.", func(c *config.Config) *config.Duration { return &c.StaleAfter }),
+	durationOpt("Inbox", "Due after", "stale_after", "A PR waiting on you longer than this is due and turns yellow; at twice that it's overdue and turns red.", func(c *config.Config) *config.Duration { return &c.StaleAfter }),
 	{section: "Inbox", title: "Background notifications", label: "prowl service", kind: optBool,
 		help:  "Runs prowl watch at login, so you hear about PRs while prowl is closed: a systemd user service, launchd agent or Windows startup entry.",
 		state: func(m *Model) bool { return m.core.Service() },
