@@ -1941,7 +1941,7 @@ func (d *detail) reviewStatus(m *Model) string {
 		case "running":
 			p := spinner(m) + " " + sYellow.Render(name) + sDim.Render(" "+time.Since(r.StartedAt).Round(time.Second).String())
 			if running == 1 {
-				p += sDim.Render(" · " + trunc(m.core.Progress(r, time.Now()), max(d.w-50, 10)))
+				p += sDim.Render(" · " + trunc(Progress(r, time.Now(), m.cfg.Playful), max(d.w-50, 10)))
 			}
 			parts = append(parts, p)
 		case "failed":

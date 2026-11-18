@@ -659,7 +659,7 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 	stop := showProgress(co, start, func(now time.Time) string {
 		runs, _ := st.Runs(key)
 		if i := slices.IndexFunc(runs, func(r *store.Run) bool { return r.Status == "running" }); i >= 0 {
-			return co.Progress(runs[i], now)
+			return tui.Progress(runs[i], now, cfg.Playful)
 		}
 		return ""
 	})
