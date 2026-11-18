@@ -526,12 +526,12 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 				hist.lastOid, hist.lastAt, hist.byAgent = lastRun(runs, store.Reviewer(j.Agent, j.Profile), id)
 			}
 			if hist.lastOid != "" {
-				_ = run(wt, "git", "fetch", "--quiet", "origin", hist.lastOid)
-				if run(wt, "git", "cat-file", "-e", hist.lastOid+"^{commit}") != nil {
+				_ = git(wt, "fetch", "--quiet", "origin", hist.lastOid)
+				if git(wt, "cat-file", "-e", hist.lastOid+"^{commit}") != nil {
 					hist.lastOidMissing = true
 				}
 			}
-			out, _ := exec.Command("git", "-C", wt, "diff", "--name-only", "origin/"+j.Base+"...HEAD").Output()
+			out, _ := gitOutput(wt, "diff", "--name-only", "origin/"+j.Base+"...HEAD")
 			changed = strings.Fields(string(out))
 		}
 		_ = st.SetRunActivity(id, "finding repo guidelines")
@@ -823,7 +823,7 @@ func prepareWorktree(cfg config.Config, j Job) (string, error) {
 	}
 	ref := fmt.Sprintf("refs/prowl/pr-%d-%s", j.Number, strings.ReplaceAll(store.Reviewer(j.Agent, j.Profile), ":", "-"))
 	fetch := func() error {
-		return run(clone, "git", "fetch", "--quiet", "origin",
+		return git(clone, "fetch", "--quiet", "origin",
 			fmt.Sprintf("+pull/%d/head:%s", j.Number, ref),
 			fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", j.Base, j.Base))
 	}
@@ -837,14 +837,14 @@ func prepareWorktree(cfg config.Config, j Job) (string, error) {
 	}
 	wt := WorktreePath(j.Repo, j.Number, store.Reviewer(j.Agent, j.Profile))
 	if _, err := os.Stat(wt); err == nil {
-		if err := run(wt, "git", "checkout", "--quiet", "--detach", "--force", ref); err == nil {
+		if err := git(wt, "checkout", "--quiet", "--detach", "--force", ref); err == nil {
 			return wt, nil
 		}
-		_ = run(clone, "git", "worktree", "remove", "--force", wt)
+		_ = git(clone, "worktree", "remove", "--force", wt)
 		_ = os.RemoveAll(wt)
 	}
-	_ = run(clone, "git", "worktree", "prune")
-	if err := run(clone, "git", "worktree", "add", "--quiet", "--detach", wt, ref); err != nil {
+	_ = git(clone, "worktree", "prune")
+	if err := git(clone, "worktree", "add", "--quiet", "--detach", wt, ref); err != nil {
 		return "", fmt.Errorf("prepare worktree: %w", err)
 	}
 	return wt, nil
@@ -865,7 +865,7 @@ func clonePath(cfg config.Config, repo string) string {
 }
 
 func originRepo(dir string) string {
-	out, _ := exec.Command("git", "-C", dir, "config", "--get", "remote.origin.url").Output()
+	out, _ := gitOutput(dir, "config", "--get", "remote.origin.url")
 	return gh.RemoteRepo(string(out))
 }
 
@@ -882,9 +882,11 @@ func cloneRepo(repo, dir string) error {
 	defer os.RemoveAll(tmp)
 	var err error
 	if _, lerr := exec.LookPath("gh"); lerr == nil {
-		err = run("", "gh", "repo", "clone", repo, tmp, "--", "--filter=blob:none")
+		if out, cerr := exec.Command("gh", "repo", "clone", repo, tmp, "--", "--filter=blob:none").CombinedOutput(); cerr != nil {
+			err = fmt.Errorf("gh repo clone %s: %w: %s", repo, cerr, strings.TrimSpace(string(out)))
+		}
 	} else {
-		err = run("", "git", "clone", "--filter=blob:none", "https://github.com/"+repo+".git", tmp)
+		err = git("", "clone", "--filter=blob:none", "https://github.com/"+repo+".git", tmp)
 	}
 	if err != nil {
 		return err
@@ -905,7 +907,7 @@ func RemoveReview(cfg config.Config, repo string, number int) {
 	clone := clonePath(cfg, repo)
 	for _, ref := range prowlRefs(clone) {
 		if refPR(ref) == number {
-			_ = run(clone, "git", "update-ref", "-d", ref)
+			_ = git(clone, "update-ref", "-d", ref)
 		}
 	}
 }
@@ -936,10 +938,10 @@ func PruneOrphans(cfg config.Config, reviewed func(repo string, number int) bool
 		}
 		for _, ref := range prowlRefs(dir) {
 			if !reviewed(repo, refPR(ref)) {
-				_ = run(dir, "git", "update-ref", "-d", ref)
+				_ = git(dir, "update-ref", "-d", ref)
 			}
 		}
-		_ = run(dir, "git", "worktree", "prune")
+		_ = git(dir, "worktree", "prune")
 	}
 	pruneRunContainers()
 }
@@ -950,7 +952,7 @@ func removeWorktrees(repo string, number int) {
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		wt := filepath.Join(dir, e.Name())
-		_ = run(wt, "git", "worktree", "remove", "--force", wt)
+		_ = git(wt, "worktree", "remove", "--force", wt)
 	}
 	_ = os.RemoveAll(dir)
 }
@@ -990,13 +992,13 @@ func checkoutDirs(roots []string) []string {
 func CleanCheckout(dir string) error {
 	wts, refs := prowlState(dir)
 	for _, wt := range wts {
-		_ = run(dir, "git", "worktree", "remove", "--force", wt)
+		_ = git(dir, "worktree", "remove", "--force", wt)
 	}
-	if err := run(dir, "git", "worktree", "prune"); err != nil {
+	if err := git(dir, "worktree", "prune"); err != nil {
 		return err
 	}
 	for _, ref := range refs {
-		if err := run(dir, "git", "update-ref", "-d", ref); err != nil {
+		if err := git(dir, "update-ref", "-d", ref); err != nil {
 			return err
 		}
 	}
@@ -1010,7 +1012,7 @@ func prowlState(dir string) (worktrees, refs []string) {
 	if real, err := filepath.EvalSymlinks(root); err == nil {
 		root = real
 	}
-	out, _ := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").Output()
+	out, _ := gitOutput(dir, "worktree", "list", "--porcelain")
 	for l := range strings.Lines(string(out)) {
 		if p, ok := strings.CutPrefix(strings.TrimSpace(l), "worktree "); ok && strings.HasPrefix(p, root+string(filepath.Separator)) {
 			worktrees = append(worktrees, p)
@@ -1021,7 +1023,7 @@ func prowlState(dir string) (worktrees, refs []string) {
 
 // prowlRefs are the refs/prowl/* refs reviews fetched into a checkout.
 func prowlRefs(dir string) []string {
-	out, _ := exec.Command("git", "-C", dir, "for-each-ref", "--format=%(refname)", "refs/prowl/").Output()
+	out, _ := gitOutput(dir, "for-each-ref", "--format=%(refname)", "refs/prowl/")
 	return strings.Fields(string(out))
 }
 
@@ -1034,14 +1036,19 @@ func refPR(ref string) int {
 	return n
 }
 
-func run(dir string, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+// git runs git in dir, with what it printed in the error when it fails.
+func git(dir string, args ...string) error {
+	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// gitOutput is what git prints in dir.
+func gitOutput(dir string, args ...string) ([]byte, error) {
+	return exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
 }
 
 // ReadJob reads the job a detached `prowl agent-run` was started with, and
