@@ -520,7 +520,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 			changed = localChanges(wt, hist.base)
 		} else {
 			_ = st.SetRunActivity(id, "reading review history")
-			hist = loadHistory(c, j)
+			hist = loadHistory(c, j, cfg.BotSet())
 			waiting = hist.waiting
 			if hist.lastOid == "" && hist.reader != "" && hist.reader == j.Author {
 				hist.lastOid, hist.lastAt, hist.byAgent = lastRun(runs, store.Reviewer(j.Agent, j.Profile), id)
@@ -571,7 +571,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 		}
 		keepState(res.Findings, prev.Findings)
 		if waiting == nil && j.Dir == "" {
-			waiting = loadHistory(c, j).waiting
+			waiting = loadHistory(c, j, cfg.BotSet()).waiting
 		}
 		return finish(st, be, id, key, sid, res, prev.Guidance, 0, cfg.Agent.Severities(), threadReplies(res, waiting, prev.Replies))
 	}

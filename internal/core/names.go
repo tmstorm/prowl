@@ -51,7 +51,7 @@ func (co *Core) ProposeNames() ([]NameMatch, []slack.User, error) {
 		}
 		people = append(people, members...)
 	}
-	botLogins := bots(cfg)
+	botLogins := cfg.BotSet()
 	for _, it := range items {
 		a := it.PR.AuthorLogin()
 		if a != "" && !it.PR.Author.IsBot(botLogins) && !slices.ContainsFunc(people, func(p gh.Person) bool { return p.Login == a }) {

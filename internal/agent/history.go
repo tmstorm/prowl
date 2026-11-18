@@ -48,7 +48,7 @@ func login(a *gh.Actor) string {
 
 func day(t time.Time) string { return t.Format("2006-01-02 15:04") }
 
-func loadHistory(c *gh.Client, j Job) history {
+func loadHistory(c *gh.Client, j Job, bots map[string]bool) history {
 	h := history{reader: j.Viewer}
 	if c == nil {
 		h.text = "(review history unavailable: not logged in to GitHub)\n"
@@ -67,17 +67,17 @@ func loadHistory(c *gh.Client, j Job) history {
 
 	latestBot := map[string]time.Time{}
 	for _, r := range det.Reviews {
-		if r.Author.IsBot(nil) && r.SubmittedAt.After(latestBot[login(r.Author)]) {
+		if r.Author.IsBot(bots) && r.SubmittedAt.After(latestBot[login(r.Author)]) {
 			latestBot[login(r.Author)] = r.SubmittedAt
 		}
 	}
 	for _, cm := range det.Comments {
-		if cm.Author.IsBot(nil) && cm.CreatedAt.After(latestBot[login(cm.Author)]) {
+		if cm.Author.IsBot(bots) && cm.CreatedAt.After(latestBot[login(cm.Author)]) {
 			latestBot[login(cm.Author)] = cm.CreatedAt
 		}
 	}
 	superseded := func(a *gh.Actor, at time.Time) bool {
-		return a.IsBot(nil) && at.Before(latestBot[login(a)])
+		return a.IsBot(bots) && at.Before(latestBot[login(a)])
 	}
 	if len(det.Reviews) > 0 {
 		b.WriteString("### Reviews (oldest first)\n\n")
@@ -149,7 +149,7 @@ func loadHistory(c *gh.Client, j Job) history {
 			continue
 		}
 		last := cms[len(cms)-1]
-		if login(last.Author) == h.reader || last.Author.IsBot(nil) {
+		if login(last.Author) == h.reader || last.Author.IsBot(bots) {
 			continue
 		}
 		line := t.Line

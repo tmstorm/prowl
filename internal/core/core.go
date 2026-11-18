@@ -289,7 +289,7 @@ func (co *Core) classify(in *gh.Inbox) []inbox.Item {
 	co.mu.Lock()
 	cfg := co.cfg
 	co.mu.Unlock()
-	in.Bots, in.RecheckAfterPush = bots(cfg), cfg.RecheckAfterPush
+	in.Bots, in.RecheckAfterPush = cfg.BotSet(), cfg.RecheckAfterPush
 	return inbox.Classify(in)
 }
 
@@ -309,7 +309,7 @@ func (co *Core) withOpened(items []inbox.Item, prs []gh.PR, viewer string) []inb
 	if len(add) == 0 {
 		return items
 	}
-	extra := &gh.Inbox{Viewer: viewer, PRs: add, Bots: bots(co.cfg), RecheckAfterPush: co.cfg.RecheckAfterPush, Shared: co.shared, Reactions: co.reactions, SlackLinks: co.slackLinks}
+	extra := &gh.Inbox{Viewer: viewer, PRs: add, Bots: co.cfg.BotSet(), RecheckAfterPush: co.cfg.RecheckAfterPush, Shared: co.shared, Reactions: co.reactions, SlackLinks: co.slackLinks}
 	return append(items, inbox.Classify(extra)...)
 }
 
@@ -418,14 +418,6 @@ func (co *Core) PruneOrphans() {
 	})
 }
 
-func bots(cfg config.Config) map[string]bool {
-	out := map[string]bool{}
-	for _, b := range cfg.Bots {
-		out[b] = true
-	}
-	return out
-}
-
 // RefreshPR re-fetches one PR after you acted on it, so its section updates
 // in about a second rather than at the next sync, which also lags behind
 // GitHub by a few seconds. A merged or closed PR leaves the inbox.
@@ -460,7 +452,7 @@ func (co *Core) reclassify(pr gh.PR) inbox.Item {
 	for _, r := range co.cfg.WatchRepos {
 		watched[r] = true
 	}
-	return inbox.Classify(&gh.Inbox{Viewer: co.inbox.Viewer, Teams: co.inbox.Teams, Watched: watched, Bots: bots(co.cfg),
+	return inbox.Classify(&gh.Inbox{Viewer: co.inbox.Viewer, Teams: co.inbox.Teams, Watched: watched, Bots: co.cfg.BotSet(),
 		RecheckAfterPush: co.cfg.RecheckAfterPush, PRs: []gh.PR{pr}, Shared: co.shared, Reactions: co.reactions, SlackLinks: co.slackLinks})[0]
 }
 
