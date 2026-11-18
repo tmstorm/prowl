@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"os/exec"
 	"strings"
@@ -76,7 +77,7 @@ func (b commandBackend) Auth() Auth {
 	if strings.TrimSpace(b.status) == "" {
 		return Auth{}
 	}
-	cmd := shell(b.status)
+	cmd := shell(context.Background(), b.status)
 	cmd.Env = CleanEnv()
 	out, err := cmd.Output()
 	a := Auth{Known: true, LoggedIn: err == nil}
@@ -99,7 +100,7 @@ func (b commandBackend) Login() *exec.Cmd {
 	if strings.TrimSpace(b.login) == "" {
 		return nil
 	}
-	cmd := shell(b.login)
+	cmd := shell(context.Background(), b.login)
 	cmd.Env = CleanEnv()
 	return cmd
 }

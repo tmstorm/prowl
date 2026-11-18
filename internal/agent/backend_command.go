@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,11 +36,11 @@ func (b commandBackend) Check() error {
 	return nil
 }
 
-func shell(command string) *exec.Cmd {
+func shell(ctx context.Context, command string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
-		return exec.Command("cmd", "/C", command)
+		return exec.CommandContext(ctx, "cmd", "/C", command)
 	}
-	return exec.Command("sh", "-c", command)
+	return exec.CommandContext(ctx, "sh", "-c", command)
 }
 
 func (b commandBackend) Review(t Turn) (*result, string, error) {
@@ -57,7 +58,7 @@ func (b commandBackend) Review(t Turn) (*result, string, error) {
 	}
 	t.setModel(t.Model)
 	t.activity("running " + oneLine(b.command, 40))
-	cmd := shell(b.command)
+	cmd := shell(context.Background(), b.command)
 	cmd.Dir = t.Dir
 	cmd.Env = append(CleanEnv(), "PROWL_SCHEMA="+schemaPath, "PROWL_MODEL="+t.Model)
 	cmd.Stdin = strings.NewReader(t.Prompt + "\n\nReply with only JSON matching this schema, no other text:\n" + t.Schema + "\n")
