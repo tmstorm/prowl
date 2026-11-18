@@ -218,7 +218,7 @@ func (co *Core) submit(ctx context.Context, key string, d Draft) (Submitted, err
 	pr := it.PR
 	if d.Event == EventNote {
 		if err := co.gh.Comment(ctx, pr.ID, d.Body); err != nil {
-			return out, fmt.Errorf("comment on %s: %w", key, err)
+			return out, fmt.Errorf("%s: %w", key, err)
 		}
 		out.Review = true
 		return out, nil
@@ -238,7 +238,7 @@ func (co *Core) submit(ctx context.Context, key string, d Draft) (Submitted, err
 	for _, g := range earlier {
 		u, err := co.gh.SubmitReview(ctx, pr.Repository.NameWithOwner, pr.Number, g.commit, string(EventComment), "", ghComments(g.comments))
 		if err != nil {
-			return out, fmt.Errorf("submit %s: comments on %s: %w", key, gh.Short(g.commit), err)
+			return out, fmt.Errorf("comments on %s: %w", gh.Short(g.commit), err)
 		}
 		out.URL = u
 		co.dropPending(key, g.comments)
@@ -250,13 +250,13 @@ func (co *Core) submit(ctx context.Context, key string, d Draft) (Submitted, err
 	case then != "" && len(main.comments) == 0 && len(earlier) == 0:
 		if strings.TrimSpace(d.Body) != "" {
 			if err := co.gh.Comment(ctx, pr.ID, d.Body); err != nil {
-				return out, fmt.Errorf("comment on %s: %w", key, err)
+				return out, fmt.Errorf("%s: %w", key, err)
 			}
 		}
 	case event != EventComment || strings.TrimSpace(d.Body) != "" || len(main.comments) > 0:
 		u, err := co.gh.SubmitReview(ctx, pr.Repository.NameWithOwner, pr.Number, main.commit, string(event), d.Body, ghComments(main.comments))
 		if err != nil {
-			return out, fmt.Errorf("submit %s: %w", key, err)
+			return out, err
 		}
 		out.URL = u
 		co.reviewed(key, event, main.commit)
@@ -306,11 +306,11 @@ func (co *Core) submit(ctx context.Context, key string, d Draft) (Submitted, err
 	switch then {
 	case EventClose:
 		if err := co.gh.ClosePR(ctx, pr.ID); err != nil {
-			failed = append(failed, fmt.Errorf("close: %w", err))
+			failed = append(failed, err)
 		}
 	case EventDraft:
 		if err := co.gh.SetDraft(ctx, pr.ID, true); err != nil {
-			failed = append(failed, fmt.Errorf("convert to draft: %w", err))
+			failed = append(failed, err)
 		}
 	}
 	if err := errors.Join(failed...); err != nil {
@@ -446,10 +446,7 @@ func (co *Core) sendReply(ctx context.Context, runID int64, threadID, body strin
 	if _, _, err := co.draftedReply(runID, threadID); err != nil {
 		return err
 	}
-	if err := co.gh.ReplyToThread(ctx, threadID, body); err != nil {
-		return fmt.Errorf("reply: %w", err)
-	}
-	return nil
+	return co.gh.ReplyToThread(ctx, threadID, body)
 }
 
 // markReplied records that a drafted reply went out as body. Submit sends

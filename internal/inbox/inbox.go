@@ -179,7 +179,7 @@ func watched(pr gh.PR, bots map[string]bool) (Bucket, time.Time, Why, string) {
 		}
 	}
 	for _, r := range pr.Reviews.Nodes {
-		if a := login(r.Author); a != "" && a != login(pr.Author) && !r.Author.IsBot(bots) && !slices.Contains(who, a) {
+		if a := r.Author.Name(); a != pr.Author.Name() && !r.Author.IsBot(bots) && !slices.Contains(who, a) {
 			who = append(who, a)
 		}
 	}
@@ -209,13 +209,6 @@ func (l latest) String() string {
 	return l.who + " " + l.what
 }
 
-func login(a *gh.Actor) string {
-	if a == nil {
-		return ""
-	}
-	return a.Login
-}
-
 // classify puts a PR in one bucket from the viewer's history with it.
 // myLastDecisive is their latest approve or request-changes; myVerdict also
 // counts DISMISSED, which is what those turn into when GitHub or a bot
@@ -235,7 +228,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 	var myLast, myLastDecisive, myVerdict *gh.Review
 	for i := range pr.Reviews.Nodes {
 		r := &pr.Reviews.Nodes[i]
-		if login(r.Author) != me || r.State == "PENDING" {
+		if r.Author.Name() != me || r.State == "PENDING" {
 			continue
 		}
 		if myLast == nil || r.SubmittedAt.After(myLast.SubmittedAt) {
@@ -264,10 +257,10 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 	var others, threads latest
 	for _, c := range pr.Comments.Nodes {
 		switch {
-		case login(c.Author) == me:
+		case c.Author.Name() == me:
 			myLastActivity = maxT(myLastActivity, c.CreatedAt)
 		case !c.Author.IsBot(bots):
-			others.see(c.CreatedAt, login(c.Author), "commented")
+			others.see(c.CreatedAt, c.Author.Name(), "commented")
 		}
 	}
 	for _, t := range pr.ReviewThreads.Nodes {
@@ -279,11 +272,11 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 		var reply latest
 		for _, c := range t.Comments.Nodes {
 			switch {
-			case login(c.Author) == me:
+			case c.Author.Name() == me:
 				mine = true
 				myLastActivity = maxT(myLastActivity, c.CreatedAt)
 			case !c.Author.IsBot(bots):
-				reply.see(c.CreatedAt, login(c.Author), "replied in your thread")
+				reply.see(c.CreatedAt, c.Author.Name(), "replied in your thread")
 			}
 		}
 		if mine {
@@ -292,7 +285,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 	}
 	reviewers := others
 	for _, r := range pr.Reviews.Nodes {
-		if a := login(r.Author); a != me && a != "" && !r.Author.IsBot(bots) {
+		if a := r.Author.Name(); a != me && !r.Author.IsBot(bots) {
 			reviewers.see(r.SubmittedAt, a, "reviewed")
 		}
 	}
@@ -336,7 +329,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 
 	asked := false
 	for _, r := range pr.Reviews.Nodes {
-		if login(r.Author) == me && r.State == "COMMENTED" && strings.TrimSpace(r.Body) != "" {
+		if r.Author.Name() == me && r.State == "COMMENTED" && strings.TrimSpace(r.Body) != "" {
 			asked = true
 		}
 	}
@@ -353,7 +346,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 		myVerdict.State == "DISMISSED" && myVerdict.PreviousState != "CHANGES_REQUESTED")
 
 	switch {
-	case login(pr.Author) == me:
+	case pr.Author.Name() == me:
 		it.Bucket = Mine
 		it.Since = maxT(reviewers.at, pr.CreatedAt)
 		it.Why, it.Reason = mineReason(pr, reviewers.at, myLastActivity)
@@ -373,7 +366,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 		it.Since = orT(requestedAt, lastPush)
 		it.Why, it.Reason = ReRequested, "re-requested"+commitsNote(commitsAfterReview)
 
-	case login(pr.Author) != me && !pr.IsDraft && myVerdict != nil && myVerdict.State == "DISMISSED":
+	case pr.Author.Name() != me && !pr.IsDraft && myVerdict != nil && myVerdict.State == "DISMISSED":
 		it.Bucket = ReApprove
 		it.Since = maxT(lastPush, myVerdict.SubmittedAt)
 		it.Why, it.Reason = ReviewDismissed, "your review was dismissed"+commitsNote(commitsAfterReview)

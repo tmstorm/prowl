@@ -1,11 +1,13 @@
 package gh
 
 import (
+	"cmp"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tmstorm/prowl/internal/store"
 )
 
 type Actor struct {
@@ -20,6 +22,14 @@ func (a *Actor) IsBot(bots map[string]bool) bool {
 		return true
 	}
 	return a.Typename == "Bot" || strings.HasSuffix(a.Login, "[bot]") || bots[a.Login]
+}
+
+// Name is the login, or "ghost" for a deleted account, as GitHub shows it.
+func (a *Actor) Name() string {
+	if a == nil {
+		return "ghost"
+	}
+	return a.Login
 }
 
 type Review struct {
@@ -66,9 +76,12 @@ type Thread struct {
 	} `json:"opener"`
 }
 
+// LineShown is the thread's line, or where it was once it left the diff.
+func (t Thread) LineShown() int { return cmp.Or(t.Line, t.OriginalLine) }
+
 // OpenedBy is true when login started the thread.
 func (t Thread) OpenedBy(login string) bool {
-	return len(t.Opener.Nodes) > 0 && t.Opener.Nodes[0].Author != nil && t.Opener.Nodes[0].Author.Login == login
+	return len(t.Opener.Nodes) > 0 && t.Opener.Nodes[0].Author.Name() == login
 }
 
 type ReviewRequest struct {
@@ -159,13 +172,6 @@ type PR struct {
 	} `json:"timelineItems"`
 }
 
-func (p *PR) AuthorLogin() string {
-	if p.Author == nil {
-		return "ghost"
-	}
-	return p.Author.Login
-}
-
 func (p *PR) CIState() string {
 	if len(p.Commits.Nodes) == 0 || p.Commits.Nodes[0].Commit.StatusCheckRollup == nil {
 		return ""
@@ -177,14 +183,13 @@ func (p *PR) NeedsRebase() bool {
 	return p.Mergeable == "CONFLICTING" || p.MergeStateStatus == "DIRTY" || p.MergeStateStatus == "BEHIND"
 }
 
-// Key uniquely identifies a PR across repos.
 // Key names the PR: owner/name#number. A PR with no number is a local
 // branch reviewed before it has a pull request: local:owner/name@branch.
 func (p *PR) Key() string {
-	if p.Number == 0 && p.HeadRefName != "" {
-		return "local:" + p.Repository.NameWithOwner + "@" + p.HeadRefName
+	if p.Local() {
+		return store.LocalKey(p.Repository.NameWithOwner, p.HeadRefName)
 	}
-	return p.Repository.NameWithOwner + "#" + strconv.Itoa(p.Number)
+	return store.PRKey(p.Repository.NameWithOwner, p.Number)
 }
 
 // Local reports whether this is a local branch, not a pull request.

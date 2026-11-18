@@ -226,10 +226,7 @@ type Actor struct {
 }
 
 func actorOf(a *gh.Actor, bots map[string]bool) Actor {
-	if a == nil {
-		return Actor{Login: "ghost", Bot: true}
-	}
-	return Actor{Login: a.Login, Bot: a.IsBot(bots)}
+	return Actor{Login: a.Name(), Bot: a.IsBot(bots)}
 }
 
 func prReviewOf(r gh.Review, bots map[string]bool) PRReview {
@@ -248,7 +245,7 @@ func prsOf(items []inbox.Item, bots map[string]bool) []PR {
 func prOf(it inbox.Item, bots map[string]bool) PR {
 	pr := it.PR
 	p := PR{Key: pr.Key(), Repo: pr.Repository.NameWithOwner, RepoName: pr.Repository.Name, Number: pr.Number,
-		Title: pr.Title, Body: pr.Body, URL: pr.URL, Author: pr.AuthorLogin(), Branch: pr.HeadRefName,
+		Title: pr.Title, Body: pr.Body, URL: pr.URL, Author: pr.Author.Name(), Branch: pr.HeadRefName,
 		Base: pr.BaseRefName, HeadOid: pr.HeadRefOid, Draft: pr.IsDraft, ReviewDecision: pr.ReviewDecision,
 		Mergeable: pr.Mergeable, CI: pr.CIState(), Additions: pr.Additions, Deletions: pr.Deletions,
 		ChangedFiles: pr.ChangedFiles, CreatedAt: pr.CreatedAt, UpdatedAt: pr.UpdatedAt,
@@ -593,7 +590,7 @@ func (co *Core) PruneClosed(ctx context.Context) {
 func (co *Core) PruneOrphans() {
 	agent.PruneOrphans(co.Config(), func(repo string, n int) bool {
 		keys, err := co.st.ReviewedPRs()
-		want := fmt.Sprintf("%s#%d", repo, n)
+		want := store.PRKey(repo, n)
 		return err != nil || slices.ContainsFunc(keys, func(k string) bool { return strings.EqualFold(k, want) })
 	})
 }
@@ -794,10 +791,7 @@ func (co *Core) RequestReviews(ctx context.Context, key string, names []string) 
 	if len(logins)+len(teams) == 0 {
 		return fmt.Errorf("request reviews on %s: name someone", key)
 	}
-	if err := co.gh.RequestReviewers(ctx, repo, n, logins, teams); err != nil {
-		return fmt.Errorf("request reviews on %s: %w", key, err)
-	}
-	return nil
+	return co.gh.RequestReviewers(ctx, repo, n, logins, teams)
 }
 
 // Candidate is someone who can be asked to review: a login, or org/team for
@@ -865,10 +859,7 @@ func (co *Core) Claim(ctx context.Context, key string) error {
 	co.mu.Lock()
 	me := co.inbox.Viewer
 	co.mu.Unlock()
-	if err := co.gh.RequestReviewers(ctx, repo, n, []string{me}, nil); err != nil {
-		return fmt.Errorf("claim %s: %w", key, err)
-	}
-	return nil
+	return co.gh.RequestReviewers(ctx, repo, n, []string{me}, nil)
 }
 
 // parseKey splits a PR key (owner/name#number).
@@ -909,10 +900,7 @@ func (co *Core) Diff(ctx context.Context, key string, sinceReview bool) (string,
 	} else {
 		diff, err = co.gh.PRDiff(ctx, pr.Repository.NameWithOwner, pr.Number)
 	}
-	if err != nil {
-		return "", fmt.Errorf("diff %s: %w", key, err)
-	}
-	return diff, nil
+	return diff, err
 }
 
 // checkLogLines is how much of a failed job's log CheckLog returns.
@@ -936,26 +924,17 @@ func (co *Core) SetFileViewed(ctx context.Context, key, path string, viewed bool
 	if !ok {
 		return fmt.Errorf("mark %s viewed: %s is not in the inbox", path, key)
 	}
-	if err := co.gh.SetFileViewed(ctx, it.PR.ID, path, viewed); err != nil {
-		return fmt.Errorf("mark %s viewed: %w", path, err)
-	}
-	return nil
+	return co.gh.SetFileViewed(ctx, it.PR.ID, path, viewed)
 }
 
 // Reply answers a review thread.
 func (co *Core) Reply(ctx context.Context, threadID, body string) error {
-	if err := co.gh.ReplyToThread(ctx, threadID, body); err != nil {
-		return fmt.Errorf("reply: %w", err)
-	}
-	return nil
+	return co.gh.ReplyToThread(ctx, threadID, body)
 }
 
 // Resolve resolves a review thread, or reopens it.
 func (co *Core) Resolve(ctx context.Context, threadID string, resolved bool) error {
-	if err := co.gh.ResolveThread(ctx, threadID, resolved); err != nil {
-		return fmt.Errorf("resolve thread: %w", err)
-	}
-	return nil
+	return co.gh.ResolveThread(ctx, threadID, resolved)
 }
 
 // OrgRepos lists every repo (owner/name) in your orgs, e.g. to pick one to

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"time"
@@ -38,6 +39,9 @@ type Thread struct {
 	DiffSide           string // RIGHT (new) or LEFT (old)
 	Comments           []Comment
 }
+
+// LineShown is the thread's line, or where it was once it left the diff.
+func (t Thread) LineShown() int { return cmp.Or(t.Line, t.OriginalLine) }
 
 type File struct {
 	Path                 string

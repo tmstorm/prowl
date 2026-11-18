@@ -97,6 +97,16 @@ func Title(name string) string {
 	return "Agent"
 }
 
+// ReviewerTitle names a reviewer (agent or agent:profile) for people:
+// "Codex", "Codex · adversarial".
+func ReviewerTitle(reviewer string) string {
+	name, profile, _ := strings.Cut(reviewer, ":")
+	if profile == "" {
+		return Title(name)
+	}
+	return Title(name) + " · " + profile
+}
+
 // stream runs bin with args in t's checkout, t's prompt on stdin, and hands
 // each line it prints to each, as the agents print one JSON event a line.
 // It returns why bin failed to start or exited badly.

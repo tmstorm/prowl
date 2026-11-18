@@ -575,7 +575,7 @@ func resolvePR(target string) (key, head string, err error) {
 	if len(parts) < 2 {
 		return "", "", fmt.Errorf("unexpected PR URL %s", pr.URL)
 	}
-	return fmt.Sprintf("%s/%s#%d", parts[0], parts[1], pr.Number), pr.HeadRefOid, nil
+	return store.PRKey(parts[0]+"/"+parts[1], pr.Number), pr.HeadRefOid, nil
 }
 
 func isTerminal() bool {

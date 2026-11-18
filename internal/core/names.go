@@ -52,7 +52,7 @@ func (co *Core) ProposeNames(ctx context.Context) ([]NameMatch, []SlackUser, err
 	}
 	botLogins := cfg.BotSet()
 	for _, it := range items {
-		a := it.PR.AuthorLogin()
+		a := it.PR.Author.Name()
 		if a != "" && !it.PR.Author.IsBot(botLogins) && !slices.ContainsFunc(people, func(p gh.Person) bool { return p.Login == a }) {
 			people = append(people, gh.Person{Login: a})
 		}
@@ -66,7 +66,7 @@ func (co *Core) ProposeNames(ctx context.Context) ([]NameMatch, []SlackUser, err
 	}
 	authors := map[string]string{}
 	for _, it := range items {
-		authors[it.PR.Key()] = it.PR.AuthorLogin()
+		authors[it.PR.Key()] = it.PR.Author.Name()
 	}
 	posted := map[string]map[string]int{}
 	for _, s := range shares {
@@ -237,7 +237,7 @@ func (co *Core) SlackLine(key string, event ReviewEvent, post bool) string {
 	if state := reviewStates[event]; state != "" {
 		it.MyLastReview = &gh.Review{State: state}
 	}
-	login := it.PR.AuthorLogin()
+	login := it.PR.Author.Name()
 	co.mu.Lock()
 	name := co.cfg.SlackNames[login]
 	shown := slackName(co.slackUsers, name)
@@ -263,7 +263,7 @@ func (co *Core) DMAuthor(ctx context.Context, key string) error {
 	co.mu.Lock()
 	sl, err := co.slackFor()
 	it, _ := co.item(key)
-	id := co.cfg.SlackNames[it.PR.AuthorLogin()]
+	id := co.cfg.SlackNames[it.PR.Author.Name()]
 	co.mu.Unlock()
 	if err != nil {
 		return err
@@ -272,7 +272,7 @@ func (co *Core) DMAuthor(ctx context.Context, key string) error {
 		return ErrNoSlackUser
 	}
 	if err := sl.DM(ctx, id, co.SlackLine(key, "", true)); err != nil {
-		return fmt.Errorf("DM %s: %w", it.PR.AuthorLogin(), err)
+		return fmt.Errorf("DM %s: %w", it.PR.Author.Name(), err)
 	}
 	return nil
 }

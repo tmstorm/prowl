@@ -159,11 +159,7 @@ func (p *textPopup) view(m *Model) string {
 		title = "Ask " + core.ReviewerTitle(p.agent) + " to revise · " + p.item.Key
 		help = "ctrl+s send · ctrl+e edit in " + m.cfg.EditorCmd() + " · esc cancel"
 	case popReply:
-		line := p.thread.Line
-		if line == 0 {
-			line = p.thread.OriginalLine
-		}
-		title = fmt.Sprintf("Reply on %s:%d", p.thread.Path, line)
+		title = fmt.Sprintf("Reply on %s:%d", p.thread.Path, p.thread.LineShown())
 		if n := len(p.thread.Comments); n > 0 {
 			last := p.thread.Comments[n-1]
 			for _, l := range renderMarkdown(last.Body, w-6) {

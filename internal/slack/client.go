@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tmstorm/prowl/internal/store"
 	"github.com/zalando/go-keyring"
 )
 
@@ -458,7 +459,7 @@ type Share struct {
 }
 
 // Key is the PR as prowl names it, e.g. owner/name#12.
-func (s Share) Key() string { return fmt.Sprintf("%s#%d", s.Repo, s.Number) }
+func (s Share) Key() string { return store.PRKey(s.Repo, s.Number) }
 
 var prLink = regexp.MustCompile(`https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)`)
 

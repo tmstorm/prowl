@@ -424,7 +424,7 @@ func (co *Core) job(key, reviewer, refine string, sync bool) (agent.Job, error) 
 	pr := it.PR
 	job := agent.Job{
 		Repo: pr.Repository.NameWithOwner, Number: pr.Number, Title: pr.Title,
-		Author: pr.AuthorLogin(), Base: pr.BaseRefName, Head: pr.HeadRefOid,
+		Author: pr.Author.Name(), Base: pr.BaseRefName, Head: pr.HeadRefOid,
 		Body: pr.Body, Refine: refine, Viewer: viewer, Sync: sync, Agent: be.Name(), Profile: profile,
 	}
 	if pr.Local() {
@@ -583,10 +583,4 @@ func (co *Core) Chat(key, reviewer string) (Command, error) {
 }
 
 // ReviewerTitle names a reviewer for people: "Codex", "Codex · adversarial".
-func ReviewerTitle(reviewer string) string {
-	name, profile, _ := strings.Cut(reviewer, ":")
-	if profile == "" {
-		return agent.Title(name)
-	}
-	return agent.Title(name) + " · " + profile
-}
+var ReviewerTitle = agent.ReviewerTitle

@@ -66,10 +66,7 @@ func (d *detail) activities() []activity {
 			glyph: sBlue.Render(g["comment"]), action: sDim.Render("commented")})
 	}
 	for _, t := range d.det.Threads {
-		line := t.Line
-		if line == 0 {
-			line = t.OriginalLine
-		}
+		line := t.LineShown()
 		for i, c := range t.Comments {
 			verb := "replied on "
 			if i == 0 {

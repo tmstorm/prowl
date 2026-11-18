@@ -72,7 +72,7 @@ func (j Job) Key() string {
 	if j.Dir != "" {
 		return store.LocalKey(j.Repo, j.Branch)
 	}
-	return fmt.Sprintf("%s#%d", j.Repo, j.Number)
+	return store.PRKey(j.Repo, j.Number)
 }
 
 func logDir() string { return filepath.Join(config.DataDir(), "logs") }

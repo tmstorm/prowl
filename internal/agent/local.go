@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 	"time"
@@ -12,14 +13,20 @@ import (
 // localHistory is what a local review starts from: where the branch left
 // the default branch, and the commit this reviewer last reviewed, if any.
 func localHistory(dir string, j Job, runs []*store.Run, current int64) history {
-	h := history{base: j.Base}
-	if out, err := gitOutput(dir, "merge-base", "origin/"+j.Base, "HEAD"); err == nil {
-		h.base = strings.TrimSpace(string(out))
-	} else if out, err := gitOutput(dir, "merge-base", j.Base, "HEAD"); err == nil {
-		h.base = strings.TrimSpace(string(out))
-	}
+	h := history{base: cmp.Or(MergeBase(dir, j.Base), j.Base)}
 	h.lastOid, _, _ = lastRun(runs, store.Reviewer(j.Agent, j.Profile), current)
 	return h
+}
+
+// MergeBase is where the branch checked out in dir left base, preferring
+// the remote's copy of base, or "" when git can't tell.
+func MergeBase(dir, base string) string {
+	for _, b := range []string{"origin/" + base, base} {
+		if out, err := gitOutput(dir, "merge-base", b, "HEAD"); err == nil {
+			return strings.TrimSpace(string(out))
+		}
+	}
+	return ""
 }
 
 // lastRun is the commit and time of reviewer's latest finished run other

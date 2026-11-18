@@ -229,7 +229,7 @@ func (co *Core) reconcileReactions(ctx context.Context, sl *slack.Client) error 
 	var errs []error
 	for _, it := range items {
 		s, ok := shares[it.PR.Key()]
-		if !ok || it.PR.AuthorLogin() == viewer {
+		if !ok || it.PR.Author.Name() == viewer {
 			continue
 		}
 		if want := co.reaction(cfg, it, viewer, s.At); want != s.MyReaction {
@@ -247,7 +247,7 @@ func (co *Core) reconcileReactions(ctx context.Context, sl *slack.Client) error 
 func (co *Core) reaction(cfg config.Config, it inbox.Item, me string, since time.Time) string {
 	var last *gh.Review
 	for i, r := range it.PR.Reviews.Nodes {
-		if r.Author == nil || r.Author.Login != me || !r.SubmittedAt.After(since) || last != nil && !r.SubmittedAt.After(last.SubmittedAt) {
+		if r.Author.Name() != me || !r.SubmittedAt.After(since) || last != nil && !r.SubmittedAt.After(last.SubmittedAt) {
 			continue
 		}
 		if r.State == "APPROVED" || r.State == "CHANGES_REQUESTED" || r.State == "COMMENTED" && commented(it.PR, r, me) {
@@ -280,7 +280,7 @@ func commented(pr gh.PR, r gh.Review, me string) bool {
 			continue
 		}
 		for _, c := range t.Comments.Nodes {
-			if c.Author != nil && c.Author.Login == me && c.CreatedAt.Sub(r.SubmittedAt).Abs() < time.Minute {
+			if c.Author.Name() == me && c.CreatedAt.Sub(r.SubmittedAt).Abs() < time.Minute {
 				return true
 			}
 		}
@@ -392,7 +392,7 @@ func (co *Core) PostInThread(ctx context.Context, key, text string) (string, err
 func (co *Core) reactionsOnYours(ctx context.Context, sl *slack.Client, cfg config.Config, in *synced) (map[string]string, error) {
 	yours := map[string]string{}
 	for _, pr := range in.PRs {
-		if pr.AuthorLogin() == in.Viewer {
+		if pr.Author.Name() == in.Viewer {
 			yours[strings.ToLower(pr.Key())] = pr.Key()
 		}
 	}

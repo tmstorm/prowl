@@ -41,13 +41,6 @@ func clip(s string, n int) string {
 	return s
 }
 
-func login(a *gh.Actor) string {
-	if a == nil {
-		return "ghost"
-	}
-	return a.Login
-}
-
 func day(t time.Time) string { return t.Format("2006-01-02 15:04") }
 
 func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool) history {
@@ -69,17 +62,17 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 
 	latestBot := map[string]time.Time{}
 	for _, r := range det.Reviews {
-		if r.Author.IsBot(bots) && r.SubmittedAt.After(latestBot[login(r.Author)]) {
-			latestBot[login(r.Author)] = r.SubmittedAt
+		if r.Author.IsBot(bots) && r.SubmittedAt.After(latestBot[r.Author.Name()]) {
+			latestBot[r.Author.Name()] = r.SubmittedAt
 		}
 	}
 	for _, cm := range det.Comments {
-		if cm.Author.IsBot(bots) && cm.CreatedAt.After(latestBot[login(cm.Author)]) {
-			latestBot[login(cm.Author)] = cm.CreatedAt
+		if cm.Author.IsBot(bots) && cm.CreatedAt.After(latestBot[cm.Author.Name()]) {
+			latestBot[cm.Author.Name()] = cm.CreatedAt
 		}
 	}
 	superseded := func(a *gh.Actor, at time.Time) bool {
-		return a.IsBot(bots) && at.Before(latestBot[login(a)])
+		return a.IsBot(bots) && at.Before(latestBot[a.Name()])
 	}
 	if len(det.Reviews) > 0 {
 		b.WriteString("### Reviews (oldest first)\n\n")
@@ -95,7 +88,7 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 			if state == "DISMISSED" && r.PreviousState != "" {
 				state = r.PreviousState
 			}
-			if login(r.Author) == h.reader && (state == "APPROVED" || state == "CHANGES_REQUESTED" || state == "COMMENTED") && r.SubmittedAt.After(h.lastAt) {
+			if r.Author.Name() == h.reader && (state == "APPROVED" || state == "CHANGES_REQUESTED" || state == "COMMENTED") && r.SubmittedAt.After(h.lastAt) {
 				h.lastAt, h.lastState, h.lastDismissed = r.SubmittedAt, state, r.State == "DISMISSED"
 				if r.Commit != nil {
 					h.lastOid = r.Commit.Oid
@@ -106,10 +99,10 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 				continue
 			}
 			if superseded(r.Author, r.SubmittedAt) {
-				fmt.Fprintf(&b, "- %s, %s on %s: superseded by its later review; its points are settled\n", login(r.Author), day(r.SubmittedAt), oid)
+				fmt.Fprintf(&b, "- %s, %s on %s: superseded by its later review; its points are settled\n", r.Author.Name(), day(r.SubmittedAt), oid)
 				continue
 			}
-			fmt.Fprintf(&b, "- %s, %s, %s on %s", login(r.Author), reviewState(r), day(r.SubmittedAt), oid)
+			fmt.Fprintf(&b, "- %s, %s, %s on %s", r.Author.Name(), reviewState(r), day(r.SubmittedAt), oid)
 			if body != "" {
 				b.WriteString(":\n" + indent(body, "  > "))
 			}
@@ -130,28 +123,25 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 				continue
 			}
 			if superseded(cm.Author, cm.CreatedAt) {
-				fmt.Fprintf(&b, "- %s, %s: superseded by its later comment; its points are settled\n", login(cm.Author), day(cm.CreatedAt))
+				fmt.Fprintf(&b, "- %s, %s: superseded by its later comment; its points are settled\n", cm.Author.Name(), day(cm.CreatedAt))
 				continue
 			}
-			fmt.Fprintf(&b, "- %s, %s:\n%s\n", login(cm.Author), day(cm.CreatedAt), indent(body, "  > "))
+			fmt.Fprintf(&b, "- %s, %s:\n%s\n", cm.Author.Name(), day(cm.CreatedAt), indent(body, "  > "))
 		}
 		b.WriteString("\n")
 	}
 	for _, cm := range det.Comments {
-		if login(cm.Author) == h.reader && cm.CreatedAt.After(h.lastAt) && !h.lastAt.IsZero() {
+		if cm.Author.Name() == h.reader && cm.CreatedAt.After(h.lastAt) && !h.lastAt.IsZero() {
 			h.readerSince = append(h.readerSince, clip(cm.Body, 2000))
 		}
 	}
 
 	h.threads = map[string]store.ThreadReply{}
 	reply := func(t gh.Thread) store.ThreadReply {
-		r := store.ThreadReply{ThreadID: t.ID, Path: t.Path, Line: t.Line}
-		if r.Line == 0 {
-			r.Line = t.OriginalLine
-		}
+		r := store.ThreadReply{ThreadID: t.ID, Path: t.Path, Line: t.LineShown()}
 		if n := len(t.Comments.Nodes); n > 0 {
 			last := t.Comments.Nodes[n-1]
-			r.To, r.Last = login(last.Author), clip(last.Body, 2000)
+			r.To, r.Last = last.Author.Name(), clip(last.Body, 2000)
 		}
 		h.threads[t.ID] = r
 		return r
@@ -159,11 +149,11 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 	var wb strings.Builder
 	for _, t := range det.Threads {
 		cms := t.Comments.Nodes
-		if len(cms) == 0 || !slices.ContainsFunc(cms, func(c gh.Comment) bool { return login(c.Author) == h.reader }) {
+		if len(cms) == 0 || !slices.ContainsFunc(cms, func(c gh.Comment) bool { return c.Author.Name() == h.reader }) {
 			continue
 		}
 		last := cms[len(cms)-1]
-		if login(last.Author) == h.reader || last.Author.IsBot(bots) {
+		if last.Author.Name() == h.reader || last.Author.IsBot(bots) {
 			continue
 		}
 		r := reply(t)
@@ -174,7 +164,7 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 		}
 		wb.WriteString("\n")
 		for _, cm := range cms {
-			fmt.Fprintf(&wb, "  - %s, %s:\n%s\n", login(cm.Author), day(cm.CreatedAt), indent(clip(cm.Body, 2000), "    > "))
+			fmt.Fprintf(&wb, "  - %s, %s:\n%s\n", cm.Author.Name(), day(cm.CreatedAt), indent(clip(cm.Body, 2000), "    > "))
 		}
 	}
 	if wb.Len() > 0 {
@@ -204,7 +194,7 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 		}
 		ob.WriteString("\n")
 		for _, cm := range t.Comments.Nodes {
-			fmt.Fprintf(&ob, "  - %s: %s\n", login(cm.Author), strings.ReplaceAll(clip(cm.Body, 500), "\n", " "))
+			fmt.Fprintf(&ob, "  - %s: %s\n", cm.Author.Name(), strings.ReplaceAll(clip(cm.Body, 500), "\n", " "))
 		}
 	}
 	fmt.Fprintf(&b, "### Review threads\n\n%d unresolved, %d resolved. Resolved threads are settled: do not raise them again as findings.\n", open, resolved)

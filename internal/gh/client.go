@@ -499,11 +499,14 @@ func (c *Client) CompareDiff(ctx context.Context, repo, from, to string) (string
 func (c *Client) rawDiff(ctx context.Context, path string) (string, error) {
 	resp, err := c.diff.RequestWithContext(ctx, "GET", path, nil)
 	if err != nil {
-		return "", fmt.Errorf("raw diff: %w", err)
+		return "", fmt.Errorf("diff %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
-	return string(b), err
+	if err != nil {
+		return "", fmt.Errorf("diff %s: %w", path, err)
+	}
+	return string(b), nil
 }
 
 type DraftComment struct {
@@ -532,8 +535,10 @@ func (c *Client) SubmitReview(ctx context.Context, repo string, number int, comm
 		var out struct {
 			HTMLURL string `json:"html_url"`
 		}
-		err := c.rest.DoWithContext(ctx, "POST", fmt.Sprintf("repos/%s/pulls/%d/reviews", repo, number), bytes.NewReader(b), &out)
-		return out.HTMLURL, err
+		if err := c.rest.DoWithContext(ctx, "POST", fmt.Sprintf("repos/%s/pulls/%d/reviews", repo, number), bytes.NewReader(b), &out); err != nil {
+			return "", fmt.Errorf("review %s#%d: %w", repo, number, err)
+		}
+		return out.HTMLURL, nil
 	}
 	url, err := post(body, comments)
 	var herr *api.HTTPError
@@ -590,11 +595,14 @@ func (c *Client) ReplyToThread(ctx context.Context, threadID, body string) error
 
 // ResolveThread resolves a review thread, or reopens it.
 func (c *Client) ResolveThread(ctx context.Context, threadID string, resolved bool) error {
-	q := `mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }`
+	q, op := `mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }`, "reopen"
 	if resolved {
-		q = `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }`
+		q, op = `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }`, "resolve"
 	}
-	return c.gql.DoWithContext(ctx, q, map[string]any{"id": threadID}, nil)
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": threadID}, nil); err != nil {
+		return fmt.Errorf("%s thread %s: %w", op, threadID, err)
+	}
+	return nil
 }
 
 // Person is a GitHub user as their profile shows them.
@@ -791,7 +799,10 @@ func (c *Client) PR(ctx context.Context, repo string, number int) (*PR, error) {
 // someone who already reviewed, it asks again.
 func (c *Client) RequestReviewers(ctx context.Context, repo string, number int, logins, teams []string) error {
 	b, _ := json.Marshal(map[string]any{"reviewers": append([]string{}, logins...), "team_reviewers": append([]string{}, teams...)})
-	return c.rest.DoWithContext(ctx, "POST", fmt.Sprintf("repos/%s/pulls/%d/requested_reviewers", repo, number), bytes.NewReader(b), nil)
+	if err := c.rest.DoWithContext(ctx, "POST", fmt.Sprintf("repos/%s/pulls/%d/requested_reviewers", repo, number), bytes.NewReader(b), nil); err != nil {
+		return fmt.Errorf("request reviews on %s#%d: %w", repo, number, err)
+	}
+	return nil
 }
 
 // SetFileViewed toggles GitHub's per-user "Viewed" checkbox for a file.
@@ -800,27 +811,39 @@ func (c *Client) SetFileViewed(ctx context.Context, prID, path string, viewed bo
 	if !viewed {
 		q = `mutation($id: ID!, $path: String!) { unmarkFileAsViewed(input: {pullRequestId: $id, path: $path}) { clientMutationId } }`
 	}
-	return c.gql.DoWithContext(ctx, q, map[string]any{"id": prID, "path": path}, nil)
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": prID, "path": path}, nil); err != nil {
+		return fmt.Errorf("mark %s viewed: %w", path, err)
+	}
+	return nil
 }
 
 // Comment adds a comment to a PR's conversation. subjectID is the PR's node
 // ID.
 func (c *Client) Comment(ctx context.Context, subjectID, body string) error {
 	q := `mutation($id: ID!, $body: String!) { addComment(input: {subjectId: $id, body: $body}) { clientMutationId } }`
-	return c.gql.DoWithContext(ctx, q, map[string]any{"id": subjectID, "body": body}, nil)
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": subjectID, "body": body}, nil); err != nil {
+		return fmt.Errorf("comment on %s: %w", subjectID, err)
+	}
+	return nil
 }
 
 // ClosePR closes a pull request without merging it.
 func (c *Client) ClosePR(ctx context.Context, prID string) error {
 	q := `mutation($id: ID!) { closePullRequest(input: {pullRequestId: $id}) { pullRequest { id } } }`
-	return c.gql.DoWithContext(ctx, q, map[string]any{"id": prID}, nil)
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": prID}, nil); err != nil {
+		return fmt.Errorf("close %s: %w", prID, err)
+	}
+	return nil
 }
 
 // SetDraft converts a pull request to a draft, or marks it ready for review.
 func (c *Client) SetDraft(ctx context.Context, prID string, draft bool) error {
-	q := `mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { id } } }`
+	q, op := `mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { id } } }`, "mark ready for review"
 	if draft {
-		q = `mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { id } } }`
+		q, op = `mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { id } } }`, "convert to draft"
 	}
-	return c.gql.DoWithContext(ctx, q, map[string]any{"id": prID}, nil)
+	if err := c.gql.DoWithContext(ctx, q, map[string]any{"id": prID}, nil); err != nil {
+		return fmt.Errorf("%s %s: %w", op, prID, err)
+	}
+	return nil
 }

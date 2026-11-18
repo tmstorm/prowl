@@ -739,10 +739,7 @@ func (d *detail) threadRows(t *core.Thread, w int, withCode bool) []brow {
 	if !withCode {
 		ind = "        "
 	}
-	line := t.Line
-	if line == 0 {
-		line = t.OriginalLine
-	}
+	line := t.LineShown()
 	a := &rowAdder{}
 	a.begin(id, t.ID, f)
 	loc := ""
