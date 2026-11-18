@@ -53,7 +53,7 @@ func (b commandBackend) Review(t Turn) (*result, string, error) {
 	}
 	defer os.RemoveAll(tmp)
 	schemaPath := filepath.Join(tmp, "schema.json")
-	if err := os.WriteFile(schemaPath, []byte(t.schema()), 0o600); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(t.Schema), 0o600); err != nil {
 		return nil, "", err
 	}
 	t.setModel(t.Model)
@@ -61,7 +61,7 @@ func (b commandBackend) Review(t Turn) (*result, string, error) {
 	cmd := shell(b.command)
 	cmd.Dir = t.Dir
 	cmd.Env = append(CleanEnv(), "PROWL_SCHEMA="+schemaPath, "PROWL_MODEL="+t.Model)
-	cmd.Stdin = strings.NewReader(t.Prompt + "\n\nReply with only JSON matching this schema, no other text:\n" + t.schema() + "\n")
+	cmd.Stdin = strings.NewReader(t.Prompt + "\n\nReply with only JSON matching this schema, no other text:\n" + t.Schema + "\n")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr

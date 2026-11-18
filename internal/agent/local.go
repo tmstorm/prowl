@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -14,9 +13,9 @@ import (
 // the default branch, and the commit this reviewer last reviewed, if any.
 func localHistory(dir string, j Job, runs []*store.Run, current int64) history {
 	h := history{base: j.Base}
-	if out, err := exec.Command("git", "-C", dir, "merge-base", "origin/"+j.Base, "HEAD").Output(); err == nil {
+	if out, err := gitOutput(dir, "merge-base", "origin/"+j.Base, "HEAD"); err == nil {
 		h.base = strings.TrimSpace(string(out))
-	} else if out, err := exec.Command("git", "-C", dir, "merge-base", j.Base, "HEAD").Output(); err == nil {
+	} else if out, err := gitOutput(dir, "merge-base", j.Base, "HEAD"); err == nil {
 		h.base = strings.TrimSpace(string(out))
 	}
 	h.lastOid, _, _ = lastRun(runs, store.Reviewer(j.Agent, j.Profile), current)
@@ -37,8 +36,8 @@ func lastRun(runs []*store.Run, reviewer string, current int64) (string, time.Ti
 // localChanges are the files changed since base, committed or not, and the
 // untracked ones.
 func localChanges(dir, base string) []string {
-	out, _ := exec.Command("git", "-C", dir, "diff", "--name-only", base).Output()
-	untracked, _ := exec.Command("git", "-C", dir, "ls-files", "--others", "--exclude-standard").Output()
+	out, _ := gitOutput(dir, "diff", "--name-only", base)
+	untracked, _ := gitOutput(dir, "ls-files", "--others", "--exclude-standard")
 	var files []string
 	for _, l := range strings.Split(string(out)+string(untracked), "\n") {
 		if l != "" {

@@ -71,7 +71,7 @@ func claudeMCPConfig(toolServer []string) string {
 // and friends are variadic and would swallow a positional prompt.
 func (claudeBackend) Review(t Turn) (*result, string, error) {
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--setting-sources", claudeSettings,
-		"--strict-mcp-config", "--json-schema", t.schema(),
+		"--strict-mcp-config", "--json-schema", t.Schema,
 		"--disallowedTools", claudeDisallowed,
 	}
 	allowed := claudeAllowed

@@ -129,7 +129,7 @@ func (codexBackend) Review(t Turn) (*result, string, error) {
 	}
 	defer os.RemoveAll(tmp)
 	schemaPath, lastPath := filepath.Join(tmp, "schema.json"), filepath.Join(tmp, "last.json")
-	if err := os.WriteFile(schemaPath, []byte(t.schema()), 0o600); err != nil {
+	if err := os.WriteFile(schemaPath, []byte(t.Schema), 0o600); err != nil {
 		return nil, "", err
 	}
 
