@@ -1155,7 +1155,7 @@ func (d *detail) historyRows(current *store.Run) []brow {
 	for _, r := range earlier {
 		rid := fmt.Sprintf("run:%d", r.ID)
 		rf := d.folded(rid, true)
-		b := &rowAdder{}
+		b := &rowAdder{doc: "History"}
 		b.begin(rid, "", rf)
 		var posted, excluded int
 		for _, f := range r.Findings {

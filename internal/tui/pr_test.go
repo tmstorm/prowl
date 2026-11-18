@@ -110,6 +110,8 @@ func TestMultiAgentReviews(t *testing.T) {
 	a.search("History · 1 earlier run")
 	a.keys("K")
 	a.want("prowl docs · AI reviews", "▌History")
+	a.keys("esc", "zo", "j", "K")
+	a.want("prowl docs · AI reviews", "▌History")
 	a.keys("esc")
 	a.search("Codex says")
 	a.keys("space", "c", "d")
