@@ -430,14 +430,14 @@ func (m *Model) legend(w int) []string {
 	return append(lines, " "+keysLine(w-2))
 }
 
-// tipLines is the one-time tip, or news about prowl's own updates, at the
-// bottom of the inbox under its own divider, so it shows with the legend off.
+// tipLines is news about prowl's own updates, then the one-time tip, at the
+// bottom of the inbox under its own divider, so they show with the legend off.
 func (m *Model) tipLines(w int) []string {
-	if m.tip == "" {
+	if m.news == "" && m.tip == "" {
 		return nil
 	}
 	lines := []string{sBorder.Render("┄┄ ") + sDim.Render("prowl") + sBorder.Render(" "+strings.Repeat("┄", max(w-9, 0)))}
-	for _, l := range wrap(strings.ReplaceAll(m.tip, "<leader>", leader), w-2) {
+	for _, l := range wrap(strings.ReplaceAll(strings.TrimSpace(m.news+"\n"+m.tip), "<leader>", leader), w-2) {
 		l = strings.ReplaceAll(strings.TrimRight(l, " "), "\u00a0", " ")
 		line := " "
 		if rest, ok := strings.CutPrefix(l, breakingTip); ok {
@@ -449,6 +449,20 @@ func (m *Model) tipLines(w int) []string {
 		lines = append(lines, line+sPink.Render(l))
 	}
 	return lines
+}
+
+// offerTip shows a one-time onboarding tip about topic.
+func (m *Model) offerTip(topic, tip string) {
+	m.tip, m.tipTopic = tip, topic
+	m.layoutNavs()
+}
+
+// dropTip clears the onboarding tip once you've done what it's about.
+func (m *Model) dropTip(topic string) {
+	if m.tipTopic == topic {
+		m.tip, m.tipTopic = "", ""
+		m.layoutNavs()
+	}
 }
 
 // keysLine is the legend's reminder of the basic keys for people new to

@@ -137,7 +137,9 @@ type Model struct {
 	collapsed map[string]bool // folded inbox sections, by groupID
 	started   time.Time       // the owl wakes up from here
 	synced    bool            // a sync finished this session; the first one's changes are on screen, not notified
-	tip       string          // a one-time tip under the legend, for this session
+	news      string          // news about prowl's own updates under the legend
+	tip       string          // a one-time onboarding tip under the legend, for this session
+	tipTopic  string          // what tip is about, e.g. "slack names"
 	exe       string          // the running prowl's path, for updates
 	restart   bool            // quit to start the prowl <leader>U installed
 	waking    bool            // the first sync runs and you haven't touched anything: the PR pane shows the owl
@@ -323,7 +325,7 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 		core.Notify(changes, m.cfg.NotifyTimeout.Duration)
 	}
 	if !m.synced && m.core.FirstTime("service") && !m.core.Service() {
-		m.tip = "tip: <leader>, → Background notifications tells you about PRs while prowl is closed"
+		m.offerTip("service", "tip: <leader>, → Background notifications tells you about PRs while prowl is closed")
 	}
 	if !m.synced && !m.cfg.NerdFont && m.core.FirstTime("nerd font") {
 		m.askIcons()
@@ -332,7 +334,7 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 	switch {
 	case m.synced:
 	case m.core.SlackConnected() && len(m.cfg.SlackChannels) == 0 && m.core.FirstTime("slack channels"):
-		m.tip = "Slack: pick the channels whose PR links you want in the inbox: <leader>, → Slack channels"
+		m.offerTip("slack channels", "Slack: pick the channels whose PR links you want in the inbox: <leader>, → Slack channels")
 	case m.core.SlackConnected() && !m.core.Shown("slack names"):
 		offerNames = m.matchSlackNames(namesProposedMsg{tip: true})
 	}
@@ -711,8 +713,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.err != nil:
 			m.fail("background notifications: " + msg.err.Error())
 		case msg.on:
-			m.tip = ""
-			m.layoutNavs()
+			m.dropTip("service")
 			m.info("background notifications on: " + msg.what)
 		default:
 			m.info("background notifications off")

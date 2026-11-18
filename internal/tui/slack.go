@@ -81,7 +81,7 @@ func (m *Model) namesProposed(msg namesProposedMsg) tea.Cmd {
 			}
 		}
 		if n > 0 && m.core.FirstTime("slack names") {
-			m.tip = fmt.Sprintf("Slack: matched %d teammates to their Slack users. Review them: <leader>, → Slack names", n)
+			m.offerTip("slack names", fmt.Sprintf("Slack: matched %d teammates to their Slack users. Review them: <leader>, → Slack names", n))
 		}
 		return nil
 	}
@@ -261,7 +261,7 @@ func (p *namesPopup) save(m *Model) tea.Cmd {
 		m.fail(err.Error())
 		return nil
 	}
-	m.tip = ""
+	m.dropTip("slack names")
 	m.info(fmt.Sprintf("saved %d Slack name%s", n, map[bool]string{true: "", false: "s"}[n == 1]))
 	return tea.Batch(m.configChanged(), p.done(m))
 }
@@ -457,7 +457,7 @@ func (p *channelsPopup) save(m *Model) tea.Cmd {
 		m.fail(err.Error())
 		return nil
 	}
-	m.tip = ""
+	m.dropTip("slack channels")
 	note := fmt.Sprintf("watching %d Slack channel%s", len(ids), map[bool]string{true: "", false: "s"}[len(ids) == 1])
 	if p.dms {
 		note += " and your DMs"

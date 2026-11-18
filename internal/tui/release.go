@@ -17,7 +17,7 @@ import (
 // installed (<leader>U).
 func (m *Model) Restart() bool { return m.restart }
 
-// onTip starts the tip offering the running release's notes, which opening
+// onTip starts the news offering the running release's notes, which opening
 // them clears.
 const onTip = "you're on prowl "
 
@@ -25,7 +25,7 @@ const onTip = "you're on prowl "
 // red where the rest is pink.
 const breakingTip = "⚠ breaking changes"
 
-// featuresTip is how the tip counts a release's new features, in green where
+// featuresTip is how the news counts a release's new features, in green where
 // the rest is pink. releaseTip writes it with no-break spaces, so that it
 // wraps as one word.
 var featuresTip = regexp.MustCompile(`\d+ new features?`)
@@ -59,7 +59,7 @@ func (m *Model) releaseTip() {
 		if r.Breaking {
 			tip = breakingTip + " · " + tip
 		}
-		m.tip = tip
+		m.news = tip
 		m.layoutNavs()
 	}
 }
@@ -128,8 +128,8 @@ func (m *Model) whatsNew() {
 		return
 	}
 	m.popup = &notesPopup{title: "What's new in prowl " + r.Latest, url: r.URL, notes: r.Notes}
-	if strings.Contains(m.tip, onTip) {
-		m.tip = ""
+	if strings.Contains(m.news, onTip) {
+		m.news = ""
 		m.layoutNavs()
 	}
 }
