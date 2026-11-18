@@ -22,6 +22,10 @@ import (
 	"github.com/tmstorm/prowl/internal/platform"
 )
 
+// floatingChat is whether the chat can open in a window over prowl. The
+// window needs a pseudo-terminal, which creack/pty doesn't have on Windows.
+var floatingChat = runtime.GOOS != "windows"
+
 // agentTitle names the configured review agent in the UI ("Claude", "Codex").
 var agentTitle = "Claude"
 
@@ -80,7 +84,7 @@ func (m *Model) openChat(it inbox.Item, reviewer string) tea.Cmd {
 	}
 	cmd := exec.Command(spec.Args[0], spec.Args[1:]...)
 	cmd.Dir, cmd.Env = spec.Dir, spec.Env
-	if m.cfg.ChatMode == "fullscreen" || runtime.GOOS == "windows" {
+	if m.cfg.ChatMode == "fullscreen" || !floatingChat {
 		return tea.Exec(platform.TerminalCmd{Cmd: cmd}, func(err error) tea.Msg { return chatExitMsg{key, err} })
 	}
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/tui"
 )
 
 // The leader menu is grouped by category, and its entries are clickable.
@@ -79,6 +80,20 @@ func TestReviewersHint(t *testing.T) {
 	a.clickFirst("Reviewers")
 	a.keys("enter")
 	a.want("<space>cc runs every checked agent", "reviews alone with <space>cC")
+}
+
+// Where the chat can't open in a window (Windows), the options don't offer
+// the choice.
+func TestChatModeOption(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}})
+	a.resize(160, 80)
+	a.keys("space", ",")
+	a.want("Chat window")
+	floating := *tui.FloatingChat
+	*tui.FloatingChat = false
+	t.Cleanup(func() { *tui.FloatingChat = floating })
+	a.keys("esc", "space", ",")
+	a.wantNot("Chat window")
 }
 
 // The PR pane's border offers focus mode, and a click on it toggles it.
