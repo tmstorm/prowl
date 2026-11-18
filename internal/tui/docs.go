@@ -137,12 +137,16 @@ func (p *docsPopup) selection() (int, int) {
 	return p.cur, p.cur
 }
 
-// yank copies the selected lines as they read on screen.
+// yank copies the selected lines as they read on screen. A wider terminal
+// makes a page shorter, so the selection may run past its end.
 func (p *docsPopup) yank(m *Model) {
+	lines := p.lines(m, p.page)
 	a, b := p.selection()
+	b = min(b, len(lines)-1)
+	a = min(a, b)
 	p.visual = false
 	var out []string
-	for _, l := range p.lines(m, p.page)[a : b+1] {
+	for _, l := range lines[a : b+1] {
 		out = append(out, strings.TrimRight(strings.ReplaceAll(strings.TrimPrefix(xansi.Strip(l), " "), "\u00a0", " "), " "))
 	}
 	if err := platform.Copy(strings.Join(out, "\n")); err != nil {
