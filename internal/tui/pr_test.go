@@ -87,8 +87,9 @@ func TestSplitDiff(t *testing.T) {
 }
 
 // Several agents share the AI review tab: a section each with when it ran
-// and how long it took, findings both raised marked, earlier runs under History, and <space>cd in a section
-// discards that agent's review only.
+// and how long it took, findings both raised marked, earlier runs under
+// History (K there opens its docs), and <space>cd in a section discards that
+// agent's review only.
 func TestMultiAgentReviews(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	run := func(agent string, f ...store.Finding) {
@@ -106,6 +107,10 @@ func TestMultiAgentReviews(t *testing.T) {
 	runs, _ := a.st.Runs("o/api#7")
 	a.want(store.Latest(runs, "codex").StartedAt.Format("Jan 2 15:04") + ", took 0s")
 	a.before("▾ Claude", "▾ Codex")
+	a.search("History · 1 earlier run")
+	a.keys("K")
+	a.want("prowl docs · AI reviews", "▌History")
+	a.keys("esc")
 	a.search("Codex says")
 	a.keys("space", "c", "d")
 	a.wantNot("Codex says")

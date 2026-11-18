@@ -491,7 +491,9 @@ func (d *detail) foldEverything(fold bool) {
 
 // ---- row builders
 
-func plainRow(s string) brow { return brow{text: s, plain: ansi.Strip(s), finding: -1, diff: -1} }
+func plainRow(s string) brow {
+	return brow{text: s, plain: ansi.Strip(s), finding: -1, diff: -1, pair: -1}
+}
 
 type rowAdder struct {
 	rows   []brow
@@ -500,13 +502,12 @@ type rowAdder struct {
 	head   bool
 	folded bool
 	thread string
-	file   string
 	doc    string
 }
 
 func (a *rowAdder) add(s string) {
 	r := plainRow(s)
-	r.block, r.thread, r.file, r.doc = a.block, a.thread, a.file, a.doc
+	r.block, r.thread, r.doc = a.block, a.thread, a.doc
 	if a.block != "" {
 		r.off = a.off
 		a.off++
@@ -598,7 +599,9 @@ func (d *detail) buildOverview() []brow {
 		return a.rows
 	}
 	theme := themeName
+	a.doc = "AI summary"
 	d.summaryRows(a, w, theme)
+	a.doc = ""
 	if len(d.pending) > 0 {
 		a.doc = "Inline comments and suggestions"
 		section(fmt.Sprintf("Pending comments (%d) · sent with your next review", len(d.pending)))
@@ -679,7 +682,9 @@ func (d *detail) buildOverview() []brow {
 		}
 	}
 
+	a.doc = "Checks"
 	d.checksRows(a, w, section)
+	a.doc = ""
 
 	section("Activity")
 	a.rows = append(a.rows, d.activityRows(w)...)
@@ -1136,7 +1141,7 @@ func (d *detail) historyRows(current *store.Run) []brow {
 	}
 	id := "hist:" + current.Reviewer()
 	folded := d.folded(id, true)
-	a := &rowAdder{}
+	a := &rowAdder{doc: "History"}
 	a.begin(id, "", folded)
 	n := "run"
 	if len(earlier) > 1 {
@@ -1691,19 +1696,15 @@ func (d *detail) removePending(l diffLine) bool {
 }
 
 // docsTopic is the docs topic for the row under the cursor: the part it is
-// in when that has its own section (the AI summary, points raised, history,
-// a pending comment), its finding, draft reply, thread or check, or else its
-// tab.
+// in when that has its own section (rowAdder.doc: the AI summary, checks,
+// points raised, history, a pending comment), its finding, draft reply or
+// thread, or else its tab.
 func (d *detail) docsTopic() string {
 	rows := d.rows[d.tab]
 	if v := d.nav(); v.cur < len(rows) {
 		switch r := rows[v.cur]; {
 		case r.doc != "":
 			return r.doc
-		case r.block == "summary":
-			return "AI summary"
-		case strings.HasPrefix(r.block, "hist:") || strings.HasPrefix(r.block, "run:"):
-			return "History"
 		case d.tab == tabDiff && r.diff >= 0 && d.pendingIdx(commentLine(r, d.diffs[d.sinceReview])) >= 0:
 			return "Inline comments and suggestions"
 		case r.finding >= 0:
@@ -1712,8 +1713,6 @@ func (d *detail) docsTopic() string {
 			return "Draft replies"
 		case r.thread != "":
 			return "Threads"
-		case strings.HasPrefix(r.block, "check"):
-			return "Checks"
 		}
 	}
 	return []string{"Overview", "The diff", "Findings"}[d.tab]
