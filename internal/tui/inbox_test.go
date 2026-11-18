@@ -465,6 +465,29 @@ func TestUpdateOptions(t *testing.T) {
 	a.want("Updates", "Check for updates", "Update in the background")
 }
 
+// Release notes show < and > as written, though release-please escapes
+// them as HTML entities, whether listed as changes or shown as Markdown.
+func TestNotesEntities(t *testing.T) {
+	old := core.Version
+	core.Version = "0.1.0"
+	t.Cleanup(func() { core.Version = old })
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	notes := "## [0.2.0](https://github.com/tmstorm/prowl/compare/v0.1.0...v0.2.0) (2026-11-20)\n\n### Bug Fixes\n\n" +
+		"* **tui:** don't crash on &lt;leader&gt;O with no PR selected ([#44](https://github.com/tmstorm/prowl/issues/44)) ([a8327e3](https://github.com/tmstorm/prowl/commit/a8327e3))\n"
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.2.0", Notes: notes, URL: "https://github.com/tmstorm/prowl/releases/tag/v0.2.0"})
+	_ = a.st.SetInstalled("v0.2.0")
+	a = reopen(a)
+	a.keys("space", "N")
+	a.want("fix(tui): don't crash on <leader>O with no PR selected #44")
+	a.wantNot("&lt;")
+
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.2.0", Notes: "Press &lt;leader&gt;O to open the share.", URL: "https://github.com/tmstorm/prowl/releases/tag/v0.2.0"})
+	a = reopen(a)
+	a.keys("space", "N")
+	a.want("Press <leader>O to open the share.")
+	a.wantNot("&lt;")
+}
+
 // Once prowl has installed a newer release of itself, the legend says so,
 // <leader>N shows what's new, each change as a commit title without its
 // commit link, and <leader>U quits to start the new prowl. The keys popup

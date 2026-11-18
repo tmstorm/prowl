@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"html"
 	"os"
 	"regexp"
 	"strings"
@@ -280,12 +281,13 @@ var noteTypes = map[string]string{
 // conventional commit title in its type's color, with the PR it came from,
 // and without the version heading or commit links. Anything added to the
 // notes by hand shows as text. Notes with no changes listed render as
-// markdown.
+// markdown. release-please writes < and > as HTML entities, which show as
+// the characters.
 func noteLines(notes string, w int) []string {
 	var out []string
 	typ, items := "", 0
 	for l := range strings.Lines(notes) {
-		l = strings.TrimSpace(l)
+		l = html.UnescapeString(strings.TrimSpace(l))
 		if l == "" || l == "---" {
 			if len(out) > 0 && out[len(out)-1] != "" {
 				out = append(out, "")
