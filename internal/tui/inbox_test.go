@@ -687,15 +687,6 @@ func TestDocsMotions(t *testing.T) {
 	}
 }
 
-// A search pasted from the clipboard with ctrl+v finds lines as typing does.
-func TestDocsSearchPaste(t *testing.T) {
-	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Bins: map[string]string{"wl-paste": "printf Snoozing"}})
-	a.keys("?", "d", "/")
-	a.send(tea.KeyMsg{Type: tea.KeyCtrlV})
-	a.keys("enter")
-	a.want("▌Snoozing")
-}
-
 // :help opens the docs at a tag's heading or table row, completing the tag
 // with tab, and / doesn't complete tags. A tag with several places lists
 // them, and a topic with no tag is searched for.

@@ -141,21 +141,26 @@ func TestClickDocs(t *testing.T) {
 	a.want("prowl docs · Slack", "Setting it up")
 }
 
-// A popup's list moves with the panes' motions, g for gg, scrolls with the
-// wheel, and ctrl+c closes it.
+// A popup's list moves with the panes' motions, g for gg, the wheel moves
+// its selection a row a notch, and ctrl+c closes it.
 func TestPopupListMotions(t *testing.T) {
-	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one"), needsReview("web", 2, "fix: two")}})
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one"), needsReview("web", 2, "fix: two"), needsReview("cli", 3, "fix: three")}})
 	a.keys("space", "s", "G", "enter")
 	a.want("for 1 week")
 	a.keys("space", "s", "G", "g", "enter")
 	a.want("for 1 hour")
+	a.keys("space", "s")
+	a.want("Snooze o/cli#3")
+	for range 2 {
+		a.send(tea.MouseMsg{X: a.w / 2, Y: a.h / 2, Button: tea.MouseButtonWheelDown})
+	}
+	a.keys("enter")
+	a.want("for 1 day")
 
 	a.resize(160, 24)
 	a.keys("space", ",")
 	a.want("Inbox", "Group by")
-	for range 4 {
-		a.send(tea.MouseMsg{X: a.w / 2, Y: a.h / 2, Button: tea.MouseButtonWheelDown})
-	}
+	a.keys("G")
 	a.wantNot("Group by")
 	a.keys("g")
 	a.want("Group by")

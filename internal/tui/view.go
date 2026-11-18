@@ -1476,7 +1476,8 @@ func (m *Model) mouse(msg tea.MouseMsg) tea.Cmd {
 // says on which line of the popup, counting the border, its rows start.
 // Outside a text input the panes' motions move it, with g for gg, which a
 // popup never receives. A click selects a row and a second chooses it, as
-// enter does, so a double-click works too. The wheel scrolls.
+// enter does, so a double-click works too. The wheel moves the selection,
+// and scrolls text you read: the docs and the release notes.
 type rowPopup interface {
 	list(m *Model) (v *nav, first int)
 }
@@ -1515,7 +1516,18 @@ func (m *Model) popupMouse(msg tea.MouseMsg) tea.Cmd {
 	}
 	v, first := p.list(m)
 	if d != 0 {
-		v.scrollView(3 * d)
+		switch p := m.popup.(type) {
+		case *notesPopup:
+			v.scrollView(3 * d)
+		case *docsPopup:
+			if p.searching {
+				v.move(d)
+			} else {
+				v.scrollView(3 * d)
+			}
+		default:
+			v.move(d)
+		}
 		return nil
 	}
 	if c, ok := m.popup.(clickPopup); ok {
