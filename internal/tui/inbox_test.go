@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -420,7 +421,8 @@ func TestBackgroundNotifications(t *testing.T) {
 }
 
 // The first start of a new version offers its notes under prowl's own
-// divider, with the legend off too, until <leader>N opens them.
+// divider, with the legend off too, until <leader>N opens them. Only esc or
+// q closes them.
 func TestWhatsNewTip(t *testing.T) {
 	old := core.Version
 	core.Version = "0.2.0"
@@ -432,8 +434,10 @@ func TestWhatsNewTip(t *testing.T) {
 	a.wantNot("┄┄ legend")
 	a.keys("space", "N")
 	a.want("What's new in prowl v0.2.0", "reviews run faster")
-	a.keys("esc")
-	a.wantNot("you're on prowl v0.2.0", "┄┄ prowl")
+	a.keys("j", "x")
+	a.want("What's new in prowl v0.2.0")
+	a.keys("q")
+	a.wantNot("What's new in prowl v0.2.0", "you're on prowl v0.2.0", "┄┄ prowl")
 }
 
 // The options list the update settings under their own heading.
@@ -664,6 +668,23 @@ func TestDocsViewer(t *testing.T) {
 	a.want("prowl docs · The inbox")
 	a.keys("esc")
 	a.wantNot("prowl docs")
+}
+
+// The docs move like the panes: M goes to the middle of the screen, g to the
+// top, and ctrl+e scrolls, keeping two lines above the cursor. y then a
+// motion copies nothing.
+func TestDocsMotions(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.resize(160, 24)
+	a.keys("?", "d", "M")
+	a.want("close   7/")
+	a.keys("g")
+	a.send(tea.KeyMsg{Type: tea.KeyCtrlE})
+	a.want("close   4/")
+	a.keys("y", "j", "y")
+	if got := a.copied(); got != "" {
+		t.Fatalf("y j y copied %q", got)
+	}
 }
 
 // :help opens the docs at a tag's heading or table row, completing the tag

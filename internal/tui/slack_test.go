@@ -125,10 +125,38 @@ func TestSlackNamesScroll(t *testing.T) {
 	}
 }
 
+// A click checks or unchecks a login, and in the list of Slack users picks
+// the one clicked twice.
+func TestSlackNamesClick(t *testing.T) {
+	a, _ := slackNamesApp(t)
+	openNames(a)
+	a.click("lortiz-acme")
+	a.want("[x] lortiz-acme")
+	a.wantNot("[x] bquill")
+	a.click("lortiz-acme")
+	a.wantNot("[x] lortiz-acme")
+	a.keys("e")
+	a.click("Zed Zulu")
+	a.click("Zed Zulu")
+	a.want("[x] lortiz-acme", "Zed Zulu · picked")
+}
+
+// With everyone mapped already, q closes Slack names as esc does.
+func TestSlackNamesNoneLeft(t *testing.T) {
+	sl := &fakeSlack{}
+	a := newSlackApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, sl.client(t),
+		func(c *config.Config) { c.SlackNames = map[string]string{"alice": "U0ALICE123"} })
+	openNames(a)
+	a.want("Everyone in your orgs and inbox has a Slack user.")
+	a.keys("j", "x", "q")
+	a.wantNot("Everyone in your orgs")
+	a.want("Options")
+}
+
 // With no channels picked, the first sync points to the picker. It lists
 // DMs and your channels, busiest first with their recent PR links of your
-// orgs, recommends the busy ones without checking them, and filters as you
-// type; enter saves what's checked.
+// orgs, recommends the busy ones without checking them, checks a channel
+// clicked, and filters as you type; enter saves what's checked.
 func TestSlackChannels(t *testing.T) {
 	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
 	var matches []string
@@ -151,6 +179,10 @@ func TestSlackChannels(t *testing.T) {
 		"#reviews private", "6 PR links in 14 days · recommended", "#random", "1 PR link in 14 days", "#quiet", "no PR links lately")
 	a.before("#reviews", "#random", "#quiet")
 	a.wantNot("[x] #reviews")
+	a.click("#quiet")
+	a.want("[x] #quiet")
+	a.click("#quiet")
+	a.wantNot("[x] #quiet")
 
 	a.keys("rev")
 	a.wantNot("#random", "#quiet")

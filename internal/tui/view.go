@@ -1472,19 +1472,20 @@ func (m *Model) mouse(msg tea.MouseMsg) tea.Cmd {
 	return nil
 }
 
-// rowPopup is a popup showing a list. Its rows start at line first of the
-// popup (counting the border), top is the first row drawn, n is how many
-// rows there are. Clicking a row selects it; clicking it again chooses it,
-// as enter does, so a double-click works too. The wheel moves the selection.
+// rowPopup is a popup showing a list. list sizes its nav for the screen and
+// says on which line of the popup, counting the border, its rows start.
+// Outside a text input the panes' motions move it, with g for gg, which a
+// popup never receives. A click selects a row and a second chooses it, as
+// enter does, so a double-click works too. The wheel moves the selection,
+// and scrolls text you read: the docs and the release notes.
 type rowPopup interface {
-	rows(m *Model) (first, top, n int)
-	cursor() *int
+	list(m *Model) (v *nav, first int)
 }
 
-// clickPopup handles clicks itself, at x, y from its top-left corner.
+// clickPopup is a rowPopup that handles clicks itself, at x, y from its
+// top-left corner, on row of its list or -1.
 type clickPopup interface {
-	click(m *Model, x, y int) tea.Cmd
-	wheel(m *Model, d int)
+	click(m *Model, x, y, row int) tea.Cmd
 }
 
 func (m *Model) popupMouse(msg tea.MouseMsg) tea.Cmd {
@@ -1509,33 +1510,52 @@ func (m *Model) popupMouse(msg tea.MouseMsg) tea.Cmd {
 		}
 		return nil
 	}
-	switch p := m.popup.(type) {
-	case clickPopup:
-		if d != 0 {
-			p.wheel(m, d)
-			return nil
+	p, ok := m.popup.(rowPopup)
+	if !ok {
+		return nil
+	}
+	v, first := p.list(m)
+	if d != 0 {
+		switch p := m.popup.(type) {
+		case *notesPopup:
+			v.scrollView(3 * d)
+		case *docsPopup:
+			if p.searching {
+				v.move(d)
+			} else {
+				v.scrollView(3 * d)
+			}
+		default:
+			v.move(d)
 		}
-		return p.click(m, x, y)
-	case rowPopup:
-		first, top, n := p.rows(m)
-		cur := p.cursor()
-		if n == 0 {
-			return nil
-		}
-		if d != 0 {
-			*cur = min(max(*cur+d, 0), n-1)
-			return nil
-		}
-		i := top + y - first
-		if i < 0 || i >= n || i >= top+m.popH {
-			return nil
-		}
-		if *cur == i {
-			return m.popup.update(m, tea.KeyMsg{Type: tea.KeyEnter})
-		}
-		*cur = i
+		return nil
+	}
+	if c, ok := m.popup.(clickPopup); ok {
+		return c.click(m, x, y, v.rowAt(y, first))
+	}
+	return m.pick(v, v.rowAt(y, first))
+}
+
+// pick selects row i of a popup's list, or chooses it as enter does when it
+// is selected already.
+func (m *Model) pick(v *nav, i int) tea.Cmd {
+	if i >= 0 && i == v.cur {
+		return m.popup.update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	if i >= 0 {
+		v.cur = i
 	}
 	return nil
+}
+
+// check selects row i of a popup's checklist and checks or unchecks it, as
+// space does.
+func (m *Model) check(v *nav, i int) tea.Cmd {
+	if i < 0 {
+		return nil
+	}
+	v.cur = i
+	return m.popup.update(m, tea.KeyMsg{Type: tea.KeySpace})
 }
 
 func inside(h hit, x, y int) bool {

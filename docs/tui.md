@@ -34,7 +34,7 @@ Not a vim user? The arrow keys work: `↑`/`↓` move, `→` opens the PR pane a
 
 ## Mouse
 
-Everything on screen also works with the mouse (`mouse = false` turns it off). Click a PR, tab or section header; click a fold head in the PR pane to open or close it; scroll either pane, and drag over lines to select them (see [Copying text](#copying-text)). In menus and pickers, a click selects a row and a second click chooses it, and a click outside closes the menu. Clicking a finding again includes or excludes it, and clicking a diff line again starts a comment on it. The leader menu's entries, confirm prompts' `[ yes ]`/`[ no ]`, the statusline's sync text (refresh) and login warning (accounts) are clickable too. Clicks and the wheel inside the chat window go to the agent. Nothing posts to GitHub on a single click: approving still asks `[y/N]`.
+Everything on screen also works with the mouse (`mouse = false` turns it off). Click a PR, tab or section header; click a fold head in the PR pane to open or close it; scroll either pane, and drag over lines to select them (see [Copying text](#copying-text)). In menus and pickers, a click selects a row and a second click chooses it, a click in a checklist checks the row, the wheel moves the selection, and a click outside closes the menu. The keys that move the panes move a menu too, with `g` for `gg`. Clicking a finding again includes or excludes it, and clicking a diff line again starts a comment on it. The leader menu's entries, confirm prompts' `[ yes ]`/`[ no ]`, the statusline's sync text (refresh) and login warning (accounts) are clickable too. Clicks and the wheel inside the chat window go to the agent. Nothing posts to GitHub on a single click: approving still asks `[y/N]`.
 
 ## The leader key
 
@@ -156,4 +156,4 @@ When prowl has installed a new version, the TUI you have open keeps the one it s
 
 ## Reading these docs
 
-`:help` (or `?` then `d`) opens these docs, and `:help stale_after` opens them at that topic. `K` opens them at what the cursor is on. In the docs, `tab` moves between pages, `/` searches every page, `enter` follows a link and `backspace` comes back. `yy`, `v` and `y` copy lines as they read on screen. `esc` closes the docs, back to where you opened them.
+`:help` (or `?` then `d`) opens these docs, and `:help stale_after` opens them at that topic. `K` opens them at what the cursor is on. In the docs, the keys that move the panes move the cursor, `tab` moves between pages, `/` searches every page, `enter` follows a link and `backspace` comes back. `yy`, `v` and `y` copy lines as they read on screen. `esc` closes the docs, back to where you opened them.
