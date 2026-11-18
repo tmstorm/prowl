@@ -466,7 +466,7 @@ func TestUpdateOptions(t *testing.T) {
 }
 
 // Release notes show < and > as written, though release-please escapes
-// them as HTML entities.
+// them as HTML entities, whether listed as changes or shown as Markdown.
 func TestNotesEntities(t *testing.T) {
 	old := core.Version
 	core.Version = "0.1.0"
@@ -479,6 +479,12 @@ func TestNotesEntities(t *testing.T) {
 	a = reopen(a)
 	a.keys("space", "N")
 	a.want("fix(tui): don't crash on <leader>O with no PR selected #44")
+	a.wantNot("&lt;")
+
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v0.2.0", Notes: "Press &lt;leader&gt;O to open the share.", URL: "https://github.com/tmstorm/prowl/releases/tag/v0.2.0"})
+	a = reopen(a)
+	a.keys("space", "N")
+	a.want("Press <leader>O to open the share.")
 	a.wantNot("&lt;")
 }
 
