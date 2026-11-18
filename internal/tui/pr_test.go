@@ -621,3 +621,13 @@ func TestDragSelects(t *testing.T) {
 	a.click("new one")
 	a.want("Comment on a.go:2")
 }
+
+// A PR opened a moment ago reads "opened just now", not "now ago".
+func TestOpenedJustNow(t *testing.T) {
+	p := needsReview("api", 7, "fix: crash")
+	p.CreatedAt = time.Now()
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{p}})
+	a.keys("enter")
+	a.want("opened just now")
+	a.wantNot("now ago")
+}

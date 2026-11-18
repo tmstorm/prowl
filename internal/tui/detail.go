@@ -795,7 +795,7 @@ func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
 		}
 	}
 	for _, c := range t.Comments.Nodes {
-		a.add(inner + sBold.Render(author(c.Author)) + sDim.Render(" "+ago(c.CreatedAt)+" ago") + d.newMark(c.CreatedAt, c.Author))
+		a.add(inner + sBold.Render(author(c.Author)) + sDim.Render(" "+agoText(c.CreatedAt)) + d.newMark(c.CreatedAt, c.Author))
 		for _, l := range renderMarkdown(c.Body, cw-2, themeName) {
 			a.add(inner + "  " + l)
 		}
@@ -1754,7 +1754,7 @@ func (d *detail) header(m *Model) []string {
 		sPink.Render(pr.AuthorLogin()),
 		sDim.Render(pr.HeadRefName + " → " + pr.BaseRefName),
 		sGreen.Render(fmt.Sprintf("+%d", pr.Additions)) + " " + sRed.Render(fmt.Sprintf("-%d", pr.Deletions)) + sDim.Render(fmt.Sprintf(" in %d files", pr.ChangedFiles)),
-		sDim.Render("opened " + ago(pr.CreatedAt) + " ago"),
+		sDim.Render("opened " + agoText(pr.CreatedAt)),
 	}
 	reason := bucketStyle(d.item.Bucket).Render(d.item.Bucket.String()) + sDim.Render(": "+d.item.Reason)
 	if d.item.SlackLink != "" {
