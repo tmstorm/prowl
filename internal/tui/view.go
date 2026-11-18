@@ -1334,13 +1334,8 @@ type wkBlock struct {
 // more rows of columns when the terminal is narrow.
 func (m *Model) whichKey() string {
 	keys, title := leaderKeys, leader
-	switch m.leaderPrefix {
-	case "t":
-		keys, title = threadKeys, leader+"t  threads"
-	case "c":
-		keys, title = agentKeys, leader+"c  AI review"
-	case "f":
-		keys, title = findKeys, leader+"f  find & focus"
+	if menu := leaderEntry(m.leaderPrefix); menu.sub != nil {
+		keys, title = menu.sub, leader+menu.key+"  "+menu.desc
 	}
 	var blocks []*wkBlock
 	byCat := map[string]*wkBlock{}
@@ -1353,7 +1348,7 @@ func (m *Model) whichKey() string {
 		}
 		desc := sDim.Render(k.desc)
 		switch {
-		case k.group:
+		case k.sub != nil:
 			desc = sBlue.Render("+" + k.desc)
 		case k.write:
 			desc = sPink.Render(k.desc)

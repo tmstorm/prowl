@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
+	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
@@ -364,6 +365,23 @@ func TestLeaderKey(t *testing.T) {
 	a.keys("esc", "?")
 	a.want("find a PR")
 	a.wantNot("^p ,,")
+}
+
+// docs/tui.md names every leader key, so the docs can't drift from the menu.
+func TestLeaderKeysDocumented(t *testing.T) {
+	page, _ := docs.Get("tui")
+	for _, k := range tui.LeaderKeys() {
+		if !strings.Contains(page.Markdown, "`"+k+"`") {
+			t.Errorf("docs/tui.md doesn't mention `%s`", k)
+		}
+	}
+}
+
+// An unknown key in the find menu says so, as in the other leader menus.
+func TestUnknownFindKey(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.keys("space", "f", "x")
+	a.want("no find mapping for x")
 }
 
 // <leader>O with nothing selected says so instead of crashing.

@@ -1119,23 +1119,10 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 		return m.searchKey(k)
 	case modeLeader:
 		m.mode = modeNormal
-		prefix := m.leaderPrefix
+		menu := leaderEntry(m.leaderPrefix)
 		m.leaderPrefix = ""
-		switch prefix {
-		case "f":
-			switch key {
-			case "f":
-				m.popup = newFinder(m)
-			case "r":
-				m.popup = newRepoPicker(m)
-			case "t":
-				m.popup = newTypePicker(m)
-			}
-			return nil
-		case "t":
-			return m.threadAction(key)
-		case "c":
-			return m.agentAction(key)
+		if menu.run != nil {
+			return menu.run(m, key)
 		}
 		return m.leader(key)
 	}
@@ -1343,7 +1330,17 @@ type leaderKey struct {
 	key, desc string
 	cat       string // column heading in the menu
 	write     bool   // touches GitHub
-	group     bool
+	sub       []leaderKey
+	run       func(*Model, string) tea.Cmd // runs a key from sub
+}
+
+// leaderEntry is the leader menu's entry for key, or the zero entry.
+func leaderEntry(key string) leaderKey {
+	i := slices.IndexFunc(leaderKeys, func(k leaderKey) bool { return k.key == key })
+	if i < 0 {
+		return leaderKey{}
+	}
+	return leaderKeys[i]
 }
 
 var agentKeys = []leaderKey{
@@ -1374,16 +1371,16 @@ var leaderKeys = []leaderKey{
 	{cat: "Review", key: "a", desc: "approve", write: true},
 	{cat: "Review", key: "x", desc: "request changes", write: true},
 	{cat: "Review", key: "m", desc: "comment", write: true},
-	{cat: "Review", key: "t", desc: "threads", group: true},
+	{cat: "Review", key: "t", desc: "threads", sub: threadKeys, run: (*Model).threadAction},
 	{cat: "Review", key: "R", desc: "request me as reviewer", write: true},
 	{cat: "Review", key: "n", desc: "comment in the conversation", write: true},
 	{cat: "Review", key: "A", desc: "ask for reviews", write: true},
 	{cat: "Review", key: "X", desc: "close with a comment", write: true},
 	{cat: "Review", key: "D", desc: "draft / ready for review", write: true},
-	{cat: "Agent", key: "c", desc: "AI review", group: true},
+	{cat: "Agent", key: "c", desc: "AI review", sub: agentKeys, run: (*Model).agentAction},
 	{cat: "Agent", key: "p", desc: "post the AI review", write: true},
 	{cat: "Agent", key: "l", desc: "accounts / log in"},
-	{cat: "Inbox", key: "f", desc: "find & focus", group: true},
+	{cat: "Inbox", key: "f", desc: "find & focus", sub: findKeys, run: (*Model).findAction},
 	{cat: "Inbox", key: "g", desc: "group by repo / status"},
 	{cat: "Inbox", key: "s", desc: "snooze"},
 	{cat: "Inbox", key: "S", desc: "unsnooze"},
@@ -1417,12 +1414,13 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 		return it != nil
 	}
-	switch key {
-	case "esc":
-		return nil
-	case "t", "c", "f":
+	if leaderEntry(key).sub != nil {
 		m.mode = modeLeader
 		m.leaderPrefix = key
+		return nil
+	}
+	switch key {
+	case "esc":
 		return nil
 	case ",":
 		m.popup = newOptions(m)
@@ -1552,6 +1550,21 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 	default:
 		m.fail("no leader mapping for " + key)
+	}
+	return nil
+}
+
+func (m *Model) findAction(key string) tea.Cmd {
+	switch key {
+	case "esc":
+	case "f":
+		m.popup = newFinder(m)
+	case "r":
+		m.popup = newRepoPicker(m)
+	case "t":
+		m.popup = newTypePicker(m)
+	default:
+		m.fail("no find mapping for " + key)
 	}
 	return nil
 }

@@ -509,9 +509,9 @@ func (p *helpPopup) view(m *Model) string {
 		"",
 		sSection.Render("Leader") + sDim.Render(" · a few of them"),
 		k(leader, "every action; or click \"menu\" below"),
-		k(leader+"c", "AI reviews"),
-		k(leader+"f", "find & focus a repo or type"),
-		k(leader+"l", "accounts and logins"),
+		k(leader+"c", leaderEntry("c").desc),
+		k(leader+"f", leaderEntry("f").desc),
+		k(leader+"l", leaderEntry("l").desc),
 	}
 	col2 := []string{
 		sSection.Render("Overview"),
