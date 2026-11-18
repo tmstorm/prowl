@@ -71,6 +71,8 @@ type execExtension struct{ cfg config.Extension }
 
 func (e execExtension) Name() string { return e.cfg.Name }
 
+// Run returns what the extension printed even when it fails, so a run that
+// failed partway shows how far it got.
 func (e execExtension) Run(ctx context.Context, in ExtensionInput) (ExtensionOutput, error) {
 	var out ExtensionOutput
 	stdin, err := json.Marshal(in)
@@ -91,6 +93,7 @@ func (e execExtension) Run(ctx context.Context, in ExtensionInput) (ExtensionOut
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			err = fmt.Errorf("timed out after %s", e.cfg.Limit())
 		}
+		_ = json.Unmarshal(stdout.Bytes(), &out)
 		return out, fmt.Errorf("%s: %w%s", e.cfg.Name, err, lastLines(stderr.String(), 20))
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
@@ -211,17 +214,11 @@ func (r *jobRun) execute(ctx context.Context, e config.Extension, run *store.Ext
 		}
 	}
 	if e.NeedsBase {
-		dir, err := os.MkdirTemp("", "prowl-base-")
-		if err == nil {
-			err = git(r.wt, "worktree", "add", "--quiet", "--detach", dir, in.Base)
-		}
+		dir, remove, err := baseWorktree(r.wt, in.Base)
 		if err != nil {
-			return finish(ExtensionOutput{}, "base worktree: "+err.Error())
+			return finish(ExtensionOutput{}, err.Error())
 		}
-		defer func() {
-			_ = git(r.wt, "worktree", "remove", "--force", dir)
-			_ = os.RemoveAll(dir)
-		}()
+		defer remove()
 		in.BaseDir = dir
 	}
 	out, err := ExtensionFor(e).Run(ctx, in)
@@ -340,4 +337,111 @@ func withExtensions(fs []store.Finding, exts []reviewExtension) []store.Finding 
 		}
 	}
 	return fs
+}
+
+// baseWorktree checks base out next to the worktree wt, for an extension
+// with needs_base, and returns how to remove it.
+func baseWorktree(wt, base string) (string, func(), error) {
+	dir, err := os.MkdirTemp("", "prowl-base-")
+	if err == nil {
+		err = git(wt, "worktree", "add", "--quiet", "--detach", dir, base)
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("base worktree: %w", err)
+	}
+	return dir, func() {
+		_ = git(wt, "worktree", "remove", "--force", dir)
+		_ = os.RemoveAll(dir)
+	}, nil
+}
+
+// runExtensionJob runs an on-demand extension on the PR, in the detached
+// process LaunchExtension started: in a worktree of the PR's head as a
+// review would, or in your checkout for a local review. Its deadline starts
+// again when the extension starts, since a clone can take a while. When it
+// succeeds, findings with a path join the newest AI review from the main
+// reviewer, as drafts. A notification says how it went.
+func runExtensionJob(ctx context.Context, cfg config.Config, st *store.Store, j Job) error {
+	_ = st.SetExtensionJobPID(j.ExtensionJob, os.Getpid())
+	out, added, err := onDemand(ctx, cfg, st, j)
+	b, _ := json.Marshal(out)
+	errMsg := ""
+	if err != nil {
+		errMsg = err.Error()
+	}
+	if ferr := st.FinishExtensionJob(j.ExtensionJob, string(b), errMsg, added); ferr != nil && err == nil {
+		err = ferr
+	}
+	title, body := j.Extension+" finished", j.Key()+": "+cmp.Or(out.Summary, "done")
+	if err != nil {
+		title, body = j.Extension+" failed", j.Key()+": "+strings.TrimPrefix(firstLine(errMsg), j.Extension+": ")
+	} else if added > 0 {
+		body += fmt.Sprintf(" · %d added to the AI review", added)
+	}
+	platform.Notify(title, body, cfg.NotifyTimeout.Duration)
+	return err
+}
+
+func onDemand(ctx context.Context, cfg config.Config, st *store.Store, j Job) (ExtensionOutput, int, error) {
+	exts := cfg.Agent.ExtensionsFor(j.Repo, true)
+	i := slices.IndexFunc(exts, func(e config.Extension) bool { return e.Name == j.Extension })
+	if i < 0 {
+		return ExtensionOutput{}, 0, fmt.Errorf("%s: no on-demand extension by that name for %s", j.Extension, j.Repo)
+	}
+	e := exts[i]
+	wt := j.Dir
+	if wt == "" {
+		j.Agent, j.Profile = "ext", e.Name
+		var err error
+		if wt, err = prepareWorktree(cfg, j); err != nil {
+			return ExtensionOutput{}, 0, fmt.Errorf("%s: %w", e.Name, err)
+		}
+	}
+	in := ExtensionInput{Repo: j.Repo, HeadDir: wt, Head: j.Head, Base: MergeBase(wt, j.Base), RunImage: cfg.Agent.RunImage(j.Repo)}
+	if j.Dir != "" {
+		in.ChangedFiles = localChanges(wt, in.Base)
+	} else {
+		out, _ := gitOutput(wt, "diff", "--name-only", "origin/"+j.Base+"...HEAD")
+		in.ChangedFiles = strings.Fields(string(out))
+	}
+	if e.NeedsBase {
+		dir, remove, err := baseWorktree(wt, in.Base)
+		if err != nil {
+			return ExtensionOutput{}, 0, fmt.Errorf("%s: %w", e.Name, err)
+		}
+		defer remove()
+		in.BaseDir = dir
+	}
+	_ = st.ExtendExtensionJob(j.ExtensionJob, e.Limit()+extensionGrace)
+	out, err := ExtensionFor(e).Run(ctx, in)
+	if err != nil {
+		return out, 0, err
+	}
+	return out, addToReview(cfg, st, j.Key(), j.Head, e.Name, out.Findings), nil
+}
+
+// addToReview adds an on-demand extension's findings with a path to the
+// main reviewer's current review, leaving out any it already has, and
+// returns how many it added. The review must be finished, not yet posted,
+// and of the head the extension ran on, so the lines match its diff.
+// Otherwise the findings stay in the extension's result.
+func addToReview(cfg config.Config, st *store.Store, key, head, name string, fs []ExtensionFinding) int {
+	runs, _ := st.Runs(key)
+	i := slices.IndexFunc(runs, func(r *store.Run) bool { return r.Agent == cfg.Agent.Main() && r.Profile == "" })
+	if i < 0 || runs[i].Status != "done" || runs[i].HeadOid != head {
+		return 0
+	}
+	var add []store.Finding
+	for n, f := range fs {
+		has := func(g store.Finding) bool { return g.Path == f.Path && g.Line == f.Line && g.Title == f.Title }
+		if f.Path == "" || slices.ContainsFunc(runs[i].Findings, has) {
+			continue
+		}
+		add = append(add, store.Finding{Severity: f.Severity, Title: f.Title, Body: f.Body, Rule: f.Rule, Path: f.Path, Line: f.Line,
+			ExtensionID: fmt.Sprintf("%s-%d", name, n+1)})
+	}
+	if st.AddFindings(runs[i].ID, add) != nil {
+		return 0
+	}
+	return len(add)
 }

@@ -302,3 +302,109 @@ func TestExtensionReReview(t *testing.T) {
 		t.Fatalf("the unchanged run lost its findings: %+v", fs)
 	}
 }
+
+// An on-demand extension stays out of reviews. Run as a job, its finding
+// with a path joins the main reviewer's AI review, the rest stay in its
+// result, and a notification says how it went. One that fails partway keeps
+// what it printed beside the error.
+func TestExtensionOnDemand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the extensions are shell scripts")
+	}
+	st, roots, bin, head := setupRun(t)
+	factory := t.TempDir()
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	cfg.Agent.Extensions = []config.Extension{{Name: "factory", Repos: []string{"o/api"}, OnDemand: true, Key: "f",
+		Command: fakeExtension(t, factory, `{"summary":"job 12 started","findings":[{"severity":"should-fix","title":"Flaky test","body":"b","path":"a.go","line":1},{"severity":"nit","title":"Slow job","body":"b"}]}`)}}
+	if err := agent.Run(t.Context(), cfg, st, nil, reviewJob(head)); err != nil {
+		t.Fatal(err)
+	}
+	if n := extensionRuns(factory); n != 0 {
+		t.Fatalf("an on-demand extension ran in a review %d times", n)
+	}
+
+	runJob := func() *store.ExtensionJob {
+		t.Helper()
+		id, err := st.StartExtensionJob("o/api#7", "factory", head, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		j := reviewJob(head)
+		j.Extension, j.ExtensionJob = "factory", id
+		_ = agent.Run(t.Context(), cfg, st, nil, j)
+		jobs, _ := st.ExtensionJobs()
+		return jobs["o/api#7"][0]
+	}
+	job := runJob()
+	if job.Status != "done" || job.Added != 1 || !strings.Contains(job.Output, "job 12 started") {
+		t.Fatalf("job: %+v", job)
+	}
+	if again := runJob(); again.Status != "done" || again.Added != 0 {
+		t.Fatalf("a second run added its finding again: %+v", again)
+	}
+	reviewed := latestRun(t, st, "claude")
+	_ = st.MarkPosted(reviewed.ID, "https://github.com/o/api/pull/7#review")
+	_ = os.WriteFile(filepath.Join(factory, "out.json"), []byte(`{"findings":[{"severity":"nit","title":"After posting","body":"b","path":"a.go","line":1}]}`), 0o644)
+	if late := runJob(); late.Added != 0 {
+		t.Fatalf("findings joined a posted review: %+v", late)
+	}
+	if runs, _ := st.Runs("o/api#7"); slices.ContainsFunc(runs, func(r *store.Run) bool {
+		return slices.ContainsFunc(r.Findings, func(f store.Finding) bool { return f.Title == "After posting" })
+	}) {
+		t.Fatal("findings joined an older review")
+	}
+	fs := latestRun(t, st, "claude").Findings
+	if !slices.ContainsFunc(fs, func(f store.Finding) bool { return f.ExtensionID == "factory-1" && f.Path == "a.go" }) ||
+		slices.ContainsFunc(fs, func(f store.Finding) bool { return f.Title == "Slow job" }) {
+		t.Fatalf("review findings: %+v", fs)
+	}
+	if n := read(filepath.Join(bin, "notified")); !strings.Contains(n, "factory finished") || !strings.Contains(n, "o/api#7: job 12 started · 1 added to the AI review") {
+		t.Errorf("notification: %q", n)
+	}
+
+	cfg.Agent.Extensions[0].Command = `printf '{"summary":"pushed the branch","findings":[{"severity":"nit","title":"Half done","body":"b","path":"a.go","line":2}]}'; echo "deploy failed" >&2; exit 2`
+	job = runJob()
+	if job.Status != "failed" || !strings.Contains(job.Output, "pushed the branch") || !strings.Contains(job.Error, "exit status 2\ndeploy failed") || job.Added != 0 {
+		t.Fatalf("failed job: %+v", job)
+	}
+	if fs := latestRun(t, st, "claude").Findings; slices.ContainsFunc(fs, func(f store.Finding) bool { return f.Title == "Half done" }) {
+		t.Fatalf("a failed run added its findings to the review: %+v", fs)
+	}
+	if n := read(filepath.Join(bin, "notified")); !strings.Contains(n, "factory failed") || !strings.Contains(n, "o/api#7: exit status 2") {
+		t.Errorf("notification: %q", n)
+	}
+}
+
+// An on-demand job's deadline counts from when the extension starts, not
+// from launch, so a slow clone doesn't make a live job look timed out.
+func TestExtensionJobDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the extensions are shell scripts")
+	}
+	st, roots, _, head := setupRun(t)
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	cfg.Agent.Extensions = []config.Extension{{Name: "factory", Repos: []string{"*"}, OnDemand: true, Command: `sleep 2; printf '{}'`}}
+	id, err := st.StartExtensionJob("o/api#7", "factory", head, -time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := reviewJob(head)
+	j.Extension, j.ExtensionJob = "factory", id
+	done := make(chan error, 1)
+	go func() { done <- agent.Run(context.Background(), cfg, st, nil, j) }()
+	for {
+		if jobs, _ := st.ExtensionJobs(); jobs["o/api#7"][0].Status == "running" {
+			break
+		}
+		select {
+		case <-done:
+			t.Fatal("the job read as timed out the whole time the extension ran")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

@@ -43,6 +43,10 @@ type Job struct {
 	// a pull request exists. Number is 0 and Base is the default branch.
 	Dir    string
 	Branch string
+	// Extension is an on-demand extension to run instead of a review, and
+	// ExtensionJob its job in the store (LaunchExtension sets it).
+	Extension    string
+	ExtensionJob int64
 }
 
 // SyncInstruction asks the review session for its current review after the
@@ -81,10 +85,7 @@ func (j Job) Key() string {
 // goes in a file, not the command line: a PR description can be longer than
 // a command line allows, and the process list shows command lines.
 func Launch(st *store.Store, j Job) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("launch: %w", err)
-	}
+	var err error
 	if j.Refine != "" && j.RunID != 0 {
 		err = st.RestartRun(j.RunID, 0)
 	} else {
@@ -93,33 +94,63 @@ func Launch(st *store.Store, j Job) error {
 	if err != nil {
 		return fmt.Errorf("launch: %w", err)
 	}
-	logPath := logs.RunPath(strconv.FormatInt(j.RunID, 10))
+	pid, err := spawn(j, fmt.Sprintf("%d.json", j.RunID), strconv.FormatInt(j.RunID, 10))
+	if err != nil {
+		_ = st.FailRun(j.RunID, err.Error())
+		return err
+	}
+	_ = st.SetRunPID(j.RunID, pid)
+	return nil
+}
+
+// LaunchExtension starts a detached `prowl agent-run` that runs the
+// on-demand extension j.Extension on the PR, unless it is already running
+// there. It keeps going when the frontend that started it quits.
+func LaunchExtension(st *store.Store, j Job, limit time.Duration) error {
+	id, err := st.StartExtensionJob(j.Key(), j.Extension, j.Head, limit+extensionGrace)
+	if err != nil {
+		return err
+	}
+	j.ExtensionJob = id
+	pid, err := spawn(j, fmt.Sprintf("ext-%d.json", id), fmt.Sprintf("ext-%d", id))
+	if err != nil {
+		_ = st.FinishExtensionJob(id, "", err.Error(), 0)
+		return err
+	}
+	_ = st.SetExtensionJobPID(id, pid)
+	return nil
+}
+
+// spawn writes the job to file under the jobs directory and starts a
+// detached `prowl agent-run` on it, what it prints going to its run log
+// (logs.RunPath(name)), which a revise adds to.
+func spawn(j Job, file, name string) (int, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return 0, fmt.Errorf("launch: %w", err)
+	}
+	logPath := logs.RunPath(name)
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o700)
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		_ = st.FailRun(j.RunID, err.Error())
-		return fmt.Errorf("launch: %w", err)
+		return 0, fmt.Errorf("launch: %w", err)
 	}
 	defer logf.Close()
 	payload, _ := json.Marshal(j)
-	jobFile := filepath.Join(config.DataDir(), "jobs", fmt.Sprintf("%d.json", j.RunID))
+	jobFile := filepath.Join(config.DataDir(), "jobs", file)
 	if err := os.MkdirAll(filepath.Dir(jobFile), 0o700); err != nil {
-		_ = st.FailRun(j.RunID, err.Error())
-		return fmt.Errorf("launch: %w", err)
+		return 0, fmt.Errorf("launch: %w", err)
 	}
 	if err := os.WriteFile(jobFile, payload, 0o600); err != nil {
-		_ = st.FailRun(j.RunID, err.Error())
-		return fmt.Errorf("launch: %w", err)
+		return 0, fmt.Errorf("launch: %w", err)
 	}
 	cmd := exec.Command(exe, "agent-run", jobFile)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	platform.Detach(cmd)
 	if err := platform.Spawn(cmd); err != nil {
-		_ = st.FailRun(j.RunID, err.Error())
-		return fmt.Errorf("start review job: %w", err)
+		return 0, fmt.Errorf("start review job: %w", err)
 	}
-	_ = st.SetRunPID(j.RunID, cmd.Process.Pid)
-	return nil
+	return cmd.Process.Pid, nil
 }
 
 // Schema is the JSON Schema a review with the given severities must match.
@@ -454,6 +485,9 @@ type result struct {
 // only resumes there. A failure from a logged-out agent is reported as that,
 // whatever the agent printed.
 func Run(ctx context.Context, cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
+	if j.ExtensionJob != 0 {
+		return runExtensionJob(ctx, cfg, st, j)
+	}
 	r := &jobRun{cfg: cfg, st: st, c: c, j: j, key: j.Key()}
 	if j.RunID != 0 {
 		if r.prev, _ = st.Run(j.RunID); r.prev != nil {

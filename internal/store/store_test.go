@@ -2,11 +2,13 @@ package store_test
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -288,5 +290,53 @@ func TestClaimExtensionReuse(t *testing.T) {
 	_ = st.DeleteReviews("o/r#1")
 	if r, _ := st.ExtensionRun("o/r#1", "perf", "h1"); r != nil {
 		t.Fatal("extension runs outlived the PR")
+	}
+}
+
+// One job of an on-demand extension runs on a PR at a time. One whose
+// process exited no longer blocks the next, and only the newest finished job
+// is kept. Findings added to a review run join the ones it has.
+func TestExtensionJobs(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	first, err := st.StartExtensionJob("o/r#1", "factory", "h1", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = st.SetExtensionJobPID(first, os.Getpid())
+	if _, err := st.StartExtensionJob("o/r#1", "factory", "h1", time.Hour); !errors.Is(err, store.ErrExtensionRunning) {
+		t.Fatalf("a second job started beside the first: %v", err)
+	}
+	if _, err := st.StartExtensionJob("o/r#1", "lint", "h1", time.Hour); err != nil {
+		t.Fatalf("another extension was blocked: %v", err)
+	}
+	exited := exec.Command("true")
+	if err := exited.Run(); err != nil {
+		t.Skip("needs true")
+	}
+	_ = st.SetExtensionJobPID(first, exited.Process.Pid)
+	second, err := st.StartExtensionJob("o/r#1", "factory", "h2", time.Hour)
+	if err != nil {
+		t.Fatalf("a job whose process exited still blocks: %v", err)
+	}
+	_ = st.FinishExtensionJob(second, `{"summary":"ok"}`, "", 1)
+	if keys, _ := st.ReviewedPRs(); !slices.Contains(keys, "o/r#1") {
+		t.Fatalf("a PR with only extension jobs isn't kept: %v", keys)
+	}
+	jobs, _ := st.ExtensionJobs()
+	if len(jobs["o/r#1"]) != 2 || jobs["o/r#1"][0].ID != second || jobs["o/r#1"][0].Status != "done" || jobs["o/r#1"][0].Added != 1 {
+		t.Fatalf("jobs: %+v", jobs["o/r#1"])
+	}
+
+	run, _ := st.StartRun("o/r#1", "h2", "claude", "", 0)
+	_ = st.FinishRun(run, "s", "", "", []store.Finding{{Title: "mine", Path: "a.go", Line: 1}})
+	if err := st.AddFindings(run, []store.Finding{{Title: "from factory", Path: "b.go", Line: 2, ExtensionID: "factory-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := st.Run(run); len(r.Findings) != 2 || r.Findings[1].ExtensionID != "factory-1" {
+		t.Fatalf("findings: %+v", r.Findings)
 	}
 }

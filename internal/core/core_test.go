@@ -508,6 +508,30 @@ func TestAgentDraftAndSubmit(t *testing.T) {
 	}
 }
 
+// A finding added to the review while you edit its draft, such as an
+// on-demand extension's, stays unposted when the draft goes out without it.
+func TestPostMarksOnlyWhatWentOut(t *testing.T) {
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
+	_, st := newCore(t, fake)
+	run, _ := st.StartRun("o/api#7", "abc1234", "claude", "", 0)
+	_ = st.FinishRun(run, "s1", "One issue.", "", []store.Finding{{Severity: "should-fix", Path: "a.go", Line: 10, Title: "naming", Body: "Rename."}})
+	c, _ := fake.Client()
+	co := core.New(config.Default(), c, st)
+	refresh(t, co)
+	d, err := co.AgentDraft("o/api#7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = st.AddFindings(run, []store.Finding{{Severity: "nit", Path: "b.go", Line: 3, Title: "slow job", Body: "Cache it.", ExtensionID: "factory-1"}})
+	if _, err := co.Submit(t.Context(), "o/api#7", d); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := st.Run(run)
+	if len(r.Findings) != 2 || !r.Findings[0].Posted || r.Findings[1].Posted {
+		t.Fatalf("findings after posting: %+v", r.Findings)
+	}
+}
+
 // Approving an agent draft written before the author pushed approves the
 // head; the draft's inline comments go first, on the commit they were
 // written on. When the approval fails, a retry doesn't send them again.
