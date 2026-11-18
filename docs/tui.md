@@ -56,7 +56,7 @@ Anything that posts to GitHub sits behind the leader key, written `<leader>` in 
 | `<leader>l` | accounts and logins (see [The accounts list](#the-accounts-list)) |
 | `<leader>fr`, `<leader>ft` | focus one repo or one commit type; `<leader>ff` finds a PR |
 | `<leader>g` | group by status or by repo |
-| `<leader>s`, `<leader>S`, `<leader>z` | snooze, unsnooze, show snoozed PRs |
+| `<leader>s`, `<leader>S`, `<leader>z` | snooze, unsnooze, show or hide snoozed PRs |
 | `<leader>w` | watch or unwatch the PR's repo |
 | `<leader>y`, `<leader>Y`, `<leader>O` | Slack: post the review line, DM the author, open the share (see [Slack keys](#slack-keys)) |
 | `<leader>o` | open on GitHub |
@@ -69,11 +69,11 @@ Each row shows how long the PR has waited on you, the repo, the PR number and th
 
 The line above the list is for triage at a glance: how many PRs need you, how long the oldest has waited, when snoozed ones come back, and any of your own PRs with failing CI or merge conflicts.
 
-The owl at the left of the statusline is a status you can read from anywhere: `(-,-)` nothing needs you, `(o,o)` something does, `(O,O)` something is overdue. Click it to see what needs you. The terminal tab's title says the same, e.g. `prowl · 4 need you`, so you can see it from another tab. When nothing needs you, prowl's owl (it's in the name: p-r-owl) sleeps on the empty inbox, and it wakes up while the first sync runs. `playful = false` drops the statusline owl and turns the sleeping one into text.
+The owl at the left of the statusline is a status you can read from anywhere: `(-,-)` nothing needs you, `(o,o)` something does, `(O,O)` something is due. Click it to see what needs you. The terminal tab's title says the same, e.g. `prowl · 4 need you`, so you can see it from another tab. When nothing needs you, prowl's owl (it's in the name: p-r-owl) sleeps on the empty inbox, and it wakes up while the first sync runs. `playful = false` drops the statusline owl and turns the sleeping one into text.
 
 `2`–`6` or `tab` pick a tab. Inside a tab, PRs are grouped into sections by bucket, which fold: `za` on any PR folds its section down to the header (`▸ NEEDS REVIEW 10`), `zM`/`zR` fold or open them all, and `enter` or a click on a folded header opens it.
 
-`<leader>fr` lists every repo in your orgs to focus one, and `<leader>ft` focuses a commit type; `esc` in the inbox clears both. `ctrl+p` takes a link to a PR that isn't in your inbox. `<leader>s` snoozes the PR for 1 hour, 4 hours, 1 day or 1 week (`1`–`4`, or move and `enter`), `<leader>z` shows snoozed PRs marked `z`, and `<leader>S` on one brings it back now. See [The inbox](inbox.md).
+`<leader>fr` lists every repo in your orgs to focus one, and `<leader>ft` focuses a commit type; `esc` in the inbox clears both. `ctrl+p` takes a link to a PR that isn't in your inbox. `<leader>s` snoozes the PR for 1 hour, 4 hours, 1 day or 1 week (`1`–`4`, or move and `enter`), `<leader>z` shows snoozed PRs marked `z`, or hides them again, and `<leader>S` on one brings it back now. See [The inbox](inbox.md).
 
 ## The PR pane
 
@@ -148,7 +148,7 @@ In Slack names, `space` accepts a match (`a` accepts them all), `e` picks someon
 
 ## New versions
 
-When prowl has installed a new version, the TUI you have open keeps the one it started with and says `prowl v0.2.0 is installed`; `<leader>U` restarts it on the new one. The first time a new version starts, the legend offers its release notes and counts the features it adds, and `<leader>N` shows the notes at any time. See [Updating](cli.md#updating).
+When prowl has installed a new version, the TUI you have open keeps the one it started with and says `prowl v0.2.0 is installed`; `<leader>U` restarts it on the new one. Without one installed, `<leader>U` checks for a new release and installs it, which is how you update with `auto_update = false`. The first time a new version starts, the legend offers its release notes and counts the features it adds, and `<leader>N` shows the notes at any time. See [Updating](cli.md#updating).
 
 ## Copying text
 
