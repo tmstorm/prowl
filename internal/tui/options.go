@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,16 +30,17 @@ const (
 )
 
 type option struct {
-	section     string                      // heading in the menu
-	title       string                      // what the menu calls it
-	label, help string                      // label is the config key
-	show        func(c *config.Config) bool // nil: always shown
-	empty       string                      // what an empty value means, if not "none"
-	kind        optKind
-	choices     []string
-	choicesFn   func(c *config.Config) []string // choices worked out when cycled
-	get         func(c *config.Config) string
-	set         func(c *config.Config, v string) error
+	section   string                      // heading in the menu
+	title     string                      // what the menu calls it
+	key, help string                      // key is the config key
+	show      func(c *config.Config) bool // nil: always shown
+	empty     string                      // what an empty value means, if not "none"
+	kind      optKind
+	choices   []string
+	choicesFn func(c *config.Config) []string // choices worked out when cycled
+	summary   func(c *config.Config) string   // an editor option's value in the menu; nil: its first line
+	get       func(c *config.Config) string
+	set       func(c *config.Config, v string) error
 	// open opens a popup for the option instead of the editor.
 	open func(m *Model, p *optionsPopup, o option) tea.Cmd
 	// state and turn make a switch of something that isn't a config value.
@@ -73,8 +73,21 @@ func splitList(v string) []string {
 	return out
 }
 
-func durationOpt(section, title, label, help string, field func(c *config.Config) *config.Duration) option {
-	return option{section: section, title: title, label: label, help: help, kind: optText,
+func boolOpt(section, title, key, help string, field func(c *config.Config) *bool) option {
+	return option{section: section, title: title, key: key, help: help, kind: optBool,
+		get: func(c *config.Config) string { return strconv.FormatBool(*field(c)) },
+		set: func(c *config.Config, v string) error { *field(c) = v == "true"; return nil }}
+}
+
+// listOpt is a comma separated list.
+func listOpt(section, title, key, help string, field func(c *config.Config) *[]string) option {
+	return option{section: section, title: title, key: key, help: help, kind: optText,
+		get: func(c *config.Config) string { return strings.Join(*field(c), ", ") },
+		set: func(c *config.Config, v string) error { *field(c) = splitList(v); return nil }}
+}
+
+func durationOpt(section, title, key, help string, field func(c *config.Config) *config.Duration) option {
+	return option{section: section, title: title, key: key, help: help, kind: optText,
 		get: func(c *config.Config) string { return field(c).String() },
 		set: func(c *config.Config, v string) error {
 			d, err := time.ParseDuration(strings.TrimSpace(v))
@@ -86,24 +99,16 @@ func durationOpt(section, title, label, help string, field func(c *config.Config
 		}}
 }
 
-// optSections are the headings of the options menu, in order.
-var optSections = []string{"Inbox", "Appearance", "Review agent", "GitHub", "Editor", "Slack", "Updates"}
-
 func isCommandAgent(c *config.Config) bool { return c.Agent.Main() == "command" }
 
 var options = []option{
-	// Inbox
-	{section: "Inbox", title: "Group by", label: "group_by", help: "Sections by what each PR needs from you, or by repo. <leader>g toggles it too.",
+	{section: "Inbox", title: "Group by", key: "group_by", help: "Sections by what each PR needs from you, or by repo. <leader>g toggles it too.",
 		kind: optChoice, choices: []string{"status", "repo"},
 		get: func(c *config.Config) string { return c.GroupBy },
 		set: func(c *config.Config, v string) error { c.GroupBy = v; return nil }},
-	{section: "Inbox", title: "Sort by commit type", label: "sort_by_type", help: "Inside each section: fixes first, chores last, then by wait time.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.SortByType) },
-		set: func(c *config.Config, v string) error { c.SortByType = v == "true"; return nil }},
-	{section: "Inbox", title: "Re-check after push", label: "recheck_after_push", help: "A PR pushed to after you approved needs you again. Off trusts your approval.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.RecheckAfterPush) },
-		set: func(c *config.Config, v string) error { c.RecheckAfterPush = v == "true"; return nil }},
-	{section: "Inbox", title: "Commit type order", label: "type_order", help: "Comma separated. \"other\" is any title that isn't a conventional commit.", kind: optText,
+	boolOpt("Inbox", "Sort by commit type", "sort_by_type", "Inside each section: fixes first, chores last, then by wait time.", func(c *config.Config) *bool { return &c.SortByType }),
+	boolOpt("Inbox", "Re-check after push", "recheck_after_push", "A PR pushed to after you approved needs you again. Off trusts your approval.", func(c *config.Config) *bool { return &c.RecheckAfterPush }),
+	{section: "Inbox", title: "Commit type order", key: "type_order", help: "Comma separated. \"other\" is any title that isn't a conventional commit.", kind: optText,
 		get: func(c *config.Config) string { return strings.Join(c.Types(), ", ") },
 		set: func(c *config.Config, v string) error {
 			c.TypeOrder = splitList(v)
@@ -115,7 +120,7 @@ var options = []option{
 	mapOpt("Inbox", "Commit type colors", "type_colors", "# commit type = color: red, green, orange, pink, yellow, purple, cyan, dim or \"#rrggbb\"\n# wip = \"orange\"\n",
 		func(c *config.Config) *map[string]string { return &c.TypeColors }),
 	durationOpt("Inbox", "Due after", "stale_after", "A PR waiting on you longer than this is due and turns yellow; at twice that it's overdue and turns red.", func(c *config.Config) *config.Duration { return &c.StaleAfter }),
-	{section: "Inbox", title: "Background notifications", label: "prowl service", kind: optBool,
+	{section: "Inbox", title: "Background notifications", key: "prowl service", kind: optBool,
 		help:  "Runs prowl watch at login, so you hear about PRs while prowl is closed: a systemd user service, launchd agent or Windows startup entry.",
 		state: func(m *Model) bool { return m.core.Service() },
 		turn: func(m *Model, on bool) tea.Cmd {
@@ -126,38 +131,22 @@ var options = []option{
 				return serviceMsg{on: on, what: what, err: err}
 			}
 		}},
-	{section: "Inbox", title: "Bot accounts", label: "bots", help: "Dimmed and folded in a PR's activity. Comma separated; logins ending in [bot] always count.", kind: optText,
-		get: func(c *config.Config) string { return strings.Join(c.Bots, ", ") },
-		set: func(c *config.Config, v string) error { c.Bots = splitList(v); return nil }},
-
-	// Appearance
-	{section: "Appearance", title: "Leader key", label: "leader", help: "The key that opens the action menu; the docs call it the leader. Takes effect at once.", kind: optChoice, choices: config.Leaders,
+	listOpt("Inbox", "Bot accounts", "bots", "Dimmed and folded in a PR's activity. Comma separated; logins ending in [bot] always count.", func(c *config.Config) *[]string { return &c.Bots }),
+	{section: "Appearance", title: "Leader key", key: "leader", help: "The key that opens the action menu; the docs call it the leader. Takes effect at once.", kind: optChoice, choices: config.Leaders,
 		get: func(c *config.Config) string { return c.Leader },
 		set: func(c *config.Config, v string) error { c.Leader = v; return nil }},
-	{section: "Appearance", title: "Theme", label: "theme", help: "h/l previews each theme as you go.", kind: optChoice, choices: themeNames,
+	{section: "Appearance", title: "Theme", key: "theme", help: "h/l previews each theme as you go.", kind: optChoice, choices: themeNames,
 		get: func(c *config.Config) string { return c.Theme },
 		set: func(c *config.Config, v string) error { c.Theme = v; return nil }},
-	{section: "Appearance", title: "Nerd Font icons", label: "nerd_font", help: "Powerline separators and icons. Needs a Nerd Font in your terminal.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.NerdFont) },
-		set: func(c *config.Config, v string) error { c.NerdFont = v == "true"; return nil }},
-	{section: "Appearance", title: "Icon legend", label: "show_legend", help: "Explains the inbox icons at the bottom of the inbox.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.ShowLegend) },
-		set: func(c *config.Config, v string) error { c.ShowLegend = v == "true"; return nil }},
-	{section: "Appearance", title: "The owl", label: "playful", help: "Sleeps on an empty inbox and wakes up while prowl syncs. Off: plain text.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.Playful) },
-		set: func(c *config.Config, v string) error { c.Playful = v == "true"; return nil }},
-	{section: "Appearance", title: "Repo prefix", label: "repo_prefix", empty: "full names", help: "Stripped from repo names on screen to save room, e.g. acme- shows acme-api as api.", kind: optText,
+	boolOpt("Appearance", "Nerd Font icons", "nerd_font", "Powerline separators and icons. Needs a Nerd Font in your terminal.", func(c *config.Config) *bool { return &c.NerdFont }),
+	boolOpt("Appearance", "Icon legend", "show_legend", "Explains the inbox icons at the bottom of the inbox.", func(c *config.Config) *bool { return &c.ShowLegend }),
+	boolOpt("Appearance", "The owl", "playful", "Sleeps on an empty inbox and wakes up while prowl syncs. Off: plain text.", func(c *config.Config) *bool { return &c.Playful }),
+	{section: "Appearance", title: "Repo prefix", key: "repo_prefix", empty: "full names", help: "Stripped from repo names on screen to save room, e.g. acme- shows acme-api as api.", kind: optText,
 		get: func(c *config.Config) string { return c.RepoPrefix },
 		set: func(c *config.Config, v string) error { c.RepoPrefix = strings.TrimSpace(v); return nil }},
-	{section: "Appearance", title: "Color per repo", label: "color_repos", help: "Give every repo its own color instead of one shared color.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.ColorRepos) },
-		set: func(c *config.Config, v string) error { c.ColorRepos = v == "true"; return nil }},
-	{section: "Appearance", title: "Mouse", label: "mouse", help: "Click and scroll anywhere. Keys keep working either way.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.Mouse) },
-		set: func(c *config.Config, v string) error { c.Mouse = v == "true"; return nil }},
-
-	// Review agent
-	{section: "Review agent", title: "Reviewers", label: "reviewers", help: "Who reviews PRs: Claude Code, Codex, or a command of your own. <leader>cc runs them all; findings post as one review.", kind: optPick,
+	boolOpt("Appearance", "Color per repo", "color_repos", "Give every repo its own color instead of one shared color.", func(c *config.Config) *bool { return &c.ColorRepos }),
+	boolOpt("Appearance", "Mouse", "mouse", "Click and scroll anywhere. Keys keep working either way.", func(c *config.Config) *bool { return &c.Mouse }),
+	{section: "Review agent", title: "Reviewers", key: "reviewers", help: "Who reviews PRs: Claude Code, Codex, or a command of your own. <leader>cc runs them all; findings post as one review.", kind: optPick,
 		get: func(c *config.Config) string { return strings.Join(c.Agent.Reviewers, ", ") },
 		set: func(c *config.Config, v string) error {
 			if c.Agent.Reviewers = splitList(v); len(c.Agent.Reviewers) == 0 {
@@ -165,24 +154,20 @@ var options = []option{
 			}
 			return nil
 		}},
-	{section: "Review agent", title: "Command", label: "command", help: "Reads the review prompt on stdin and prints the review as JSON (prowl schema).", kind: optText, show: isCommandAgent,
+	{section: "Review agent", title: "Command", key: "command", help: "Reads the review prompt on stdin and prints the review as JSON (prowl schema).", kind: optText, show: isCommandAgent,
 		get: func(c *config.Config) string { return c.Agent.Command },
 		set: func(c *config.Config, v string) error { c.Agent.Command = strings.TrimSpace(v); return nil }},
-	{section: "Review agent", title: "Login command", label: "login_command", help: "What <leader>l runs to log the command agent in.", kind: optText, show: isCommandAgent,
+	{section: "Review agent", title: "Login command", key: "login_command", help: "What <leader>l runs to log the command agent in.", kind: optText, show: isCommandAgent,
 		get: func(c *config.Config) string { return c.Agent.LoginCommand },
 		set: func(c *config.Config, v string) error { c.Agent.LoginCommand = strings.TrimSpace(v); return nil }},
-	{section: "Review agent", title: "Login check", label: "status_command", help: "Exits 0 when the command agent is logged in.", kind: optText, show: isCommandAgent,
+	{section: "Review agent", title: "Login check", key: "status_command", help: "Exits 0 when the command agent is logged in.", kind: optText, show: isCommandAgent,
 		get: func(c *config.Config) string { return c.Agent.StatusCommand },
 		set: func(c *config.Config, v string) error { c.Agent.StatusCommand = strings.TrimSpace(v); return nil }},
-	{section: "Review agent", title: "Required skills", label: "skills", help: "Skills every review must use, comma separated. The agent's other skills stay available.", kind: optText,
-		get: func(c *config.Config) string { return strings.Join(c.Agent.Skills, ", ") },
-		set: func(c *config.Config, v string) error { c.Agent.Skills = splitList(v); return nil }},
-	{section: "Review agent", title: "Extra directories", label: "context_dirs", help: "Directories the agent may read besides the PR, e.g. your org's standards repo. Comma separated.", kind: optText,
-		get: func(c *config.Config) string { return strings.Join(c.Agent.ContextDirs, ", ") },
-		set: func(c *config.Config, v string) error { c.Agent.ContextDirs = splitList(v); return nil }},
+	listOpt("Review agent", "Required skills", "skills", "Skills every review must use, comma separated. The agent's other skills stay available.", func(c *config.Config) *[]string { return &c.Agent.Skills }),
+	listOpt("Review agent", "Extra directories", "context_dirs", "Directories the agent may read besides the PR, e.g. your org's standards repo. Comma separated.", func(c *config.Config) *[]string { return &c.Agent.ContextDirs }),
 	mapOpt("Review agent", "Run images", "run_images", "# owner/name = container image for the agent's run tool, which runs commands\n# like go test in Docker on a copy of the code. \"*\" is the fallback.\n# No image, or no docker: reviews only read.\n# \"*\" = \"golang:1.27\"\n# \"acme/web\" = \"node:22\"\n",
 		func(c *config.Config) *map[string]string { return &c.Agent.RunImages }),
-	{section: "Review agent", title: "Review instructions", label: "review_instructions", help: "What the agent looks for and how it writes. Opens your editor with the current text; save it unchanged or empty to keep prowl's.", kind: optEditor,
+	{section: "Review agent", title: "Review instructions", key: "review_instructions", help: "What the agent looks for and how it writes. Opens your editor with the current text; save it unchanged or empty to keep prowl's.", kind: optEditor,
 		get: func(c *config.Config) string { return c.Agent.Instructions() },
 		set: func(c *config.Config, v string) error {
 			if v = strings.TrimSpace(v); v == config.DefaultReviewInstructions {
@@ -191,13 +176,16 @@ var options = []option{
 			c.Agent.ReviewInstructions = v
 			return nil
 		}},
-	{section: "Review agent", title: "Should-fix findings", label: "should_fix", help: "Report real problems that don't block the merge. Must-fix findings are always reported.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.Agent.ShouldFix) },
-		set: func(c *config.Config, v string) error { c.Agent.ShouldFix = v == "true"; return nil }},
-	{section: "Review agent", title: "Nits", label: "nits", help: "Report minor, optional findings.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.Agent.Nits) },
-		set: func(c *config.Config, v string) error { c.Agent.Nits = v == "true"; return nil }},
-	{section: "Review agent", title: "Review profiles", label: "profiles", help: "Named ways to review, run with <leader>cp. Opens your editor.", kind: optEditor,
+	boolOpt("Review agent", "Should-fix findings", "should_fix", "Report real problems that don't block the merge. Must-fix findings are always reported.", func(c *config.Config) *bool { return &c.Agent.ShouldFix }),
+	boolOpt("Review agent", "Nits", "nits", "Report minor, optional findings.", func(c *config.Config) *bool { return &c.Agent.Nits }),
+	{section: "Review agent", title: "Review profiles", key: "profiles", help: "Named ways to review, run with <leader>cp. Opens your editor.", kind: optEditor,
+		summary: func(c *config.Config) string {
+			var names []string
+			for _, p := range c.Agent.AllProfiles() {
+				names = append(names, p.Name)
+			}
+			return strings.Join(names, ", ")
+		},
 		get: profilesText,
 		set: func(c *config.Config, v string) error {
 			var in struct {
@@ -214,10 +202,8 @@ var options = []option{
 			c.Agent.Profiles = in.Profiles
 			return nil
 		}},
-	{section: "Review agent", title: "AI summary for new PRs", label: "auto_summary", help: "Write an AI summary of each PR as it first needs you. <leader>ca writes one on demand either way.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.Agent.AutoSummary) },
-		set: func(c *config.Config, v string) error { c.Agent.AutoSummary = v == "true"; return nil }},
-	{section: "Review agent", title: "Learn from my edits", label: "edit_examples", help: "How many of your recent rewrites of agent drafts go into review prompts as examples (prowl edits shows them). 0 is off.", kind: optChoice, choices: []string{"0", "1", "2", "3", "5"},
+	boolOpt("Review agent", "AI summary for new PRs", "auto_summary", "Write an AI summary of each PR as it first needs you. <leader>ca writes one on demand either way.", func(c *config.Config) *bool { return &c.Agent.AutoSummary }),
+	{section: "Review agent", title: "Learn from my edits", key: "edit_examples", help: "How many of your recent rewrites of agent drafts go into review prompts as examples (prowl edits shows them). 0 is off.", kind: optChoice, choices: []string{"0", "1", "2", "3", "5"},
 		get: func(c *config.Config) string { return fmt.Sprint(c.Agent.EditExamples) },
 		set: func(c *config.Config, v string) error {
 			n, err := strconv.Atoi(v)
@@ -227,35 +213,31 @@ var options = []option{
 			c.Agent.EditExamples = n
 			return nil
 		}},
-	{section: "Review agent", title: "Chat window", label: "chat_mode", help: "How <leader>ci shows the agent: a floating popup, or fullscreen while prowl steps aside.", kind: optChoice, choices: []string{"popup", "fullscreen"},
+	{section: "Review agent", title: "Chat window", key: "chat_mode", help: "How <leader>ci shows the agent: a floating popup, or fullscreen while prowl steps aside.", kind: optChoice, choices: []string{"popup", "fullscreen"},
 		show: func(*config.Config) bool { return floatingChat },
 		get:  func(c *config.Config) string { return c.ChatMode },
 		set:  func(c *config.Config, v string) error { c.ChatMode = v; return nil }},
-
-	// GitHub
-	{section: "GitHub", title: "Orgs", label: "orgs", empty: "all of GitHub", help: "Orgs to pull PRs from, comma separated. Empty: your PRs across all of GitHub.", kind: optText,
+	{section: "GitHub", title: "Orgs", key: "orgs", empty: "all of GitHub", help: "Orgs to pull PRs from, comma separated. Empty: your PRs across all of GitHub.", kind: optText,
 		get: func(c *config.Config) string { return strings.Join(c.Orgs, ", ") },
 		set: func(c *config.Config, v string) error { c.Orgs = splitList(v); return nil }},
-	{section: "GitHub", title: "Watched repos", label: "watch_repos", help: "owner/name, comma separated. Every open PR shows in All, not only yours. <leader>w toggles the current repo.", kind: optText,
-		get: func(c *config.Config) string { return strings.Join(c.WatchRepos, ", ") },
-		set: func(c *config.Config, v string) error { c.WatchRepos = splitList(v); return nil }},
-	{section: "GitHub", title: "Local clones", label: "repo_roots", help: "Directories holding your clones; reviews reuse <dir>/<repo>. Comma separated.", kind: optText,
-		get: func(c *config.Config) string { return strings.Join(c.RepoRoots, ", ") },
-		set: func(c *config.Config, v string) error { c.RepoRoots = splitList(v); return nil }},
+	listOpt("GitHub", "Watched repos", "watch_repos", "owner/name, comma separated. Every open PR shows in All, not only yours. <leader>w toggles the current repo.", func(c *config.Config) *[]string { return &c.WatchRepos }),
+	listOpt("GitHub", "Local clones", "repo_roots", "Directories holding your clones; reviews reuse <dir>/<repo>. Comma separated.", func(c *config.Config) *[]string { return &c.RepoRoots }),
 	durationOpt("GitHub", "Check every", "poll_interval", "How often to check GitHub, here and in prowl watch.", func(c *config.Config) *config.Duration { return &c.PollInterval }),
 	durationOpt("GitHub", "Notifications stay", "notify_timeout", "How long desktop notifications stay on screen.", func(c *config.Config) *config.Duration { return &c.NotifyTimeout }),
-
-	// Editor
-	{section: "Editor", title: "Editor", label: "editor", empty: "$VISUAL, $EDITOR or vi", help: "For reviews and long text. Empty uses $VISUAL, then $EDITOR, then vi (notepad on Windows).", kind: optText,
+	{section: "Editor", title: "Editor", key: "editor", empty: "$VISUAL, $EDITOR or vi", help: "For reviews and long text. Empty uses $VISUAL, then $EDITOR, then vi (notepad on Windows).", kind: optText,
 		get: func(c *config.Config) string { return c.Editor },
 		set: func(c *config.Config, v string) error { c.Editor = strings.TrimSpace(v); return nil }},
-
-	// Slack
-	{section: "Slack", title: "Channels", label: "slack_channels", help: "The channels and DMs whose PR links show in the inbox as shared.", kind: optEditor,
+	{section: "Slack", title: "Channels", key: "slack_channels", help: "The channels and DMs whose PR links show in the inbox as shared.", kind: optEditor,
 		open: func(m *Model, p *optionsPopup, _ option) tea.Cmd { return m.openChannels(p) },
-		get:  func(c *config.Config) string { return strings.Join(c.SlackChannels, ", ") },
-		set:  func(c *config.Config, v string) error { c.SlackChannels = splitList(v); return nil }},
-	{section: "Slack", title: "After review", label: "slack_after_review", help: "react keeps an emoji on the share in step with your review; reply posts the Slack line in its thread when you submit from prowl.",
+		summary: func(c *config.Config) string {
+			if c.SlackDMs {
+				return fmt.Sprintf("%d channels + DMs", len(c.SlackChannels))
+			}
+			return fmt.Sprintf("%d channels", len(c.SlackChannels))
+		},
+		get: func(c *config.Config) string { return strings.Join(c.SlackChannels, ", ") },
+		set: func(c *config.Config, v string) error { c.SlackChannels = splitList(v); return nil }},
+	{section: "Slack", title: "After review", key: "slack_after_review", help: "react keeps an emoji on the share in step with your review; reply posts the Slack line in its thread when you submit from prowl.",
 		kind: optChoice, choices: []string{"react", "reply", "off"},
 		get: func(c *config.Config) string { return c.SlackAfterReview },
 		set: func(c *config.Config, v string) error { c.SlackAfterReview = v; return nil }},
@@ -274,29 +256,25 @@ var options = []option{
 		}
 		return o
 	}(),
-	{section: "Updates", title: "Check for updates", label: "check_updates", help: "Asks GitHub once a day whether a newer prowl is out, and says so under the legend.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.CheckUpdates) },
-		set: func(c *config.Config, v string) error { c.CheckUpdates = v == "true"; return nil }},
-	{section: "Updates", title: "Update in the background", label: "auto_update", help: "Installs a newer prowl when the install script installed it; <leader>U restarts into it. A package manager's prowl is never replaced.", kind: optBool,
-		get: func(c *config.Config) string { return fmt.Sprint(c.AutoUpdate) },
-		set: func(c *config.Config, v string) error { c.AutoUpdate = v == "true"; return nil }},
+	boolOpt("Updates", "Check for updates", "check_updates", "Asks GitHub once a day whether a newer prowl is out, and says so under the legend.", func(c *config.Config) *bool { return &c.CheckUpdates }),
+	boolOpt("Updates", "Update in the background", "auto_update", "Installs a newer prowl when the install script installed it; <leader>U restarts into it. A package manager's prowl is never replaced.", func(c *config.Config) *bool { return &c.AutoUpdate }),
 }
 
 // optionTopic is the docs topic for an option: its config key as the config
 // docs write it, e.g. [agent.models] for models.claude.
-func optionTopic(label string) string {
-	key, _, _ := strings.Cut(label, ".")
-	for _, t := range []string{key, "[" + key + "]", "[agent." + key + "]", "[[agent." + key + "]]"} {
+func optionTopic(key string) string {
+	table, _, _ := strings.Cut(key, ".")
+	for _, t := range []string{table, "[" + table + "]", "[agent." + table + "]", "[[agent." + table + "]]"} {
 		if tags := docs.Find(t); len(tags) > 0 && tags[0].Tag == t {
 			return t
 		}
 	}
-	return label
+	return key
 }
 
 // modelOption is the model setting for one reviewer, listed per agent.
 func modelOption(name string) option {
-	return option{section: "Review agent", title: agent.Title(name) + " model", label: "models." + name, kind: optChoice,
+	return option{section: "Review agent", title: agent.Title(name) + " model", key: "models." + name, kind: optChoice,
 		help:      "The models " + agent.Title(name) + " itself offers. Default follows its own setting.",
 		choicesFn: func(c *config.Config) []string { return core.Models(*c, name) },
 		get:       func(c *config.Config) string { return c.Agent.Model(name) },
@@ -305,7 +283,7 @@ func modelOption(name string) option {
 
 // summaryModelOption is the AI summary model for one reviewer.
 func summaryModelOption(name string) option {
-	return option{section: "Review agent", title: agent.Title(name) + " summary model", label: "summary_models." + name, kind: optChoice,
+	return option{section: "Review agent", title: agent.Title(name) + " summary model", key: "summary_models." + name, kind: optChoice,
 		help:      "Model for AI summaries (<leader>ca). Default is the review model; a small, fast one is plenty.",
 		choicesFn: func(c *config.Config) []string { return core.Models(*c, name) },
 		get:       func(c *config.Config) string { return c.Agent.SummaryModels[name] },
@@ -344,7 +322,7 @@ func quoteList(xs []string) string {
 
 // emojiOpt is the Slack emoji prowl reacts with for one review state.
 func emojiOpt(title, key, help string, field func(r *config.SlackReactions) *string) option {
-	return option{section: "Slack", title: title + " emoji", label: "slack_reactions." + key, help: help + " A Slack emoji name, without colons.", kind: optText,
+	return option{section: "Slack", title: title + " emoji", key: "slack_reactions." + key, help: help + " A Slack emoji name, without colons.", kind: optText,
 		get: func(c *config.Config) string { return *field(&c.SlackReactions) },
 		set: func(c *config.Config, v string) error {
 			v = strings.Trim(strings.TrimSpace(v), ":")
@@ -357,18 +335,14 @@ func emojiOpt(title, key, help string, field func(r *config.SlackReactions) *str
 }
 
 // mapOpt edits a string-to-string table in your editor.
-func mapOpt(section, title, label, header string, field func(c *config.Config) *map[string]string) option {
-	return option{section: section, title: title, label: label, help: "Opens your editor.", kind: optEditor,
+func mapOpt(section, title, key, header string, field func(c *config.Config) *map[string]string) option {
+	return option{section: section, title: title, key: key, help: "Opens your editor.", kind: optEditor,
+		summary: func(c *config.Config) string { return fmt.Sprintf("%d set", len(*field(c))) },
 		get: func(c *config.Config) string {
 			m := *field(c)
-			keys := make([]string, 0, len(m))
-			for k := range m {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
 			var b strings.Builder
 			b.WriteString(header)
-			for _, k := range keys {
+			for _, k := range slices.Sorted(maps.Keys(m)) {
 				fmt.Fprintf(&b, "%q = %q\n", k, m[k])
 			}
 			return b.String()
@@ -376,7 +350,7 @@ func mapOpt(section, title, label, header string, field func(c *config.Config) *
 		set: func(c *config.Config, v string) error {
 			out := map[string]string{}
 			if _, err := toml.Decode(v, &out); err != nil {
-				return fmt.Errorf("%s: %w", label, err)
+				return fmt.Errorf("%s: %w", key, err)
 			}
 			*field(c) = out
 			return nil
@@ -454,7 +428,7 @@ func (p *optionsPopup) apply(m *Model, o option, v string) tea.Cmd {
 // returns to the options.
 func (m *Model) editOption(p *optionsPopup, o option) tea.Cmd {
 	m.popup = nil
-	return m.openEditor(o.label+".toml", o.get(&m.cfg), func(m *Model, text string, saved bool) tea.Cmd {
+	return m.openEditor(o.key+".toml", o.get(&m.cfg), func(m *Model, text string, saved bool) tea.Cmd {
 		if p != nil {
 			m.popup = p
 		}
@@ -517,7 +491,7 @@ func (p *optionsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	case "esc", "q", "ctrl+c":
 		m.popup = nil
 	case "K":
-		return m.openDocs(optionTopic(o.label))
+		return m.openDocs(optionTopic(o.key))
 	case "h", "left":
 		switch o.kind {
 		case optChoice:
@@ -560,18 +534,17 @@ func (p *optionsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 // apply (the command agent's settings when another agent reviews).
 func visibleOptions(c *config.Config) []option {
 	var out []option
-	for _, sec := range optSections {
-		for _, o := range options {
-			if o.section == sec && (o.show == nil || o.show(c)) {
-				out = append(out, o)
-				if o.label == "reviewers" {
-					for _, r := range c.Agent.Reviewers {
-						out = append(out, modelOption(r))
-					}
-					for _, r := range c.Agent.Reviewers {
-						out = append(out, summaryModelOption(r))
-					}
-				}
+	for _, o := range options {
+		if o.show != nil && !o.show(c) {
+			continue
+		}
+		out = append(out, o)
+		if o.key == "reviewers" {
+			for _, r := range c.Agent.Reviewers {
+				out = append(out, modelOption(r))
+			}
+			for _, r := range c.Agent.Reviewers {
+				out = append(out, summaryModelOption(r))
 			}
 		}
 	}
@@ -603,32 +576,10 @@ func (p *optionsPopup) value(m *Model, o option, sel bool) string {
 		return "  " + strings.Join(names, sDim.Render(" + ")) + sDim.Render(" ✎")
 	case optEditor:
 		first := strings.TrimSpace(val)
-		switch o.label {
-		case "slack_names":
-			first = fmt.Sprintf("%d mapped", len(m.cfg.SlackNames))
-		case "slack_channels":
-			first = fmt.Sprintf("%d channels", len(m.cfg.SlackChannels))
-			if m.cfg.SlackDMs {
-				first += " + DMs"
-			}
-		case "type_colors":
-			first = fmt.Sprintf("%d set", len(m.cfg.TypeColors))
-		case "run_images":
-			var images []string
-			for _, repo := range slices.Sorted(maps.Keys(m.cfg.Agent.RunImages)) {
-				images = append(images, repo+": "+m.cfg.Agent.RunImages[repo])
-			}
-			first = strings.Join(images, ", ")
-		case "profiles":
-			var names []string
-			for _, p := range m.cfg.Agent.AllProfiles() {
-				names = append(names, p.Name)
-			}
-			first = strings.Join(names, ", ")
-		default:
-			if i := strings.IndexByte(first, '\n'); i >= 0 {
-				first = first[:i] + " …"
-			}
+		if o.summary != nil {
+			first = o.summary(&m.cfg)
+		} else if i := strings.IndexByte(first, '\n'); i >= 0 {
+			first = first[:i] + " …"
 		}
 		if first == "" {
 			first = "none"
@@ -691,7 +642,7 @@ func (p *optionsPopup) view(m *Model) string {
 	for len(help) < 2 {
 		help = append(help, "")
 	}
-	foot = append(foot, " "+sBold.Render(o.title)+sDim.Render("  "+o.label), " "+sDim.Render(help[0]))
+	foot = append(foot, " "+sBold.Render(o.title)+sDim.Render("  "+o.key), " "+sDim.Render(help[0]))
 	if len(help) > 1 && help[1] != "" {
 		foot[len(foot)-1] += "\n " + sDim.Render(help[1])
 	}

@@ -185,7 +185,7 @@ func (p *namesPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		r.accept, r.clear = false, r.mapped || r.user.ID != ""
 	case "E":
 		p.close(m)
-		i := slices.IndexFunc(options, func(o option) bool { return o.label == "slack_names" })
+		i := slices.IndexFunc(options, func(o option) bool { return o.key == "slack_names" })
 		return m.editOption(p.back, options[i])
 	case "enter":
 		return p.save(m)
