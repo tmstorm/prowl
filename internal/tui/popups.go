@@ -151,10 +151,10 @@ func (p *textPopup) view(m *Model) string {
 		}
 		for i, l := range p.sel {
 			if i == 4 {
-				ctx = append(ctx, sDim.Render(fmt.Sprintf("  … %d more lines", len(p.sel)-4)))
+				ctx = append(ctx, sDim.Render("  … "+count(len(p.sel)-4, "more line")))
 				break
 			}
-			ctx = append(ctx, renderDiffLine(l, w-4, false))
+			ctx = append(ctx, renderDiffLine(l, w-4))
 		}
 		help = "ctrl+s / esc save as pending · ctrl+e edit in " + m.cfg.EditorCmd() + " · ctrl+c discard"
 	case popRefine:
@@ -168,7 +168,7 @@ func (p *textPopup) view(m *Model) string {
 		title = fmt.Sprintf("Reply on %s:%d", p.thread.Path, line)
 		if n := len(p.thread.Comments.Nodes); n > 0 {
 			last := p.thread.Comments.Nodes[n-1]
-			for _, l := range renderMarkdown(last.Body, w-6, themeName) {
+			for _, l := range renderMarkdown(last.Body, w-6) {
 				ctx = append(ctx, sDim.Render("┃ ")+l)
 				if len(ctx) >= 6 {
 					break
@@ -509,9 +509,9 @@ func (p *helpPopup) view(m *Model) string {
 		"",
 		sSection.Render("Leader") + sDim.Render(" · a few of them"),
 		k(leader, "every action; or click \"menu\" below"),
-		k(leader+"c", "AI reviews"),
-		k(leader+"f", "find & focus a repo or type"),
-		k(leader+"l", "accounts and logins"),
+		k(leader+"c", leaderEntry("c").desc),
+		k(leader+"f", leaderEntry("f").desc),
+		k(leader+"l", leaderEntry("l").desc),
 	}
 	col2 := []string{
 		sSection.Render("Overview"),

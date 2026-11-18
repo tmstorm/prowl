@@ -81,7 +81,7 @@ func (m *Model) namesProposed(msg namesProposedMsg) tea.Cmd {
 			}
 		}
 		if n > 0 && m.core.FirstTime("slack names") {
-			m.tip = fmt.Sprintf("Slack: matched %d teammates to their Slack users. Review them: <leader>, → Slack names", n)
+			m.offerTip("slack names", fmt.Sprintf("Slack: matched %d teammates to their Slack users. Review them: <leader>, → Slack names", n))
 		}
 		return nil
 	}
@@ -185,7 +185,7 @@ func (p *namesPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		r.accept, r.clear = false, r.mapped || r.user.ID != ""
 	case "E":
 		p.close(m)
-		i := slices.IndexFunc(options, func(o option) bool { return o.label == "slack_names" })
+		i := slices.IndexFunc(options, func(o option) bool { return o.key == "slack_names" })
 		return m.editOption(p.back, options[i])
 	case "enter":
 		return p.save(m)
@@ -261,8 +261,8 @@ func (p *namesPopup) save(m *Model) tea.Cmd {
 		m.fail(err.Error())
 		return nil
 	}
-	m.tip = ""
-	m.info(fmt.Sprintf("saved %d Slack name%s", n, map[bool]string{true: "", false: "s"}[n == 1]))
+	m.dropTip("slack names")
+	m.info("saved " + count(n, "Slack name"))
 	return tea.Batch(m.configChanged(), p.done(m))
 }
 
@@ -457,8 +457,8 @@ func (p *channelsPopup) save(m *Model) tea.Cmd {
 		m.fail(err.Error())
 		return nil
 	}
-	m.tip = ""
-	note := fmt.Sprintf("watching %d Slack channel%s", len(ids), map[bool]string{true: "", false: "s"}[len(ids) == 1])
+	m.dropTip("slack channels")
+	note := "watching " + count(len(ids), "Slack channel")
 	if p.dms {
 		note += " and your DMs"
 	}
@@ -478,7 +478,7 @@ func (p *channelsPopup) view(m *Model) string {
 		if n == 0 {
 			return sDim.Render("no PR links lately")
 		}
-		return sDim.Render(fmt.Sprintf("%d PR link%s in 14 days", n, map[bool]string{true: "", false: "s"}[n == 1]))
+		return sDim.Render(count(n, "PR link") + " in 14 days")
 	}
 	lines := []string{fit(" "+box(p.dms)+" "+fit(sBold.Render("Direct messages"), 28)+links(p.dmLinks), w-4)}
 	for _, i := range p.results {

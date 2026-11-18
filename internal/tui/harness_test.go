@@ -41,6 +41,7 @@ type app struct {
 	m       tea.Model
 	gh      *fakeGitHub
 	st      *store.Store
+	slack   *slack.Client
 	cfg     config.Config
 	clip    string // the file the fake wl-copy writes
 	w, h    int
@@ -88,7 +89,7 @@ func newSlackApp(t *testing.T, fake *fakeGitHub, sl *slack.Client, configure ...
 	for _, f := range configure {
 		f(&cfg)
 	}
-	a := &app{t: t, gh: fake, st: st, cfg: cfg, clip: clip, w: 160, h: 44, late: make(chan tea.Msg, 1024)}
+	a := &app{t: t, gh: fake, st: st, slack: sl, cfg: cfg, clip: clip, w: 160, h: 44, late: make(chan tea.Msg, 1024)}
 	a.m = tui.New(start(t, cfg, c, st, sl))
 	a.send(tea.WindowSizeMsg{Width: a.w, Height: a.h})
 	a.queue = append(a.queue, a.m.Init())
@@ -331,8 +332,8 @@ func reopen(a *app) *app {
 	if err != nil {
 		a.t.Fatal(err)
 	}
-	b := &app{t: a.t, gh: a.gh, st: a.st, cfg: a.cfg, w: a.w, h: a.h, late: make(chan tea.Msg, 1024)}
-	b.m = tui.New(start(a.t, a.cfg, c, a.st, nil))
+	b := &app{t: a.t, gh: a.gh, st: a.st, slack: a.slack, cfg: a.cfg, w: a.w, h: a.h, late: make(chan tea.Msg, 1024)}
+	b.m = tui.New(start(a.t, a.cfg, c, a.st, a.slack))
 	b.send(tea.WindowSizeMsg{Width: b.w, Height: b.h})
 	b.queue = append(b.queue, b.m.Init())
 	b.settle()

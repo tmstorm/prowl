@@ -117,13 +117,9 @@ func (m *Model) editReview(it inbox.Item, d core.Draft) tea.Cmd {
 		b.WriteString("       until the author responds, change it to request_changes.\n")
 	}
 	if len(comments) > 0 {
-		fmt.Fprintf(&b, "\n%d inline comment(s) will be attached:\n", len(comments))
+		fmt.Fprintf(&b, "\n%s will be attached:\n", count(len(comments), "inline comment"))
 		for _, c := range comments {
-			first, _, _ := strings.Cut(c.Body, "\n")
-			if r := []rune(first); len(r) > 70 {
-				first = string(r[:70]) + "…"
-			}
-			fmt.Fprintf(&b, "  %s:%d  %s\n", c.Path, c.Line, first)
+			fmt.Fprintf(&b, "  %s:%d  %s\n", c.Path, c.Line, firstLine(c.Body, 71))
 		}
 		if fromAgent {
 			b.WriteString("(toggle findings in the review tab to change this list)\n")
@@ -134,13 +130,9 @@ func (m *Model) editReview(it inbox.Item, d core.Draft) tea.Cmd {
 		}
 	}
 	if len(d.Replies) > 0 {
-		fmt.Fprintf(&b, "\n%d draft repl%s will be sent after the review, each in its thread:\n", len(d.Replies), map[bool]string{true: "y", false: "ies"}[len(d.Replies) == 1])
+		fmt.Fprintf(&b, "\n%s will be sent after the review, each in its thread:\n", count(len(d.Replies), "draft reply"))
 		for _, r := range d.Replies {
-			first, _, _ := strings.Cut(r.Body, "\n")
-			if rs := []rune(first); len(rs) > 60 {
-				first = string(rs[:60]) + "…"
-			}
-			fmt.Fprintf(&b, "  %s:%d  to %s: %s\n", r.Path, r.Line, r.To, first)
+			fmt.Fprintf(&b, "  %s:%d  to %s: %s\n", r.Path, r.Line, r.To, firstLine(r.Body, 61))
 		}
 		b.WriteString("(x on a draft reply in the review tab leaves it out; c sends one now)\n")
 	}

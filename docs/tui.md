@@ -30,6 +30,7 @@ Not a vim user? The arrow keys work: `↑`/`↓` move, `→` opens the PR pane a
 | `ctrl+p`, `<leader><leader>`, `<leader>ff` | fuzzy-find a PR, or paste a link to one |
 | `o` | open the PR on GitHub |
 | `R`, `<leader>r` | refresh now |
+| `?`, `<leader>?` | list the keys |
 | `:q`, `<leader>q` | quit |
 
 ## Mouse
@@ -46,7 +47,7 @@ Anything that posts to GitHub sits behind the leader key, written `<leader>` in 
 | `<leader>x` | request changes, in your editor |
 | `<leader>m` | comment review, in your editor |
 | `<leader>n` | a plain comment in the conversation, not a review |
-| `<leader>t` | the thread under the cursor: `r` resolve, `u` unresolve, `c` reply |
+| `<leader>tr`, `<leader>tu`, `<leader>tc` | the thread under the cursor: resolve, unresolve, reply |
 | `<leader>A` | ask people or teams for a review |
 | `<leader>R` | request yourself as a reviewer |
 | `<leader>X` | close with a comment |

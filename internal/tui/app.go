@@ -137,7 +137,9 @@ type Model struct {
 	collapsed map[string]bool // folded inbox sections, by groupID
 	started   time.Time       // the owl wakes up from here
 	synced    bool            // a sync finished this session; the first one's changes are on screen, not notified
-	tip       string          // a one-time tip under the legend, for this session
+	news      string          // news about prowl's own updates under the legend
+	tip       string          // a one-time onboarding tip under the legend, for this session
+	tipTopic  string          // what tip is about, e.g. "slack names"
 	exe       string          // the running prowl's path, for updates
 	restart   bool            // quit to start the prowl <leader>U installed
 	waking    bool            // the first sync runs and you haven't touched anything: the PR pane shows the owl
@@ -198,9 +200,8 @@ func New(co *core.Core) *Model {
 	}
 	m.list.scrolloff = 2
 	m.loadRuns()
-	if in := m.core.Inbox(); !in.At.IsZero() {
-		m.setInbox(in)
-		m.rebuildRows()
+	if !m.core.Inbox().At.IsZero() {
+		m.takeInbox("")
 	}
 
 	m.list.skip = func(i int) bool { return m.rows[i].header && !m.collapsed[groupID(m.rows[i])] }
@@ -250,23 +251,23 @@ func (m *Model) reload() tea.Cmd {
 	return tea.Batch(m.refresh(), page)
 }
 
-// setItems replaces the inbox list, refiltering an open finder, whose
-// results point into it.
-func (m *Model) setItems(items []inbox.Item) {
-	m.items = items
-	m.refilter()
-}
-
-// refilter runs an open finder's search again over the current list.
-func (m *Model) refilter() {
+// takeInbox shows the inbox core holds now in the list, the open PRs and
+// an open finder, whose results point into the list. sel stays selected,
+// and visible even when it no longer fits the tab. Read sel before the
+// list changes: rows index into it.
+func (m *Model) takeInbox(sel string) {
+	in := m.core.Inbox()
+	m.items, m.snoozed, m.viewer, m.lastSync = in.Items, in.Snoozed, in.Viewer, in.At
+	for _, it := range m.items {
+		if d := m.details[it.PR.Key()]; d != nil {
+			d.setItem(it)
+		}
+	}
+	m.sticky = sel
+	m.rebuildRowsKeeping(sel)
 	if f, ok := m.popup.(*finder); ok {
 		f.filter(m)
 	}
-}
-
-// setInbox takes the inbox from core.
-func (m *Model) setInbox(in core.Inbox) {
-	m.items, m.snoozed, m.viewer, m.lastSync = in.Items, in.Snoozed, in.Viewer, in.At
 }
 
 // configChanged applies the config core holds now: display settings, the
@@ -323,7 +324,7 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 		core.Notify(changes, m.cfg.NotifyTimeout.Duration)
 	}
 	if !m.synced && m.core.FirstTime("service") && !m.core.Service() {
-		m.tip = "tip: <leader>, → Background notifications tells you about PRs while prowl is closed"
+		m.offerTip("service", "tip: <leader>, → Background notifications tells you about PRs while prowl is closed")
 	}
 	if !m.synced && !m.cfg.NerdFont && m.core.FirstTime("nerd font") {
 		m.askIcons()
@@ -332,7 +333,7 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 	switch {
 	case m.synced:
 	case m.core.SlackConnected() && len(m.cfg.SlackChannels) == 0 && m.core.FirstTime("slack channels"):
-		m.tip = "Slack: pick the channels whose PR links you want in the inbox: <leader>, → Slack channels"
+		m.offerTip("slack channels", "Slack: pick the channels whose PR links you want in the inbox: <leader>, → Slack channels")
 	case m.core.SlackConnected() && !m.core.Shown("slack names"):
 		offerNames = m.matchSlackNames(namesProposedMsg{tip: true})
 	}
@@ -344,17 +345,8 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 		}
 		m.fail(msg)
 	}
-	selKey := m.selectionKey()
-	m.setInbox(m.core.Inbox())
 	m.loadRuns()
-	for _, it := range m.items {
-		if d := m.details[it.PR.Key()]; d != nil {
-			d.setItem(it)
-		}
-	}
-	m.sticky = selKey
-	m.rebuildRowsKeeping(selKey)
-	m.refilter()
+	m.takeInbox(m.selectionKey())
 	var reload tea.Cmd
 	if d := m.current(); d != nil {
 		reload = d.ensureLoaded(m.core)
@@ -396,7 +388,7 @@ func (m *Model) animInterval() time.Duration {
 
 // owlAsleep is true while the owl sleeps on an empty inbox.
 func (m *Model) owlAsleep() bool {
-	return m.cfg.Playful && !m.loading && len(m.rows) == 0 && m.popup == nil
+	return playful && !m.loading && len(m.rows) == 0 && m.popup == nil
 }
 
 func (m *Model) needsAnim() bool {
@@ -497,9 +489,8 @@ func (m *Model) openFetched(msg prFetchedMsg) tea.Cmd {
 		return nil
 	}
 	key := msg.item.PR.Key()
-	m.setItems(m.core.Inbox().Items)
 	m.filter = fAll
-	m.rebuildRowsKeeping(key)
+	m.takeInbox(key)
 	m.focus = fDetail
 	m.info("opened " + key + " · " + leader + "R requests you as reviewer")
 	if it := m.selectedItem(); it != nil {
@@ -711,8 +702,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.err != nil:
 			m.fail("background notifications: " + msg.err.Error())
 		case msg.on:
-			m.tip = ""
-			m.layoutNavs()
+			m.dropTip("service")
 			m.info("background notifications on: " + msg.what)
 		default:
 			m.info("background notifications off")
@@ -1119,23 +1109,10 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 		return m.searchKey(k)
 	case modeLeader:
 		m.mode = modeNormal
-		prefix := m.leaderPrefix
+		menu := leaderEntry(m.leaderPrefix)
 		m.leaderPrefix = ""
-		switch prefix {
-		case "f":
-			switch key {
-			case "f":
-				m.popup = newFinder(m)
-			case "r":
-				m.popup = newRepoPicker(m)
-			case "t":
-				m.popup = newTypePicker(m)
-			}
-			return nil
-		case "t":
-			return m.threadAction(key)
-		case "c":
-			return m.agentAction(key)
+		if menu.run != nil {
+			return menu.run(m, key)
 		}
 		return m.leader(key)
 	}
@@ -1343,7 +1320,17 @@ type leaderKey struct {
 	key, desc string
 	cat       string // column heading in the menu
 	write     bool   // touches GitHub
-	group     bool
+	sub       []leaderKey
+	run       func(*Model, string) tea.Cmd // runs a key from sub
+}
+
+// leaderEntry is the leader menu's entry for key, or the zero entry.
+func leaderEntry(key string) leaderKey {
+	i := slices.IndexFunc(leaderKeys, func(k leaderKey) bool { return k.key == key })
+	if i < 0 {
+		return leaderKey{}
+	}
+	return leaderKeys[i]
 }
 
 var agentKeys = []leaderKey{
@@ -1374,16 +1361,16 @@ var leaderKeys = []leaderKey{
 	{cat: "Review", key: "a", desc: "approve", write: true},
 	{cat: "Review", key: "x", desc: "request changes", write: true},
 	{cat: "Review", key: "m", desc: "comment", write: true},
-	{cat: "Review", key: "t", desc: "threads", group: true},
+	{cat: "Review", key: "t", desc: "threads", sub: threadKeys, run: (*Model).threadAction},
 	{cat: "Review", key: "R", desc: "request me as reviewer", write: true},
 	{cat: "Review", key: "n", desc: "comment in the conversation", write: true},
 	{cat: "Review", key: "A", desc: "ask for reviews", write: true},
 	{cat: "Review", key: "X", desc: "close with a comment", write: true},
 	{cat: "Review", key: "D", desc: "draft / ready for review", write: true},
-	{cat: "Agent", key: "c", desc: "AI review", group: true},
+	{cat: "Agent", key: "c", desc: "AI review", sub: agentKeys, run: (*Model).agentAction},
 	{cat: "Agent", key: "p", desc: "post the AI review", write: true},
 	{cat: "Agent", key: "l", desc: "accounts / log in"},
-	{cat: "Inbox", key: "f", desc: "find & focus", group: true},
+	{cat: "Inbox", key: "f", desc: "find & focus", sub: findKeys, run: (*Model).findAction},
 	{cat: "Inbox", key: "g", desc: "group by repo / status"},
 	{cat: "Inbox", key: "s", desc: "snooze"},
 	{cat: "Inbox", key: "S", desc: "unsnooze"},
@@ -1417,12 +1404,13 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 		return it != nil
 	}
-	switch key {
-	case "esc":
-		return nil
-	case "t", "c", "f":
+	if leaderEntry(key).sub != nil {
 		m.mode = modeLeader
 		m.leaderPrefix = key
+		return nil
+	}
+	switch key {
+	case "esc":
 		return nil
 	case ",":
 		m.popup = newOptions(m)
@@ -1556,6 +1544,21 @@ func (m *Model) leader(key string) tea.Cmd {
 	return nil
 }
 
+func (m *Model) findAction(key string) tea.Cmd {
+	switch key {
+	case "esc":
+	case "f":
+		m.popup = newFinder(m)
+	case "r":
+		m.popup = newRepoPicker(m)
+	case "t":
+		m.popup = newTypePicker(m)
+	default:
+		m.fail("no find mapping for " + key)
+	}
+	return nil
+}
+
 func (m *Model) agentAction(key string) tea.Cmd {
 	if key == "esc" {
 		return nil
@@ -1569,7 +1572,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 	target := m.targetRun(*it)
 	switch key {
 	case "c":
-		return m.startAll(*it)
+		return m.startReviews(*it, m.cfg.Agent.Reviewers)
 	case "C":
 		m.popup = newAgentPicker(m, *it)
 		return nil
@@ -1632,8 +1635,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 				return nil
 			}
 			m.loadRuns()
-			m.setItems(m.core.Inbox().Items)
-			m.rebuildRows()
+			m.takeInbox(m.selectionKey())
 			m.info("discarded " + core.ReviewerTitle(target.Reviewer()) + "'s review; its previous one (if any) is current again")
 			return nil
 		}
@@ -1830,7 +1832,7 @@ func (m *Model) searchLines() []string {
 	for i, r := range m.rows {
 		if !r.header {
 			it := m.items[r.item]
-			out[i] = it.PR.Repository.Name + " " + it.PR.Title + " " + it.PR.AuthorLogin() + " #" + itoa(it.PR.Number)
+			out[i] = it.PR.Repository.Name + " " + it.PR.Title + " " + it.PR.AuthorLogin() + " #" + strconv.Itoa(it.PR.Number)
 		}
 	}
 	return out
@@ -1901,7 +1903,7 @@ func (m *Model) askApprove(it inbox.Item) tea.Cmd {
 	d := m.core.Draft(it.PR.Key(), "APPROVE")
 	prompt := "approve " + prName(it.PR)
 	if len(d.Comments) > 0 {
-		prompt += " with " + itoa(len(d.Comments)) + " inline comment(s)"
+		prompt += " with " + count(len(d.Comments), "inline comment")
 	}
 	m.confirm = &confirm{prompt: prompt + "?", yes: func() tea.Cmd { return m.submit(it, d) }}
 	return nil
@@ -2012,21 +2014,13 @@ func (m *Model) applyPR(msg prRefreshedMsg) {
 	if msg.err != nil {
 		return
 	}
-	sel := m.selectionKey()
-	m.setItems(m.core.Inbox().Items)
-	for _, it := range m.items {
-		if d := m.details[it.PR.Key()]; d != nil && it.PR.Key() == msg.key {
-			d.setItem(it)
-		}
-	}
-	m.sticky = sel
-	m.rebuildRowsKeeping(sel)
+	m.takeInbox(m.selectionKey())
 }
 
-// startAll runs a review by every reviewer at once.
-func (m *Model) startAll(it inbox.Item) tea.Cmd {
+// startReviews runs a review by each reviewer at once.
+func (m *Model) startReviews(it inbox.Item, reviewers []string) tea.Cmd {
 	var started, problems []string
-	for _, name := range m.cfg.Agent.Reviewers {
+	for _, name := range reviewers {
 		title, err := m.launchReview(it, "", false, name)
 		if err != nil {
 			problems = append(problems, err.Error())
@@ -2072,26 +2066,15 @@ func (m *Model) startReview(it inbox.Item, refine string, sync bool, reviewer st
 // startProfile runs a review profile with its reviewers (the main agent when
 // it names none).
 func (m *Model) startProfile(it inbox.Item, p config.Profile) tea.Cmd {
-	reviewers := p.Reviewers
-	if len(reviewers) == 0 {
-		reviewers = []string{m.cfg.Agent.Main()}
+	agents := p.Reviewers
+	if len(agents) == 0 {
+		agents = []string{m.cfg.Agent.Main()}
 	}
-	var started, problems []string
-	for _, name := range reviewers {
-		title, err := m.launchReview(it, "", false, name+":"+p.Name)
-		if err != nil {
-			problems = append(problems, err.Error())
-			continue
-		}
-		started = append(started, title)
+	var reviewers []string
+	for _, name := range agents {
+		reviewers = append(reviewers, name+":"+p.Name)
 	}
-	if len(started) == 0 {
-		m.fail(strings.Join(problems, " · "))
-		return nil
-	}
-	m.info(strings.Join(started, " and ") + " reviewing")
-	m.loadRuns()
-	return m.startAnim()
+	return m.startReviews(it, reviewers)
 }
 
 // launchReview starts one reviewer (agent or agent:profile; "" is the main
@@ -2175,5 +2158,3 @@ func openURL(u string) tea.Cmd {
 		return infoMsg("opened " + u)
 	}
 }
-
-func itoa(n int) string { return strconv.Itoa(n) }

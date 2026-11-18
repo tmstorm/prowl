@@ -104,9 +104,9 @@ func ago(t time.Time) string {
 	}
 }
 
-func ciBadge(state string, nerd bool) string {
+func ciBadge(state string) string {
 	ok, bad, run := "✓", "✗", "●"
-	if nerd {
+	if nerdIcons {
 		ok, bad, run = "\uf00c", "\uf00d", "\uf017"
 	}
 	switch state {
@@ -137,6 +137,18 @@ func trunc(s string, w int) string {
 		return ""
 	}
 	return ansi.Truncate(s, w, "…")
+}
+
+// count is n of noun, plural unless n is 1: "1 line", "3 replies".
+func count(n int, noun string) string {
+	switch {
+	case n == 1:
+	case strings.HasSuffix(noun, "y"):
+		noun = strings.TrimSuffix(noun, "y") + "ies"
+	default:
+		noun += "s"
+	}
+	return fmt.Sprintf("%d %s", n, noun)
 }
 
 // fit truncates or pads a styled string to exactly w cells.

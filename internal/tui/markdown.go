@@ -66,9 +66,9 @@ func mdStyle(theme string) gansi.StyleConfig {
 }
 
 // renderMarkdown renders GitHub markdown to styled lines of at most w cells.
-func renderMarkdown(src string, w int, theme string) []string {
-	if md.r == nil || md.theme != theme {
-		md.theme, md.r, md.cache = theme, map[int]*glamour.TermRenderer{}, map[mdKey][]string{}
+func renderMarkdown(src string, w int) []string {
+	if md.r == nil || md.theme != themeName {
+		md.theme, md.r, md.cache = themeName, map[int]*glamour.TermRenderer{}, map[mdKey][]string{}
 	}
 	if out, ok := md.cache[mdKey{w, src}]; ok {
 		return out
@@ -76,7 +76,7 @@ func renderMarkdown(src string, w int, theme string) []string {
 	r := md.r[w]
 	if r == nil {
 		var err error
-		if r, err = glamour.NewTermRenderer(glamour.WithStyles(mdStyle(theme)), glamour.WithWordWrap(w), glamour.WithEmoji()); err != nil {
+		if r, err = glamour.NewTermRenderer(glamour.WithStyles(mdStyle(themeName)), glamour.WithWordWrap(w), glamour.WithEmoji()); err != nil {
 			return wrap(src, w)
 		}
 		md.r[w] = r

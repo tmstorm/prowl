@@ -206,7 +206,6 @@ func (m *Model) listPane(l layout, x int) string {
 		} else {
 			s = sDim.Render(label)
 		}
-		f := f
 		m.hits.add(tx, 0, lipgloss.Width(label), 1, func(m *Model) tea.Cmd { m.setFilter(f); return nil })
 		tx += lipgloss.Width(label) + 1
 		parts = append(parts, s)
@@ -371,7 +370,6 @@ func (m *Model) legend(w int) []string {
 			seen["threads"] = true
 		}
 	}
-	nerd := m.cfg.NerdFont
 	var parts []string
 	add := func(key, icon, label string) {
 		if seen[key] {
@@ -384,16 +382,16 @@ func (m *Model) legend(w int) []string {
 	add("needs rebase", sYellow.Render("↻"), "needs rebase")
 	add("needs review", sDim.Render("○"), "awaiting review")
 	add("draft", sDim.Render("◌"), "draft")
-	add("ci:SUCCESS", ciBadge("SUCCESS", nerd), "CI passed")
+	add("ci:SUCCESS", ciBadge("SUCCESS"), "CI passed")
 	if seen["ci:FAILURE"] || seen["ci:ERROR"] {
-		parts = append(parts, ciBadge("FAILURE", nerd)+" "+sDim.Render("CI failed"))
+		parts = append(parts, ciBadge("FAILURE")+" "+sDim.Render("CI failed"))
 	}
 	if seen["ci:PENDING"] || seen["ci:EXPECTED"] {
-		parts = append(parts, ciBadge("PENDING", nerd)+" "+sDim.Render("CI running"))
+		parts = append(parts, ciBadge("PENDING")+" "+sDim.Render("CI running"))
 	}
 	if seen["review"] {
 		icon := "C"
-		if nerd {
+		if nerdIcons {
 			icon = "\U000f06a9"
 		}
 		parts = append(parts, sBlue.Render(icon)+" "+sDim.Render("AI review"))
@@ -430,14 +428,14 @@ func (m *Model) legend(w int) []string {
 	return append(lines, " "+keysLine(w-2))
 }
 
-// tipLines is the one-time tip, or news about prowl's own updates, at the
-// bottom of the inbox under its own divider, so it shows with the legend off.
+// tipLines is news about prowl's own updates, then the one-time tip, at the
+// bottom of the inbox under its own divider, so they show with the legend off.
 func (m *Model) tipLines(w int) []string {
-	if m.tip == "" {
+	if m.news == "" && m.tip == "" {
 		return nil
 	}
 	lines := []string{sBorder.Render("┄┄ ") + sDim.Render("prowl") + sBorder.Render(" "+strings.Repeat("┄", max(w-9, 0)))}
-	for _, l := range wrap(strings.ReplaceAll(m.tip, "<leader>", leader), w-2) {
+	for _, l := range wrap(strings.ReplaceAll(strings.TrimSpace(m.news+"\n"+m.tip), "<leader>", leader), w-2) {
 		l = strings.ReplaceAll(strings.TrimRight(l, " "), "\u00a0", " ")
 		line := " "
 		if rest, ok := strings.CutPrefix(l, breakingTip); ok {
@@ -449,6 +447,20 @@ func (m *Model) tipLines(w int) []string {
 		lines = append(lines, line+sPink.Render(l))
 	}
 	return lines
+}
+
+// offerTip shows a one-time onboarding tip about topic.
+func (m *Model) offerTip(topic, tip string) {
+	m.tip, m.tipTopic = tip, topic
+	m.layoutNavs()
+}
+
+// dropTip clears the onboarding tip once you've done what it's about.
+func (m *Model) dropTip(topic string) {
+	if m.tipTopic == topic {
+		m.tip, m.tipTopic = "", ""
+		m.layoutNavs()
+	}
 }
 
 // keysLine is the legend's reminder of the basic keys for people new to
@@ -754,7 +766,7 @@ func (m *Model) renderListRow(r listRow, w int, sel bool, cols listCols) string 
 	if it.ChangedSinceApproval {
 		dot = sGreen.Render("◐")
 	}
-	badges += cell(dot) + cell(ciBadge(pr.CIState(), m.cfg.NerdFont))
+	badges += cell(dot) + cell(ciBadge(pr.CIState()))
 
 	n := prNumber(pr)
 	numS := strings.Repeat(" ", max(cols.num-lipgloss.Width(n), 0))
@@ -800,7 +812,7 @@ func (m *Model) renderListRow(r listRow, w int, sel bool, cols listCols) string 
 // agent is reviewing, red when they all failed, green once posted.
 func reviewGlyph(m *Model, cur []*store.Run) string {
 	icon := "C"
-	if m.cfg.NerdFont {
+	if nerdIcons {
 		icon = "\U000f06a9"
 	}
 	failed, posted := 0, 0
@@ -974,7 +986,7 @@ func (m *Model) statusline() string {
 	segC := lipgloss.NewStyle().Foreground(fg)
 
 	sepR, sepL, thinR := "", "", "│"
-	if m.cfg.NerdFont {
+	if nerdIcons {
 		sepR, sepL, thinR = "", "", ""
 	}
 	trans := func(from, to lipgloss.Color, glyph string, toTransparent bool) string {
@@ -993,7 +1005,7 @@ func (m *Model) statusline() string {
 		user = "…"
 	}
 	gitIcon := ""
-	if m.cfg.NerdFont {
+	if nerdIcons {
 		gitIcon = " "
 	}
 	ctx := "inbox"
@@ -1008,7 +1020,7 @@ func (m *Model) statusline() string {
 	}
 
 	owl := ""
-	if m.cfg.Playful && len(m.items) > 0 {
+	if playful && len(m.items) > 0 {
 		face, color := m.statusOwl()
 		owl = lipgloss.NewStyle().Background(surf).Foreground(lipgloss.Color(color)).Bold(true).Render(" "+face+" ") +
 			trans(surf, mc, sepR, false)
@@ -1160,7 +1172,7 @@ func (m *Model) confirmView(screen string) string {
 	}{{yes, "y", 2}, {no, "n", 2 + lipgloss.Width(yes) + 3}} {
 		key := b.key
 		m.hits.items = append(m.hits.items, hit{x: x + b.dx, y: by, w: lipgloss.Width(b.label), h: 1, modal: true,
-			click: func(m *Model, _ int) tea.Cmd { return m.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}) }})
+			click: func(m *Model) tea.Cmd { return m.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}) }})
 	}
 	return overlay(screen, box, m.w, m.h, "center")
 }
@@ -1195,7 +1207,7 @@ func spinner(m *Model) string {
 // updatingMark leads the statusline while prowl updates itself: the owl
 // watching and blinking now and then, as in `prowl update`, or the spinner.
 func updatingMark(m *Model) string {
-	if !m.cfg.Playful {
+	if !playful {
 		return spinner(m)
 	}
 	if m.frame%30 < 2 {
@@ -1252,7 +1264,7 @@ func splash(m *Model, w, h int) []string {
 	logo := bigName()
 	var art []string
 	small := h < 20
-	if m.cfg.Playful && h >= 14 {
+	if playful && h >= 14 {
 		art = append(wakingOwl(int(time.Since(m.started)/(360*time.Millisecond)), small), "")
 	}
 	var lines []string
@@ -1293,7 +1305,7 @@ func (m *Model) emptyInbox(w, h int) []string {
 	case m.filter == fNeedsMe:
 		msg, sub = "nothing needs you", "prowl is resting until something does"
 	}
-	if !m.cfg.Playful || h < 11 {
+	if !playful || h < 11 {
 		return []string{"", sDim.Render("  " + msg), sDim.Render("  " + sub)}
 	}
 	small := h < 16
@@ -1334,13 +1346,8 @@ type wkBlock struct {
 // more rows of columns when the terminal is narrow.
 func (m *Model) whichKey() string {
 	keys, title := leaderKeys, leader
-	switch m.leaderPrefix {
-	case "t":
-		keys, title = threadKeys, leader+"t  threads"
-	case "c":
-		keys, title = agentKeys, leader+"c  AI review"
-	case "f":
-		keys, title = findKeys, leader+"f  find & focus"
+	if menu := leaderEntry(m.leaderPrefix); menu.sub != nil {
+		keys, title = menu.sub, leader+menu.key+"  "+menu.desc
 	}
 	var blocks []*wkBlock
 	byCat := map[string]*wkBlock{}
@@ -1353,7 +1360,7 @@ func (m *Model) whichKey() string {
 		}
 		desc := sDim.Render(k.desc)
 		switch {
-		case k.group:
+		case k.sub != nil:
 			desc = sBlue.Render("+" + k.desc)
 		case k.write:
 			desc = sPink.Render(k.desc)
@@ -1410,7 +1417,7 @@ func (m *Model) whichKey() string {
 type hit struct {
 	x, y, w, h int
 	modal      bool // a confirm button: the only clicks taken while one is open
-	click      func(m *Model, y int) tea.Cmd
+	click      func(m *Model) tea.Cmd
 	drag       func(m *Model, msg tea.MouseMsg) tea.Cmd // takes the left button's press, motion and release
 	scroll     *nav
 }
@@ -1418,7 +1425,7 @@ type hit struct {
 type hitMap struct{ items []hit }
 
 func (hm *hitMap) add(x, y, w, h int, f func(m *Model) tea.Cmd) {
-	hm.items = append(hm.items, hit{x: x, y: y, w: w, h: h, click: func(m *Model, _ int) tea.Cmd { return f(m) }})
+	hm.items = append(hm.items, hit{x: x, y: y, w: w, h: h, click: f})
 }
 
 func (hm *hitMap) addScroll(x, y, w, h int, v *nav) {
@@ -1463,7 +1470,7 @@ func (m *Model) mouse(msg tea.MouseMsg) tea.Cmd {
 			case h.drag != nil:
 				return h.drag(m, msg)
 			case h.click != nil && msg.Action == tea.MouseActionPress:
-				return h.click(m, msg.Y)
+				return h.click(m)
 			case h.click != nil:
 				return nil
 			}

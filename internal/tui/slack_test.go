@@ -14,8 +14,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/tmstorm/prowl/internal/config"
+	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/slack"
+	"github.com/tmstorm/prowl/internal/store"
 )
 
 // openNames opens Options → Slack names, the setting before the two
@@ -51,6 +53,24 @@ func TestSlackNamesTip(t *testing.T) {
 	a.waitFor("Slack: matched 3 teammates to their Slack users")
 	a = reopen(a)
 	a.wantNot("Slack: matched")
+}
+
+// Saving Slack names clears only the Slack tip: news of an installed prowl
+// stays.
+func TestSlackNamesKeepReleaseNews(t *testing.T) {
+	old := core.Version
+	core.Version = "0.1.0"
+	t.Cleanup(func() { core.Version = old })
+	a, _ := slackNamesApp(t)
+	a.waitFor("Slack: matched 3 teammates")
+	_ = a.st.SetRelease(store.Release{Checked: time.Now(), Tag: "v9.0.0", Notes: "### Bug Fixes\n\n* one\n"})
+	_ = a.st.SetInstalled("v9.0.0")
+	a = reopen(a)
+	a.want("prowl v9.0.0 is installed")
+	openNames(a)
+	a.want("Proposed")
+	a.keys("a", "enter")
+	a.want("saved 3 Slack names", "prowl v9.0.0 is installed")
 }
 
 // Slack names lists the proposals, the logins nothing matched and the ones
