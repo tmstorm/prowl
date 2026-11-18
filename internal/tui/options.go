@@ -227,8 +227,9 @@ var options = []option{
 			return nil
 		}},
 	{section: "Review agent", title: "Chat window", label: "chat_mode", help: "How <leader>ci shows the agent: a floating popup, or fullscreen while prowl steps aside.", kind: optChoice, choices: []string{"popup", "fullscreen"},
-		get: func(c *config.Config) string { return c.ChatMode },
-		set: func(c *config.Config, v string) error { c.ChatMode = v; return nil }},
+		show: func(*config.Config) bool { return floatingChat },
+		get:  func(c *config.Config) string { return c.ChatMode },
+		set:  func(c *config.Config, v string) error { c.ChatMode = v; return nil }},
 
 	// GitHub
 	{section: "GitHub", title: "Orgs", label: "orgs", empty: "all of GitHub", help: "Orgs to pull PRs from, comma separated. Empty: your PRs across all of GitHub.", kind: optText,
