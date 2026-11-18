@@ -149,7 +149,7 @@ func demoCommit(p *gh.PR, at time.Time) {
 }
 
 func demoTimeline(p *gh.PR, item map[string]any) {
-	var ti gh.TimelineItem
+	var ti gh.Event
 	b, _ := json.Marshal(item)
 	_ = json.Unmarshal(b, &ti)
 	p.TimelineItems.Nodes = append(p.TimelineItems.Nodes, ti)

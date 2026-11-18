@@ -116,20 +116,39 @@ type Item struct {
 	ReviewStatus string // approved | changes requested | needs review | needs rebase | draft
 }
 
-func Classify(in *gh.Inbox) []Item {
+// Options are what classifying takes besides GitHub's inbox: settings, and
+// what Slack says about its PRs, by PR key.
+type Options struct {
+	Bots map[string]bool // logins treated as bots: their activity doesn't count
+	// RecheckAfterPush puts a PR pushed to after you approved back in front
+	// of you, for repos that don't dismiss stale approvals.
+	RecheckAfterPush bool
+	Shared           map[string]Share  // its newest share in Slack, by someone else
+	Reactions        map[string]string // on your PR: who reacted on its Slack share, e.g. "#reviews: Bob ✅"
+	SlackLinks       map[string]string // the Slack message that shared it
+}
+
+// Share is a PR link someone posted in Slack.
+type Share struct {
+	Channel string // e.g. "reviews"; empty for a DM
+	From    string // who posted it
+	At      time.Time
+}
+
+func Classify(in *gh.Inbox, opt Options) []Item {
 	teams := map[string]bool{}
 	for _, t := range in.Teams {
 		teams[t] = true
 	}
 	items := make([]Item, 0, len(in.PRs))
 	for _, pr := range in.PRs {
-		share, shared := in.Shared[pr.Key()]
-		it := classify(pr, in.Viewer, teams, in.Bots, in.Watched[pr.Repository.NameWithOwner], in.RecheckAfterPush)
+		share, shared := opt.Shared[pr.Key()]
+		it := classify(pr, in.Viewer, teams, opt.Bots, in.Watched[pr.Repository.NameWithOwner], opt.RecheckAfterPush)
 		if shared {
 			it = withShare(it, share)
 		}
-		it.SlackLink = in.SlackLinks[pr.Key()]
-		if r := in.Reactions[pr.Key()]; r != "" && it.Bucket == Mine {
+		it.SlackLink = opt.SlackLinks[pr.Key()]
+		if r := opt.Reactions[pr.Key()]; r != "" && it.Bucket == Mine {
 			it.Reason += " · " + r
 			it.SlackReactions = r
 		}
@@ -424,7 +443,7 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 
 // withShare moves a PR you haven't touched into Shared, or notes the share
 // on a review request.
-func withShare(it Item, share gh.Share) Item {
+func withShare(it Item, share Share) Item {
 	why, where := SentToYou, "sent to you by "+share.From
 	if share.Channel != "" {
 		why, where = SharedInChannel, "shared in #"+share.Channel+" by "+share.From

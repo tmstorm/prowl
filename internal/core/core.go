@@ -46,7 +46,7 @@ type Core struct {
 	pending     map[string][]DraftComment   // your inline comments, by PR, until the next review
 	drafted     map[string]store.Review     // agent drafts on their way out, as prowl wrote them
 	unsent      map[string]Draft            // reviews that failed to post, by PR, until reopened
-	shared      map[string]gh.Share         // PRs shared in Slack, as of the last sync
+	shared      map[string]inbox.Share      // PRs shared in Slack, as of the last sync
 	reactions   map[string]string           // Slack reactions on your PRs, as of the last sync
 	slackLinks  map[string]string           // the Slack message that shared each PR, as of the last sync
 	slackShares map[string]store.SlackShare // each shared PR's newest share by someone else
@@ -87,6 +87,15 @@ type Inbox struct {
 	Snoozed map[string]time.Time
 	Viewer  string
 	At      time.Time
+}
+
+// synced is a sync's answer as it is saved: GitHub's inbox, and what Slack
+// says about its PRs.
+type synced struct {
+	gh.Inbox
+	Shared     map[string]inbox.Share
+	Reactions  map[string]string
+	SlackLinks map[string]string
 }
 
 // classified is the inbox as core keeps it.
@@ -278,7 +287,7 @@ func New(cfg config.Config, c *gh.Client, st *store.Store) *Core {
 	if err != nil || data == nil {
 		return co
 	}
-	var in gh.Inbox
+	var in synced
 	if json.Unmarshal(data, &in) != nil {
 		return co
 	}
@@ -396,11 +405,12 @@ func (co *Core) Refresh(ctx context.Context) ([]PR, error) {
 	if slackOn {
 		fetching.Go(func() { newlyShared, slackErr = co.syncSlack(ctx, sl, cfg, kept) })
 	}
-	in, err := co.gh.FetchInbox(ctx, cfg.Orgs, cfg.WatchRepos, known, keep)
+	fetched, err := co.gh.FetchInbox(ctx, cfg.Orgs, cfg.WatchRepos, known, keep)
 	fetching.Wait()
 	if err != nil {
 		return nil, fmt.Errorf("refresh: %w", err)
 	}
+	in := &synced{Inbox: *fetched}
 	var shares map[string]store.SlackShare
 	if sl != nil {
 		shares = co.withShares(in, cfg, newlyShared)
@@ -457,12 +467,17 @@ func (co *Core) Refresh(ctx context.Context) ([]PR, error) {
 	return prsOf(changes, cfg.BotSet()), nil
 }
 
-func (co *Core) classify(in *gh.Inbox) []inbox.Item {
+func (co *Core) classify(in *synced) []inbox.Item {
 	co.mu.Lock()
-	cfg := co.cfg
+	opt := co.options(in.Shared, in.Reactions, in.SlackLinks)
 	co.mu.Unlock()
-	in.Bots, in.RecheckAfterPush = cfg.BotSet(), cfg.RecheckAfterPush
-	return inbox.Classify(in)
+	return inbox.Classify(&in.Inbox, opt)
+}
+
+// options classify with the settings and what Slack says about the PRs.
+// co.mu is held.
+func (co *Core) options(shared map[string]inbox.Share, reactions, links map[string]string) inbox.Options {
+	return inbox.Options{Bots: co.cfg.BotSet(), RecheckAfterPush: co.cfg.RecheckAfterPush, Shared: shared, Reactions: reactions, SlackLinks: links}
 }
 
 // withOpened adds PRs opened by link to items, unless a sync already
@@ -481,8 +496,8 @@ func (co *Core) withOpened(items []inbox.Item, prs []gh.PR, viewer string) []inb
 	if len(add) == 0 {
 		return items
 	}
-	extra := &gh.Inbox{Viewer: viewer, PRs: add, Bots: co.cfg.BotSet(), RecheckAfterPush: co.cfg.RecheckAfterPush, Shared: co.shared, Reactions: co.reactions, SlackLinks: co.slackLinks}
-	return append(items, inbox.Classify(extra)...)
+	extra := &gh.Inbox{Viewer: viewer, PRs: add}
+	return append(items, inbox.Classify(extra, co.options(co.shared, co.reactions, co.slackLinks))...)
 }
 
 // changed lists the PRs that need you (or are yours) and are new, moved
@@ -617,8 +632,8 @@ func (co *Core) reclassify(pr gh.PR) inbox.Item {
 	for _, r := range co.cfg.WatchRepos {
 		watched[r] = true
 	}
-	return inbox.Classify(&gh.Inbox{Viewer: co.inbox.Viewer, Teams: co.inbox.Teams, Watched: watched, Bots: co.cfg.BotSet(),
-		RecheckAfterPush: co.cfg.RecheckAfterPush, PRs: []gh.PR{pr}, Shared: co.shared, Reactions: co.reactions, SlackLinks: co.slackLinks})[0]
+	in := &gh.Inbox{Viewer: co.inbox.Viewer, Teams: co.inbox.Teams, Watched: watched, PRs: []gh.PR{pr}}
+	return inbox.Classify(in, co.options(co.shared, co.reactions, co.slackLinks))[0]
 }
 
 // ErrWatching is Watching's answer while another `prowl watch` runs.

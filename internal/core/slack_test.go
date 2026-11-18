@@ -135,6 +135,10 @@ func TestSlackShares(t *testing.T) {
 			t.Errorf("%s is in the inbox", key)
 		}
 	}
+	c, _ := fake.Client()
+	if it, ok := find(core.New(cfg, c, st).Inbox(), "o/api#7"); !ok || it.Bucket != core.Shared {
+		t.Fatalf("a new core should start with the shares: %v %+v", ok, it)
+	}
 
 	sl.set("")
 	in = refresh(t, co)

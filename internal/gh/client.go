@@ -136,26 +136,9 @@ func (c *Client) search(ctx context.Context, q string, limit int) ([]string, err
 
 type Inbox struct {
 	Watched map[string]bool // repos (owner/name) whose every open PR is fetched
-	Bots    map[string]bool // logins treated as bots: their activity doesn't count
-	// RecheckAfterPush puts a PR pushed to after you approved back in front
-	// of you, for repos that don't dismiss stale approvals.
-	RecheckAfterPush bool
-	Viewer           string
-	Teams            []string // team slugs the viewer belongs to
-	PRs              []PR
-	Shared           map[string]Share // PR key -> its newest share in Slack, by someone else
-	// PR key -> who reacted on the Slack share of your PR, e.g. "#reviews: Bob ✅".
-	Reactions map[string]string
-	// PR key -> the Slack message that shared it: the newest by someone else,
-	// or on your PR the newest by anyone.
-	SlackLinks map[string]string
-}
-
-// Share is a PR link someone posted in Slack.
-type Share struct {
-	Channel string // e.g. "reviews"; empty for a DM
-	From    string // who posted it
-	At      time.Time
+	Viewer  string
+	Teams   []string // team slugs the viewer belongs to
+	PRs     []PR
 }
 
 // searchLimit caps each inbox search; past it, PRs drop out of the inbox.
@@ -346,29 +329,6 @@ type Detail struct {
 	Checks   []Check // CI on the head commit
 }
 
-// Event is a timeline item that is not a review or comment.
-type Event struct {
-	Typename          string    `json:"__typename"`
-	CreatedAt         time.Time `json:"createdAt"`
-	Actor             *Actor    `json:"actor"`
-	RequestedReviewer *struct {
-		Login string `json:"login"`
-		Slug  string `json:"slug"`
-	} `json:"requestedReviewer"`
-	PreviousReviewState string `json:"previousReviewState"`
-	Review              *struct {
-		ID string `json:"id"`
-	} `json:"review"`
-	Commit *struct {
-		Oid             string    `json:"oid"`
-		CommittedDate   time.Time `json:"committedDate"`
-		MessageHeadline string    `json:"messageHeadline"`
-		Author          *struct {
-			User *Actor `json:"user"`
-		} `json:"author"`
-	} `json:"commit"`
-}
-
 type File struct {
 	Path      string `json:"path"`
 	Additions int    `json:"additions"`
@@ -435,11 +395,7 @@ func (c *Client) FetchDetail(ctx context.Context, repo string, number int) (*Det
 		Body: p.Body, Reviews: p.Reviews.Nodes, Comments: p.Comments.Nodes,
 		Threads: threads, Files: files, Events: p.TimelineItems.Nodes,
 	}
-	for _, e := range det.Events {
-		if e.Typename == "ReviewDismissedEvent" && e.Review != nil {
-			setPreviousState(det.Reviews, e.Review.ID, e.PreviousReviewState)
-		}
-	}
+	markDismissed(det.Reviews, det.Events)
 	for _, cm := range p.Commits.Nodes {
 		if cm.Commit.StatusCheckRollup == nil {
 			continue

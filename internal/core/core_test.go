@@ -1235,10 +1235,10 @@ func TestNoteAndRequestReviews(t *testing.T) {
 func TestDismissedChangeRequest(t *testing.T) {
 	pr := ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")
 	at := time.Now().Add(-time.Hour)
-	var ti gh.TimelineItem
+	var ti gh.Event
 	_ = json.Unmarshal([]byte(`{"__typename":"ReviewDismissedEvent","previousReviewState":"CHANGES_REQUESTED","review":{"id":"r1"}}`), &ti)
 	pr.Reviews.Nodes = []gh.Review{{ID: "r1", Author: &gh.Actor{Login: "me"}, State: "DISMISSED", SubmittedAt: at}}
-	pr.TimelineItems.Nodes = []gh.TimelineItem{ti}
+	pr.TimelineItems.Nodes = []gh.Event{ti}
 	co, _ := newCore(t, &ghtest.GitHub{PRs: []gh.PR{pr}})
 	it, ok := find(refresh(t, co), "o/api#7")
 	if !ok || it.Bucket != core.ReReview || it.Reason != "re-requested" {

@@ -195,7 +195,7 @@ func (co *Core) pruneShares(ctx context.Context, open map[string]string) {
 // withShares adds the PRs first shared this sync to in, and which PRs are
 // shared, and returns each PR's newest share. The shares are read again, so
 // the ones saved this sync count.
-func (co *Core) withShares(in *gh.Inbox, cfg config.Config, newlyShared []gh.PR) map[string]store.SlackShare {
+func (co *Core) withShares(in *synced, cfg config.Config, newlyShared []gh.PR) map[string]store.SlackShare {
 	have := map[string]bool{}
 	for _, pr := range in.PRs {
 		have[pr.ID] = true
@@ -207,9 +207,9 @@ func (co *Core) withShares(in *gh.Inbox, cfg config.Config, newlyShared []gh.PR)
 	}
 	all, _ := co.st.SlackShares()
 	shares := newestShares(cfg, co.slackMe, all)
-	in.Shared, in.SlackLinks = map[string]gh.Share{}, map[string]string{}
+	in.Shared, in.SlackLinks = map[string]inbox.Share{}, map[string]string{}
 	for key, s := range shares {
-		in.Shared[key] = gh.Share{Channel: s.ChannelName, From: s.UserName, At: s.At}
+		in.Shared[key] = inbox.Share{Channel: s.ChannelName, From: s.UserName, At: s.At}
 		in.SlackLinks[key] = co.slackLink(s)
 	}
 	return shares
@@ -389,7 +389,7 @@ func (co *Core) PostInThread(ctx context.Context, key, text string) (string, err
 // Carol 👀". Only the emoji in slack_reactions count, and not yours; someone
 // with several counts by the one that says most. One call per shared PR.
 // It adds the link to each share to in.SlackLinks.
-func (co *Core) reactionsOnYours(ctx context.Context, sl *slack.Client, cfg config.Config, in *gh.Inbox) (map[string]string, error) {
+func (co *Core) reactionsOnYours(ctx context.Context, sl *slack.Client, cfg config.Config, in *synced) (map[string]string, error) {
 	yours := map[string]string{}
 	for _, pr := range in.PRs {
 		if pr.AuthorLogin() == in.Viewer {
