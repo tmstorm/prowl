@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -89,24 +88,9 @@ func (claudeBackend) Review(t Turn) (*result, string, error) {
 	if t.Session != "" {
 		args = append(args, "--resume", t.Session)
 	}
-	cmd := exec.Command("claude", args...)
-	cmd.Dir = t.Dir
-	cmd.Env = CleanEnv()
-	cmd.Stdin = strings.NewReader(t.Prompt)
-	cmd.Stderr = os.Stderr
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, "", err
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, "", fmt.Errorf("start claude: %w", err)
-	}
-
 	var res *result
 	var sessionID, errMsg string
-	sc := bufio.NewScanner(out)
-	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
-	for sc.Scan() {
+	err := stream(t, "claude", args, func(line []byte) {
 		var ev struct {
 			Type      string `json:"type"`
 			Subtype   string `json:"subtype"`
@@ -123,8 +107,8 @@ func (claudeBackend) Review(t Turn) (*result, string, error) {
 			StructuredOutput *result `json:"structured_output"`
 			Model            string  `json:"model"`
 		}
-		if json.Unmarshal(sc.Bytes(), &ev) != nil {
-			continue
+		if json.Unmarshal(line, &ev) != nil {
+			return
 		}
 		switch ev.Type {
 		case "system":
@@ -144,8 +128,8 @@ func (claudeBackend) Review(t Turn) (*result, string, error) {
 				errMsg = ev.Subtype + ": " + ev.Result
 			}
 		}
-	}
-	if err := cmd.Wait(); err != nil && res == nil {
+	})
+	if err != nil && res == nil {
 		return nil, sessionID, fmt.Errorf("claude exited: %v %s", err, errMsg)
 	}
 	if res == nil {

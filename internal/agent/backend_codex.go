@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -157,22 +156,8 @@ func (codexBackend) Review(t Turn) (*result, string, error) {
 	args = append(args, "-")
 	t.setModel(model)
 
-	cmd := exec.Command("codex", args...)
-	cmd.Dir = t.Dir
-	cmd.Env = CleanEnv()
-	cmd.Stdin = strings.NewReader(t.Prompt)
-	cmd.Stderr = os.Stderr
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, "", err
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, "", fmt.Errorf("start codex: %w", err)
-	}
 	var sessionID, last, errMsg string
-	sc := bufio.NewScanner(out)
-	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
-	for sc.Scan() {
+	waitErr := stream(t, "codex", args, func(line []byte) {
 		var ev struct {
 			Type     string `json:"type"`
 			ThreadID string `json:"thread_id"`
@@ -189,8 +174,8 @@ func (codexBackend) Review(t Turn) (*result, string, error) {
 				Query   string `json:"query"`
 			} `json:"item"`
 		}
-		if json.Unmarshal(sc.Bytes(), &ev) != nil {
-			continue
+		if json.Unmarshal(line, &ev) != nil {
+			return
 		}
 		switch ev.Type {
 		case "thread.started":
@@ -216,8 +201,7 @@ func (codexBackend) Review(t Turn) (*result, string, error) {
 		case "error":
 			errMsg = ev.Message
 		}
-	}
-	waitErr := cmd.Wait()
+	})
 	if b, err := os.ReadFile(lastPath); err == nil && len(strings.TrimSpace(string(b))) > 0 {
 		last = string(b)
 	}
