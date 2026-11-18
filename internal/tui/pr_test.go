@@ -464,7 +464,7 @@ func TestSuggestAndAskForReview(t *testing.T) {
 	a.keys("space", "A")
 	a.want("Ask for reviews on api#7")
 	a.keys("newcomer", "enter")
-	a.want("asked newcomer to review")
+	a.waitFor("asked newcomer to review")
 	if !a.wrote("POST /repos/o/api/pulls/7/requested_reviewers") {
 		t.Fatal("no review request sent")
 	}
