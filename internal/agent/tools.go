@@ -14,6 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/config"
 )
 
@@ -51,10 +52,10 @@ type DocsOutput struct {
 // is mounted read-only, so a PR's tests can't change files that git on your
 // machine reads later, such as the worktree's .git. local is a review of your
 // own checkout: it gets a cache of its own, so a PR can't plant code in a
-// module that your next local review runs. docs, for the chat, answers its
-// docs tool from prowl's own docs.
-func ToolServer(cfg config.Config, repo, dir string, local bool, docs func(topic string) string) (*mcp.Server, error) {
-	if !canRun(cfg, repo) && docs == nil {
+// module that your next local review runs. chat is the review's chat, which
+// also gets a docs tool that reads prowl's own docs.
+func ToolServer(cfg config.Config, repo, dir string, local, chat bool) (*mcp.Server, error) {
+	if !canRun(cfg, repo) && !chat {
 		return nil, fmt.Errorf("agent tools: no run tool for %s: no image in [agent.run_images], or no docker", repo)
 	}
 	image := cfg.Agent.RunImage(repo)
@@ -64,13 +65,13 @@ func ToolServer(cfg config.Config, repo, dir string, local bool, docs func(topic
 	}
 	cache := filepath.Join(config.DataDir(), "cache", filepath.FromSlash(repo), trust)
 	s := mcp.NewServer(&mcp.Implementation{Name: "prowl"}, nil)
-	if docs != nil {
+	if chat {
 		mcp.AddTool(s, &mcp.Tool{
 			Name: "docs",
 			Description: "Read prowl's own docs, for the version you run in: what its keys, settings, inbox buckets and review features do. " +
 				"Use it when asked how prowl works, rather than answering from memory.",
 		}, func(_ context.Context, _ *mcp.CallToolRequest, in DocsInput) (*mcp.CallToolResult, DocsOutput, error) {
-			return nil, DocsOutput{Text: docs(in.Topic)}, nil
+			return nil, DocsOutput{Text: docs.Text(in.Topic)}, nil
 		})
 	}
 	if !canRun(cfg, repo) {

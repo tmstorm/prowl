@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
@@ -1723,7 +1724,7 @@ func helpSuggestions(q string) []string {
 		return nil
 	}
 	var out []string
-	for _, t := range core.DocTags() {
+	for _, t := range docs.Tags() {
 		if s := cmd + " " + t.Tag; !slices.Contains(out, s) {
 			out = append(out, s)
 		}

@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
@@ -286,7 +287,7 @@ var options = []option{
 func optionTopic(label string) string {
 	key, _, _ := strings.Cut(label, ".")
 	for _, t := range []string{key, "[" + key + "]", "[agent." + key + "]", "[[agent." + key + "]]"} {
-		if tags := core.FindDocTag(t); len(tags) > 0 && tags[0].Tag == t {
+		if tags := docs.Find(t); len(tags) > 0 && tags[0].Tag == t {
 			return t
 		}
 	}
