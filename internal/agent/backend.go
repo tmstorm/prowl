@@ -23,13 +23,6 @@ type Turn struct {
 	SetModel    func(string)
 }
 
-func (t Turn) schema() string {
-	if t.Schema == "" {
-		return Schema(config.Default().Agent.Severities())
-	}
-	return t.Schema
-}
-
 func (t Turn) activity(s string) {
 	if t.Activity != nil {
 		t.Activity(s)
