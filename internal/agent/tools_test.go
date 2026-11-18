@@ -108,6 +108,9 @@ func TestRunTool(t *testing.T) {
 	if entries, _ := os.ReadDir(dir); len(entries) != 2 || entries[0].Name() != ".git" || entries[1].Name() != "go.mod" {
 		t.Fatalf("the run changed the repo on disk: %v", entries)
 	}
+	if fi, err := os.Stat(filepath.Join(config.DataDir(), "cache", "acme", "api", "pr.used")); err != nil || time.Since(fi.ModTime()) > time.Minute {
+		t.Fatalf("the run didn't mark its cache used: %v", err)
+	}
 
 	out, err = runTool(t, ctx, "acme/api", dir, true, `test -e /cache/from-pr`)
 	if err != nil {
@@ -181,5 +184,99 @@ func TestPruneRunContainers(t *testing.T) {
 	ps, _ := exec.Command("docker", "ps", "-q", "--no-trunc").Output()
 	if strings.Contains(string(ps), expired) || !strings.Contains(string(ps), live) {
 		t.Fatalf("after prune: %s", ps)
+	}
+}
+
+// Past run_cache_gb, the caches used longest ago go first, read-only module
+// cache and all, until the rest fit. One used in the last hour stays even
+// over the limit, and anything outside the cache layout goes.
+func TestPruneRunCaches(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	root := filepath.Join(config.DataDir(), "cache")
+	file := func(path string, size int64) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Truncate(path, size); err != nil {
+			t.Fatal(err)
+		}
+	}
+	age := func(path string, ago time.Duration) {
+		t.Helper()
+		if err := os.Chtimes(path, time.Now().Add(-ago), time.Now().Add(-ago)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const mb = 1 << 20
+	old := filepath.Join(root, "acme", "old", "pr")
+	file(filepath.Join(old, "go-mod", "x@v1", "x.go"), 600*mb)
+	if err := os.Chmod(filepath.Join(old, "go-mod", "x@v1"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	age(filepath.Join(old, "go-mod"), 72*time.Hour)
+	age(old, 72*time.Hour)
+	web := filepath.Join(root, "acme", "web", "local")
+	file(filepath.Join(web, "go-build", "ab", "obj"), 300*mb)
+	file(web+".used", 0)
+	age(web+".used", 48*time.Hour)
+	live := filepath.Join(root, "acme", "live", "pr")
+	file(filepath.Join(live, "go-build", "cd", "obj"), 1100*mb)
+	file(live+".used", 0)
+	age(live+".used", 10*time.Minute)
+	file(filepath.Join(root, "acme-web", "go-build", "ef", "obj"), mb)
+	file(filepath.Join(root, "acme", "web", "go-build", "trim.txt"), 10)
+
+	cfg := config.Default()
+	cfg.Agent.RunCacheGB = 1
+	agent.PruneOrphans(cfg, func(string, int) bool { return true })
+
+	var left []string
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(root, p)
+			left = append(left, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	want := []string{"acme/live/pr/go-build/cd/obj", "acme/live/pr.used"}
+	if strings.Join(left, " ") != strings.Join(want, " ") {
+		t.Fatalf("left %v, want %v", left, want)
+	}
+}
+
+// A review's tool server marks its cache used before it answers, so the prune
+// it starts in the background leaves that cache alone.
+func TestToolServerMarksItsCache(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake docker is a shell script")
+	}
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	used := filepath.Join(config.DataDir(), "cache", "acme", "api", "pr.used")
+	if err := os.MkdirAll(filepath.Dir(used), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(used, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-72 * time.Hour)
+	if err := os.Chtimes(used, old, old); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Agent.RunImages = map[string]string{"*": "busybox:1.37"}
+	if _, err := agent.ToolServer(cfg, "acme/api", t.TempDir(), false, false); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(used); err != nil || time.Since(fi.ModTime()) > time.Minute {
+		t.Fatalf("the cache wasn't marked used at start: %v", err)
 	}
 }

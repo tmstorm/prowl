@@ -128,7 +128,7 @@ The key is `owner/name`, and `"*"` covers every other repo. The image needs the 
 
 This is opt-in. Without an image for the repo, or without `docker` on your PATH, reviews only read. It costs:
 
-- Disk: the image (about 800 MB for `golang`) and two caches per repo under prowl's data directory, so later runs don't download modules again: one for PR reviews and one for reviews of your own checkout, so a PR can't plant code that your next local review runs. `prowl uninstall --purge` removes the caches; the images stay, and prowl prints the `docker rmi` that removes them.
+- Disk: the image (about 800 MB for `golang`) and two caches per repo under prowl's data directory, so later runs don't download modules again: one for PR reviews and one for reviews of your own checkout, so a PR can't plant code that your next local review runs. Together they stay under `run_cache_gb` (20 GB): past it, prowl deletes the caches used longest ago when it starts and when a review starts, but never one used in the last hour. `prowl uninstall --purge` removes the caches; the images stay, and prowl prints the `docker rmi` that removes them.
 - Time: each run copies the code into the container (`.git` stays out) and adds the test run to the review, and stops after 10 minutes. The first run pulls the image.
 
 Each run's container goes when the run ends, and a run stops itself after 10 minutes even when the agent was killed. git doesn't work in the container, because `.git` isn't copied; the agent reads history and diffs with its own git commands.

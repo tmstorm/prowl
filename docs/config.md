@@ -62,6 +62,7 @@ These go under `[agent]`. See [AI reviews](ai-reviews.md).
 | `edit_examples` | `0` | your recent rewrites of drafts fed into reviews as examples |
 | `[agent.models]`, `[agent.summary_models]` | each agent's default | model per agent, for reviews and for summaries |
 | `[agent.run_images]` | none | container image per repo (`owner/name`, `"*"` for the rest) for the agent's `run` tool; see [Running tests](ai-reviews.md#running-tests) |
+| `run_cache_gb` | `20` | most disk the `run` tool's caches may take, in GB; past it the caches used longest ago go. `0` is no limit |
 | `[[agent.profiles]]` | `adversarial` built in | named ways to review: `name`, `prompt`, and optional `reviewers` and `skills`; see [Review profiles](ai-reviews.md#review-profiles) |
 
 ## TUI
