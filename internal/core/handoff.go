@@ -1,16 +1,15 @@
-package agent
+package core
 
 import (
 	"fmt"
 	"strings"
 
 	"github.com/tmstorm/prowl/internal/gh"
-	"github.com/tmstorm/prowl/internal/store"
 )
 
 // Agree is true when two findings point at the same problem: the same file
 // within a few lines, or both about the PR itself.
-func Agree(a, b store.Finding) bool {
+func Agree(a, b Finding) bool {
 	if a.Path != b.Path {
 		return false
 	}
@@ -21,14 +20,14 @@ func Agree(a, b store.Finding) bool {
 	return d >= -3 && d <= 3
 }
 
-var severityRank = map[string]int{"must-fix": 0, "should-fix": 1, "nit": 2}
+var severityRank = map[Severity]int{MustFix: 0, ShouldFix: 1, Nit: 2}
 
 // Combine merges the findings of several agents' reviews into one list, as
 // they are posted: excluded findings left out (unless all), and a finding
 // two agents agree on kept once, at the higher severity. Findings from the
 // same agent are never merged, however close.
-func Combine(runs []*store.Run, all bool) []store.Finding {
-	var out []store.Finding
+func Combine(runs []*Review, all bool) []Finding {
+	var out []Finding
 	for _, r := range runs {
 		if !r.Finished() {
 			continue
@@ -55,12 +54,12 @@ func Combine(runs []*store.Run, all bool) []store.Finding {
 
 // FindingsMarkdown renders the current reviews' findings, combined, for
 // another agent (or a person) to act on, then each reviewer's notes from
-// notes (by reviewer, as core.Notes returns them): what it held back or
+// notes (by reviewer, as Notes returns them): what it held back or
 // couldn't check. Excluded findings are left out unless all is set.
-func FindingsMarkdown(runs []*store.Run, notes map[string][]store.LogEntry, key, currentHead string, all bool) string {
+func FindingsMarkdown(runs []*Review, notes map[string][]Note, key, currentHead string, all bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Review findings for %s\n\n", key)
-	var at *store.Run
+	var at *Review
 	for _, r := range runs {
 		if r.Finished() {
 			if at == nil || r.FinishedAt.After(at.FinishedAt) {
@@ -71,7 +70,7 @@ func FindingsMarkdown(runs []*store.Run, notes map[string][]store.LogEntry, key,
 	if at != nil {
 		fmt.Fprintf(&b, "Reviewed at commit %s", gh.Short(at.HeadOid))
 		if !at.FinishedAt.IsZero() {
-			fmt.Fprintf(&b, " on %s", day(at.FinishedAt))
+			fmt.Fprintf(&b, " on %s", at.FinishedAt.Format("2006-01-02 15:04"))
 		}
 		b.WriteString(".")
 		if currentHead != "" && at.HeadOid != "" && currentHead != at.HeadOid {
@@ -109,11 +108,7 @@ func FindingsMarkdown(runs []*store.Run, notes map[string][]store.LogEntry, key,
 		if len(said) == 0 {
 			continue
 		}
-		title := Title(r.Agent)
-		if r.Profile != "" {
-			title += " · " + r.Profile
-		}
-		fmt.Fprintf(&b, "\n## Note from %s\n\n%s\n", title, strings.Join(said, "\n\n"))
+		fmt.Fprintf(&b, "\n## Note from %s\n\n%s\n", ReviewerTitle(r.Reviewer()), strings.Join(said, "\n\n"))
 	}
 	return b.String()
 }

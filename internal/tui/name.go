@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tmstorm/prowl/internal/store"
+	"github.com/tmstorm/prowl/internal/core"
 )
 
 const appName = "prowl"
@@ -156,7 +156,7 @@ var owlWords = []string{
 // Progress is what a running review is doing, for people: its step and the
 // agent's latest action, or once the agent has gone quiet to write, what the
 // owl is up to, or plain "writing" when it isn't playful.
-func Progress(r *store.Run, now time.Time, playful bool) string {
+func Progress(r *core.Review, now time.Time, playful bool) string {
 	if r.Activity == "" {
 		return "starting"
 	}

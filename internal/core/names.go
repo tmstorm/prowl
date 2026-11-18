@@ -14,15 +14,14 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/tmstorm/prowl/internal/gh"
-	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/slack"
 )
 
 // NameMatch proposes the Slack user for a GitHub login.
 type NameMatch struct {
 	Login string
-	User  slack.User // zero when nothing matched
-	Why   string     // e.g. "same name"
+	User  SlackUser // zero when nothing matched
+	Why   string    // e.g. "same name"
 }
 
 // ProposeNames guesses the Slack user of everyone in your orgs, and every
@@ -30,7 +29,7 @@ type NameMatch struct {
 // least: the same email, the same name, a login that holds their Slack name
 // or handle, then whoever posts most of their PRs in Slack. A Slack user is
 // proposed for one login at most.
-func (co *Core) ProposeNames() ([]NameMatch, []slack.User, error) {
+func (co *Core) ProposeNames() ([]NameMatch, []SlackUser, error) {
 	co.mu.Lock()
 	sl, err := co.slackFor()
 	cfg, viewer, me := co.cfg, co.inbox.Viewer, co.slackMe
@@ -78,7 +77,30 @@ func (co *Core) ProposeNames() ([]NameMatch, []slack.User, error) {
 			posted[a][s.User]++
 		}
 	}
-	return matchNames(people, users, posted, viewer, me), users, nil
+	out := make([]SlackUser, 0, len(users))
+	for _, u := range users {
+		out = append(out, slackUserOf(u))
+	}
+	return matchNames(people, users, posted, viewer, me), out, nil
+}
+
+// SlackUser is a person in your Slack workspace.
+type SlackUser struct {
+	ID       string
+	Handle   string // e.g. "alice"
+	RealName string
+	Display  string // the display name, often empty
+}
+
+func slackUserOf(u slack.User) SlackUser {
+	return SlackUser{ID: u.ID, Handle: u.Handle, RealName: u.RealName, Display: u.Display}
+}
+
+// HasSlackUser reports whether slack_names maps login to a Slack user.
+func (co *Core) HasSlackUser(login string) bool {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	return slack.IsUserID(co.cfg.SlackNames[login])
 }
 
 // SlackConnected reports whether you're signed in to Slack.
@@ -137,7 +159,7 @@ func matchNames(people []gh.Person, users []slack.User, posted map[string]map[st
 				}
 			}
 			if len(hits) == 1 {
-				found[p.Login] = NameMatch{Login: p.Login, User: hits[0], Why: sig.why}
+				found[p.Login] = NameMatch{Login: p.Login, User: slackUserOf(hits[0]), Why: sig.why}
 				taken[hits[0].ID] = true
 			}
 		}
@@ -201,10 +223,20 @@ func (co *Core) loadSlackUsers(sl *slack.Client) ([]slack.User, error) {
 	return users, nil
 }
 
-// SlackLine is the Slack line for a PR. A post mentions an author that
-// slack_names maps to a Slack user; a copy names them by the display name
-// Slack completes @ with when you paste it.
-func (co *Core) SlackLine(it inbox.Item, post bool) string {
+// reviewStates are the states GitHub gives reviews posted with each event.
+var reviewStates = map[ReviewEvent]string{EventApprove: "APPROVED", EventRequestChanges: "CHANGES_REQUESTED", EventComment: "COMMENTED"}
+
+// SlackLine is the Slack line for a PR, as of a review you just posted with
+// event, which the inbox may not show yet ("" for none). A post mentions an
+// author that slack_names maps to a Slack user; a copy names them by the
+// display name Slack completes @ with when you paste it.
+func (co *Core) SlackLine(key string, event ReviewEvent, post bool) string {
+	co.mu.Lock()
+	it, _ := co.item(key)
+	co.mu.Unlock()
+	if state := reviewStates[event]; state != "" {
+		it.MyLastReview = &gh.Review{State: state}
+	}
 	login := it.PR.AuthorLogin()
 	co.mu.Lock()
 	name := co.cfg.SlackNames[login]
@@ -227,9 +259,10 @@ func (co *Core) SlackLine(it inbox.Item, post bool) string {
 var ErrNoSlackUser = errors.New("no Slack user for the author")
 
 // DMAuthor sends the PR's author its Slack line in a direct message.
-func (co *Core) DMAuthor(it inbox.Item) error {
+func (co *Core) DMAuthor(key string) error {
 	co.mu.Lock()
 	sl, err := co.slackFor()
+	it, _ := co.item(key)
 	id := co.cfg.SlackNames[it.PR.AuthorLogin()]
 	co.mu.Unlock()
 	if err != nil {
@@ -238,7 +271,7 @@ func (co *Core) DMAuthor(it inbox.Item) error {
 	if !slack.IsUserID(id) {
 		return ErrNoSlackUser
 	}
-	if err := sl.DM(context.Background(), id, co.SlackLine(it, true)); err != nil {
+	if err := sl.DM(context.Background(), id, co.SlackLine(key, "", true)); err != nil {
 		return fmt.Errorf("DM %s: %w", it.PR.AuthorLogin(), err)
 	}
 	return nil

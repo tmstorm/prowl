@@ -7,8 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-
-	"github.com/tmstorm/prowl/internal/inbox"
+	"github.com/tmstorm/prowl/internal/core"
 )
 
 type palette struct {
@@ -67,21 +66,21 @@ func applyTheme(name string) {
 
 func init() { applyTheme("dracula") }
 
-func bucketStyle(b inbox.Bucket) lipgloss.Style {
+func bucketStyle(b core.Bucket) lipgloss.Style {
 	switch b {
-	case inbox.NeedsReview, inbox.ReReview, inbox.Shared:
+	case core.NeedsReview, core.ReReview, core.Shared:
 		return sRed
-	case inbox.ReApprove, inbox.Recheck:
+	case core.ReApprove, core.Recheck:
 		return sOrange
-	case inbox.Addressed:
+	case core.Addressed:
 		return sYellow
-	case inbox.Activity:
+	case core.Activity:
 		return sBlue
-	case inbox.Approved:
+	case core.Approved:
 		return sGreen
-	case inbox.Mine, inbox.Local:
+	case core.Mine, core.Local:
 		return sPink
-	case inbox.Unclaimed:
+	case core.Unclaimed:
 		return sOrange
 	}
 	return sDim

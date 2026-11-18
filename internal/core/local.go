@@ -133,7 +133,7 @@ func (co *Core) withLocals(items []inbox.Item) []inbox.Item {
 		if pr.Repository.Name == "" {
 			pr.Repository.Name = l.Repo
 		}
-		items = append(items, inbox.Item{PR: pr, Bucket: inbox.Local, Since: l.At, Reason: "local review of " + l.Branch})
+		items = append(items, inbox.Item{PR: pr, Bucket: inbox.Local, Why: inbox.LocalReview, Since: l.At, Reason: "local review of " + l.Branch})
 	}
 	return items
 }
@@ -206,9 +206,9 @@ func mergeBase(l store.Local) string {
 	return git(l.Dir, "merge-base", l.Base, "HEAD")
 }
 
-// localDetail is the Overview of a local review: the branch, what it is
+// localBody is the Overview of a local review: the branch, what it is
 // compared with, its commits and its changed files.
-func localDetail(l store.Local) *gh.Detail {
+func localBody(l store.Local) string {
 	base := mergeBase(l)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Local review of `%s` in `%s`, compared with `%s` (%s). Nothing here is on GitHub.\n\n", l.Branch, l.Dir, l.Base, gh.Short(base))
@@ -224,7 +224,7 @@ func localDetail(l store.Local) *gh.Detail {
 			b.WriteString("- `" + f + "`\n")
 		}
 	}
-	return &gh.Detail{Body: b.String()}
+	return b.String()
 }
 
 // localDiff is a local review's diff: everything since the branch left the

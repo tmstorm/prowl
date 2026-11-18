@@ -18,7 +18,6 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/ghtest"
-	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/slack"
 	"github.com/zalando/go-keyring"
 )
@@ -124,11 +123,11 @@ func TestSlackShares(t *testing.T) {
 		t.Fatalf("shares notify: %v", changes)
 	}
 	in := co.Inbox()
-	if it, ok := find(in, "o/api#7"); !ok || it.Bucket != inbox.Shared || it.Reason != "shared in #reviews by bob" ||
+	if it, ok := find(in, "o/api#7"); !ok || it.Bucket != core.Shared || it.Reason != "shared in #reviews by bob" ||
 		it.SlackLink != "https://x.slack.com/archives/C1/p1" {
 		t.Fatalf("o/api#7 = %v %+v", ok, it)
 	}
-	if it, ok := find(in, "o/api#10"); !ok || it.Bucket != inbox.Shared || it.Reason != "sent to you by carol" {
+	if it, ok := find(in, "o/api#10"); !ok || it.Bucket != core.Shared || it.Reason != "sent to you by carol" {
 		t.Fatalf("o/api#10 = %v %+v", ok, it)
 	}
 	for _, key := range []string{"o/api#8", "o/api#9"} {
@@ -139,7 +138,7 @@ func TestSlackShares(t *testing.T) {
 
 	sl.set("")
 	in = refresh(t, co)
-	if it, ok := find(in, "o/api#7"); !ok || it.Bucket != inbox.Shared {
+	if it, ok := find(in, "o/api#7"); !ok || it.Bucket != core.Shared {
 		t.Fatalf("after the search moved on, o/api#7 = %v %+v", ok, it)
 	}
 
@@ -179,7 +178,7 @@ func TestSlackReactions(t *testing.T) {
 	if calls := sl.took(); len(calls) != 0 {
 		t.Fatalf("before any review: %q", calls)
 	}
-	co.SetPending("o/api#7", []gh.DraftComment{{Path: "a.go", Line: 1, Body: "why?"}})
+	co.SetPending("o/api#7", []core.DraftComment{{Path: "a.go", Line: 1, Body: "why?"}})
 	refresh(t, co)
 	if calls := sl.took(); fmt.Sprint(calls) != fmt.Sprint([]string{"reactions.add C1 " + ts + " eyes"}) {
 		t.Fatalf("reviewing: %q", calls)
@@ -395,7 +394,7 @@ func TestSlackLoggedOutInSync(t *testing.T) {
 	if _, err := co.Refresh(); err != nil || co.SlackErr() != nil {
 		t.Fatalf("sync: %v, Slack: %v", err, co.SlackErr())
 	}
-	if err := co.DMAuthor(inbox.Item{}); err == nil || err.Error() != "Slack isn't logged in" {
+	if err := co.DMAuthor(""); err == nil || err.Error() != "Slack isn't logged in" {
 		t.Fatalf("DM while logged out: %v", err)
 	}
 	if _, _, err := co.SlackActivity(); err == nil || err.Error() != "Slack isn't logged in" {

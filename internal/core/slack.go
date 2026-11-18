@@ -262,8 +262,8 @@ func (co *Core) reaction(cfg config.Config, it inbox.Item, me string, since time
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	key := it.PR.Key()
-	if len(co.pending[key]) > 0 || slices.ContainsFunc(co.runs[key], func(r *store.Run) bool {
-		return r.StartedAt.After(since) && (r.Status == "running" || r.Status == "done")
+	if len(co.pending[key]) > 0 || slices.ContainsFunc(co.runs[key], func(r *Review) bool {
+		return r.StartedAt.After(since) && (r.Status == ReviewRunning || r.Status == ReviewDone)
 	}) {
 		return emoji.Reviewing
 	}
@@ -319,14 +319,13 @@ func (co *Core) setReaction(sl *slack.Client, s store.SlackShare, want string) e
 // afterReview tells the newest Slack share of the PR about the review you
 // just posted, as slack_after_review says, and says what it did: "" when
 // the PR has no share or Slack isn't connected.
-func (co *Core) afterReview(key, event string) (string, error) {
+func (co *Core) afterReview(key string, event ReviewEvent) (string, error) {
 	co.mu.Lock()
 	sl, cfg := co.slack, co.cfg
 	loggedOut := co.authErr("slack")
 	s, shared := co.slackShares[key]
-	it, _ := co.item(key)
 	co.mu.Unlock()
-	state := map[string]string{"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED"}[event]
+	state := reviewStates[event]
 	if sl == nil || !shared || state == "" || cfg.SlackAfterReview == "off" {
 		return "", nil
 	}
@@ -344,8 +343,7 @@ func (co *Core) afterReview(key, event string) (string, error) {
 		}
 		return note, co.setReaction(sl, s, emoji)
 	case "reply":
-		it.MyLastReview = &gh.Review{State: state}
-		return "replied in " + where, sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), co.SlackLine(it, true))
+		return "replied in " + where, sl.Post(context.Background(), s.Channel, cmp.Or(s.ThreadTS, s.TS), co.SlackLine(key, event, true))
 	}
 	return "", nil
 }
@@ -468,7 +466,8 @@ func slackName(users []slack.User, id string) string {
 // ChannelActivity is a channel you're in and how many PR links of your orgs
 // were posted in it lately.
 type ChannelActivity struct {
-	slack.Channel
+	ID, Name    string
+	Private     bool
 	Links       int
 	Recommended bool // enough links to be worth watching
 }
@@ -518,7 +517,7 @@ func (co *Core) SlackActivity() ([]ChannelActivity, int, error) {
 	}
 	out := make([]ChannelActivity, 0, len(channels))
 	for _, ch := range channels {
-		out = append(out, ChannelActivity{Channel: ch, Links: links[ch.ID], Recommended: links[ch.ID] >= recommendLinks})
+		out = append(out, ChannelActivity{ID: ch.ID, Name: ch.Name, Private: ch.Private, Links: links[ch.ID], Recommended: links[ch.ID] >= recommendLinks})
 	}
 	slices.SortStableFunc(out, func(a, b ChannelActivity) int {
 		return cmp.Or(cmp.Compare(b.Links, a.Links), cmp.Compare(a.Name, b.Name))

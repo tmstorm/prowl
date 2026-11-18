@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/core"
 )
 
 type lineKind int
@@ -126,11 +126,11 @@ func (d *detail) buildDiff() []brow {
 	if lines == nil {
 		return nil
 	}
-	threads := map[string][]*gh.Thread{}
+	threads := map[string][]*core.Thread{}
 	if d.det != nil {
 		for i := range d.det.Threads {
 			t := &d.det.Threads[i]
-			if t.Line > 0 && !t.IsOutdated {
+			if t.Line > 0 && !t.Outdated {
 				side := t.DiffSide
 				if side == "" {
 					side = "RIGHT"
@@ -270,7 +270,7 @@ func (d *detail) setPending(sel []diffLine, body string) {
 		}
 		return
 	}
-	c := gh.DraftComment{Path: last.path, Line: line, Side: side, Body: body}
+	c := core.DraftComment{Path: last.path, Line: line, Side: side, Body: body}
 	if len(sel) > 1 {
 		c.StartLine, c.StartSide = sel[0].anchor()
 	}

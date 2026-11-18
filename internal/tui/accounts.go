@@ -9,7 +9,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/platform"
 )
@@ -20,6 +19,9 @@ type loginDoneMsg struct {
 	key, name string
 	err       error
 }
+
+// renewWithin is how early prowl starts asking you to log in again.
+const renewWithin = 72 * time.Hour
 
 // checkAuth has core check every login.
 func (m *Model) checkAuth() tea.Cmd {
@@ -62,7 +64,7 @@ func (m *Model) authWarning() string {
 		case !ok || !a.Known:
 		case !a.LoggedIn:
 			return sRed.Render(acct.Title+" logged out") + sDim.Render(" "+leader+"l")
-		case a.ExpiresSoon(agent.RenewWithin):
+		case a.ExpiresSoon(renewWithin):
 			return sYellow.Render(acct.Title+" relogin in "+until(a.Expires)) + sDim.Render(" "+leader+"l")
 		}
 	}
@@ -140,7 +142,7 @@ func (p *accountsPopup) view(m *Model) string {
 			}
 			if !st.Expires.IsZero() {
 				exp := sDim.Render(" · ends in " + until(st.Expires))
-				if st.ExpiresSoon(agent.RenewWithin) {
+				if st.ExpiresSoon(renewWithin) {
 					exp = sYellow.Render(" · ends in " + until(st.Expires))
 				}
 				state += exp

@@ -14,12 +14,17 @@ import (
 // autoSummaryLimit is how many summaries auto_summary writes at once.
 const autoSummaryLimit = 3
 
+// Summary is an agent's plain-language summary of a PR at one commit.
+type Summary struct {
+	HeadOid, Text, Model string
+}
+
 // Summary is a PR's AI summary, or nil when it has none.
-func (co *Core) Summary(key string) *store.Summary {
+func (co *Core) Summary(key string) *Summary {
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	if sum, ok := co.summaries[key]; ok {
-		return &sum
+		return &Summary{HeadOid: sum.HeadOid, Text: sum.Text, Model: sum.Model}
 	}
 	return nil
 }
@@ -38,12 +43,13 @@ func (co *Core) Summarizing() []string {
 
 // Summarize has the main agent write a plain-language summary of a PR and
 // keeps it. It takes seconds; a UI calls it off its own loop.
-func (co *Core) Summarize(key string) (store.Summary, error) {
+func (co *Core) Summarize(key string) (Summary, error) {
 	it, cfg, err := co.beginSummary(key)
 	if err != nil {
-		return store.Summary{}, err
+		return Summary{}, err
 	}
-	return co.finishSummary(it, cfg)
+	sum, err := co.finishSummary(it, cfg)
+	return Summary{HeadOid: sum.HeadOid, Text: sum.Text, Model: sum.Model}, err
 }
 
 // beginSummary marks a summary as being written.

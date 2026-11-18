@@ -97,23 +97,27 @@ func TestSlackLineAndDM(t *testing.T) {
 	co.SetConfig(cfg)
 	sl := &fakeSlack{users: slackUser("U0BEN123456", "ben", "Ben Quill", "BQ", "")}
 	co.UseSlack(sl.client(t))
-	in := refresh(t, co)
-	it, _ := find(in, "o/api#9")
+	refresh(t, co)
 
-	if got := co.SlackLine(it, true); got != "https://github.com/o/api/pull/9 Needs review · <@U0BEN123456> · fix: x" {
+	if got := co.SlackLine("o/api#9", "", true); got != "https://github.com/o/api/pull/9 Needs review · <@U0BEN123456> · fix: x" {
 		t.Errorf("posted line = %q", got)
 	}
-	if got := co.SlackLine(it, false); got != "https://github.com/o/api/pull/9 Needs review · @BQ · fix: x" {
+	if got := co.SlackLine("o/api#9", "", false); got != "https://github.com/o/api/pull/9 Needs review · @BQ · fix: x" {
 		t.Errorf("copied line = %q", got)
 	}
-	if err := co.DMAuthor(it); err != nil {
+	if got := co.SlackLine("o/api#9", core.EventApprove, false); got != "https://github.com/o/api/pull/9 Approved · @BQ · fix: x" {
+		t.Errorf("line after approving = %q", got)
+	}
+	if err := co.DMAuthor("o/api#9"); err != nil {
 		t.Fatal(err)
 	}
 	if calls := sl.took(); len(calls) != 1 || calls[0] != "chat.postMessage D9  https://github.com/o/api/pull/9 Needs review · <@U0BEN123456> · fix: x" {
 		t.Fatalf("calls = %q", calls)
 	}
-	it.PR.Author.Login = "nobody"
-	if err := co.DMAuthor(it); !errors.Is(err, core.ErrNoSlackUser) {
+	if _, err := co.Open("o/api", 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := co.DMAuthor("o/api#8"); !errors.Is(err, core.ErrNoSlackUser) {
 		t.Fatalf("unmapped author: %v", err)
 	}
 }

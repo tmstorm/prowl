@@ -12,10 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/tmstorm/prowl/internal/core"
-	"github.com/tmstorm/prowl/internal/gh"
-	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/platform"
-	"github.com/tmstorm/prowl/internal/store"
 )
 
 const (
@@ -25,9 +22,6 @@ const (
 )
 
 var tabNames = []string{"Overview", "Diff", "AI review"}
-
-// botLogins are the bots setting: accounts dimmed and folded in activity.
-var botLogins map[string]bool
 
 // reviewerOrder is the configured reviewers, the order agents' sections are
 // shown in.
@@ -71,12 +65,12 @@ type findingRef struct {
 }
 
 type detail struct {
-	item inbox.Item
+	item core.PR
 	me   string
 	tab  int
 	w, h int // text width and body height
 
-	det        *gh.Detail
+	det        *core.Detail
 	detErr     error
 	loadingDet bool
 	stale      bool // det is older than what GitHub has; refetch when shown
@@ -88,20 +82,20 @@ type detail struct {
 	diffs       map[bool][]diffLine
 	diffLoading bool
 	diffErr     error
-	pending     []gh.DraftComment
+	pending     []core.DraftComment
 	viewed      map[string]string // path -> VIEWED / UNVIEWED / DISMISSED
 	hl          map[bool]*highlighter
 
 	folds   map[string]bool // explicit fold state per block
 	foldAll *bool           // zR / zM override
 
-	runs        []*store.Run   // every agent's review runs, newest first
-	summary     *store.Summary // the AI summary, if one was written
+	runs        []*core.Review // every agent's review runs, newest first
+	summary     *core.Summary  // the AI summary, if one was written
 	summarizing bool           // a summary is being written
 	flat        []findingRef   // the current reviews' findings, as rows refer to them
 	reviewSig   string
-	logs        map[string][]store.LogEntry // per agent: your instructions and its replies (local only)
-	ciLogs      map[int64]ciLog             // failed Actions jobs' logs, as gl loaded them
+	logs        map[string][]core.Note // per agent: your instructions and its replies (local only)
+	ciLogs      map[int64]ciLog        // failed Actions jobs' logs, as gl loaded them
 
 	navs    [3]nav
 	rows    [3][]brow
@@ -111,7 +105,7 @@ type detail struct {
 
 type detailMsg struct {
 	key string
-	det *gh.Detail
+	det *core.Detail
 	err error
 }
 
@@ -122,10 +116,10 @@ type diffMsg struct {
 	err         error
 }
 
-func newDetail(it inbox.Item, me string) *detail {
+func newDetail(it core.PR, me string) *detail {
 	d := &detail{item: it, me: me, diffs: map[bool][]diffLine{}, dirty: true, hl: map[bool]*highlighter{},
 		folds: map[string]bool{}, viewed: map[string]string{}}
-	d.sinceReview = it.LastReviewedOid != "" && it.LastReviewedOid != it.PR.HeadRefOid
+	d.sinceReview = it.LastReviewedOid != "" && it.LastReviewedOid != it.HeadOid
 	d.jumpNew = true
 	for i := range d.navs {
 		d.navs[i].scrolloff = 4
@@ -133,13 +127,13 @@ func newDetail(it inbox.Item, me string) *detail {
 	return d
 }
 
-func (d *detail) setItem(it inbox.Item) {
-	if it.PR.HeadRefOid != d.item.PR.HeadRefOid {
+func (d *detail) setItem(it core.PR) {
+	if it.HeadOid != d.item.HeadOid {
 		d.diffs = map[bool][]diffLine{}
 		d.hl = map[bool]*highlighter{}
 		d.stale = true
 	}
-	if !it.PR.UpdatedAt.Equal(d.item.PR.UpdatedAt) {
+	if !it.UpdatedAt.Equal(d.item.UpdatedAt) {
 		d.stale = true
 	}
 	d.item = it
@@ -148,7 +142,7 @@ func (d *detail) setItem(it inbox.Item) {
 
 // setRuns updates the review runs, rebuilding rows only when something
 // visible in them changed (the live status line renders separately).
-func (d *detail) setRuns(runs []*store.Run) {
+func (d *detail) setRuns(runs []*core.Review) {
 	var sig strings.Builder
 	for _, r := range runs {
 		fmt.Fprintf(&sig, "#%d|%s|%s|%s|%d|%s", r.ID, r.Status, r.SessionID, r.Error, r.FinishedAt.Unix(), r.Summary)
@@ -163,14 +157,14 @@ func (d *detail) setRuns(runs []*store.Run) {
 	}
 }
 
-func (d *detail) setSummary(sum *store.Summary, running bool) {
+func (d *detail) setSummary(sum *core.Summary, running bool) {
 	if sum != d.summary || running != d.summarizing {
 		d.summary, d.summarizing = sum, running
 		d.dirty = true
 	}
 }
 
-func (d *detail) setLogs(logs map[string][]store.LogEntry) {
+func (d *detail) setLogs(logs map[string][]core.Note) {
 	changed := len(logs) != len(d.logs)
 	for a, l := range logs {
 		if len(l) != len(d.logs[a]) {
@@ -185,11 +179,11 @@ func (d *detail) setLogs(logs map[string][]store.LogEntry) {
 
 // current is each agent's latest run, in reviewer order, then any other
 // agent that has reviewed the PR.
-func (d *detail) current() []*store.Run {
-	cur := store.Current(d.runs)
-	var out []*store.Run
+func (d *detail) current() []*core.Review {
+	cur := core.Current(d.runs)
+	var out []*core.Review
 	for _, name := range reviewerOrder {
-		if r := store.Latest(cur, name); r != nil {
+		if r := core.Latest(cur, name); r != nil {
 			out = append(out, r)
 		}
 	}
@@ -328,7 +322,7 @@ func (d *detail) ensureLoaded(co *core.Core) tea.Cmd {
 func (d *detail) fetch(co *core.Core) tea.Cmd {
 	d.loadingDet = true
 	d.stale = false
-	key := d.item.PR.Key()
+	key := d.item.Key
 	return func() tea.Msg {
 		det, err := co.Detail(key)
 		return detailMsg{key, det, err}
@@ -344,7 +338,7 @@ func (d *detail) loadDiff(co *core.Core) tea.Cmd {
 	if _, ok := d.diffs[d.sinceReview]; ok || d.diffLoading {
 		return nil
 	}
-	key, since := d.item.PR.Key(), d.sinceReview
+	key, since := d.item.Key, d.sinceReview
 	d.diffLoading = true
 	d.diffErr = nil
 	return func() tea.Msg {
@@ -360,9 +354,9 @@ func (d *detail) handleDetail(msg detailMsg) {
 	}
 	d.det, d.detErr = msg.det, msg.err
 	if msg.det != nil {
-		d.item.PR.Body = msg.det.Body
+		d.item.Body = msg.det.Body
 		for _, f := range msg.det.Files {
-			d.viewed[f.Path] = f.ViewerViewedState
+			d.viewed[f.Path] = f.Viewed
 		}
 	}
 	d.dirty = true
@@ -425,8 +419,8 @@ func (d *detail) fileFolded(path string) bool {
 }
 
 // read reports whether something created at t has already been seen.
-func (d *detail) read(t time.Time, author *gh.Actor) bool {
-	if author != nil && author.Login == d.me {
+func (d *detail) read(t time.Time, author core.Actor) bool {
+	if author.Login != "" && author.Login == d.me {
 		return true
 	}
 	seen := d.seen()
@@ -525,12 +519,8 @@ func (a *rowAdder) begin(block, thread string, folded bool) {
 
 func (a *rowAdder) end() { a.block, a.thread, a.head = "", "", false }
 
-func author(a *gh.Actor) string {
-	if a == nil {
-		return "ghost"
-	}
-	return a.Login
-}
+// short is a commit ID cut to seven characters, as GitHub shows it.
+func short(oid string) string { return oid[:min(len(oid), 7)] }
 
 func firstLine(s string, w int) string {
 	s = strings.TrimSpace(htmlComment.ReplaceAllString(s, ""))
@@ -547,7 +537,7 @@ func foldGlyph(folded bool) string {
 	return sTitle.Render("▾ ")
 }
 
-func (d *detail) newMark(t time.Time, a *gh.Actor) string {
+func (d *detail) newMark(t time.Time, a core.Actor) string {
 	if d.read(t, a) {
 		return ""
 	}
@@ -565,8 +555,8 @@ func (d *detail) summaryRows(a *rowAdder, w int) {
 	default:
 		folded := d.folded("summary", false)
 		a.begin("summary", "", folded)
-		head := " " + foldGlyph(folded) + sSection.Render("AI summary") + sDim.Render(" · "+modelName(d.summary.Model)+" · for "+gh.Short(d.summary.HeadOid))
-		if d.summary.HeadOid != d.item.PR.HeadRefOid {
+		head := " " + foldGlyph(folded) + sSection.Render("AI summary") + sDim.Render(" · "+modelName(d.summary.Model)+" · for "+short(d.summary.HeadOid))
+		if d.summary.HeadOid != d.item.HeadOid {
 			head += sYellow.Render(" · new commits since, " + leader + "ca to refresh")
 		}
 		a.add(head)
@@ -616,7 +606,7 @@ func (d *detail) buildOverview() []brow {
 	}
 
 	a.end()
-	local := d.item.PR.Local()
+	local := d.item.Local()
 	descFolded := d.folded("desc", !d.seenAt.IsZero() && !local)
 	a.begin("desc", "", descFolded)
 	title := "Description"
@@ -639,10 +629,10 @@ func (d *detail) buildOverview() []brow {
 		return a.rows
 	}
 	section("Reviewers")
-	latest := map[string]gh.Review{}
+	latest := map[string]core.PRReview{}
 	var order []string
 	for _, r := range d.det.Reviews {
-		n := author(r.Author)
+		n := r.Author.Login
 		prev, ok := latest[n]
 		if !ok {
 			order = append(order, n)
@@ -664,10 +654,10 @@ func (d *detail) buildOverview() []brow {
 			summary = append(summary, sDim.Render(n+" commented"))
 		}
 	}
-	for _, rr := range d.item.PR.ReviewRequests.Nodes {
-		n := rr.RequestedReviewer.Login
+	for _, rr := range d.item.Requests {
+		n := rr.Login
 		if n == "" {
-			n = "@" + rr.RequestedReviewer.Slug
+			n = "@" + rr.Team
 		}
 		summary = append(summary, sYellow.Render("waiting on "+n))
 	}
@@ -688,7 +678,7 @@ func (d *detail) buildOverview() []brow {
 
 	unresolved := 0
 	for _, t := range d.det.Threads {
-		if !t.IsResolved {
+		if !t.Resolved {
 			unresolved++
 		}
 	}
@@ -727,21 +717,21 @@ func fileState(s string) string {
 
 // threadRows renders a review thread. In the overview it includes the code it
 // refers to; in the diff the code is already on screen.
-func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
-	if len(t.Comments.Nodes) == 0 {
+func (d *detail) threadRows(t *core.Thread, w int, withCode bool) []brow {
+	if len(t.Comments) == 0 {
 		return nil
 	}
 	id := "thread:" + t.ID
 	allRead := true
-	for _, c := range t.Comments.Nodes {
+	for _, c := range t.Comments {
 		if !d.read(c.CreatedAt, c.Author) {
 			allRead = false
 		}
 	}
-	f := d.folded(id, t.IsResolved || allRead)
+	f := d.folded(id, t.Resolved || allRead)
 	bar := sYellow.Render("┃ ")
 	state := sYellow.Render("unresolved")
-	if t.IsResolved {
+	if t.Resolved {
 		bar, state = sDim.Render("┃ "), sDim.Render("resolved")
 	}
 	ind := "  "
@@ -758,22 +748,22 @@ func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
 	if withCode {
 		loc = sBlue.Render(fmt.Sprintf("%s:%d", t.Path, line)) + " "
 	}
-	if t.IsOutdated {
+	if t.Outdated {
 		state += sDim.Render(" · outdated")
 	}
-	last := t.Comments.Nodes[len(t.Comments.Nodes)-1]
+	last := t.Comments[len(t.Comments)-1]
 	newest := ""
-	for _, c := range t.Comments.Nodes {
+	for _, c := range t.Comments {
 		if m := d.newMark(c.CreatedAt, c.Author); m != "" {
 			newest = m
 		}
 	}
-	head := ind + foldGlyph(f) + loc + state + sDim.Render(" · "+count(len(t.Comments.Nodes), "comment")) + newest
+	head := ind + foldGlyph(f) + loc + state + sDim.Render(" · "+count(len(t.Comments), "comment")) + newest
 	if r, _ := d.draftReply(t.ID); r != nil && !r.Excluded {
 		head += sYellow.Render(" · ↩ draft reply")
 	}
 	if f {
-		head += sDim.Render("  " + author(last.Author) + ": " + firstLine(last.Body, w))
+		head += sDim.Render("  " + last.Author.Login + ": " + firstLine(last.Body, w))
 	}
 	a.add(head)
 	if f {
@@ -781,8 +771,8 @@ func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
 	}
 	inner := ind + "  " + bar
 	cw := w - lipgloss.Width(inner)
-	if withCode && t.Comments.Nodes[0].DiffHunk != "" {
-		hunk := parseDiff("diff --git a/x b/" + t.Path + "\n" + t.Comments.Nodes[0].DiffHunk)
+	if withCode && t.Comments[0].DiffHunk != "" {
+		hunk := parseDiff("diff --git a/x b/" + t.Path + "\n" + t.Comments[0].DiffHunk)
 		var code []diffLine
 		for _, l := range hunk {
 			if l.commentable() {
@@ -796,8 +786,8 @@ func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
 			a.add(inner + renderDiffLine(l, cw))
 		}
 	}
-	for _, c := range t.Comments.Nodes {
-		a.add(inner + sBold.Render(author(c.Author)) + sDim.Render(" "+agoText(c.CreatedAt)) + d.newMark(c.CreatedAt, c.Author))
+	for _, c := range t.Comments {
+		a.add(inner + sBold.Render(c.Author.Login) + sDim.Render(" "+agoText(c.CreatedAt)) + d.newMark(c.CreatedAt, c.Author))
 		for _, l := range renderMarkdown(c.Body, cw-2) {
 			a.add(inner + "  " + l)
 		}
@@ -913,7 +903,7 @@ func (m *Model) detailKey(d *detail, key string) tea.Cmd {
 			return m.commentOnSelection(d, true)
 		case "dd":
 			if v.cur < len(rows) && rows[v.cur].diff >= 0 && d.removePending(commentLine(rows[v.cur], lines)) {
-				m.core.SetPending(d.item.PR.Key(), d.pending)
+				m.core.SetPending(d.item.Key, d.pending)
 				m.info("dropped pending comment")
 			}
 		}
@@ -943,10 +933,10 @@ func (m *Model) detailKey(d *detail, key string) tea.Cmd {
 			}
 			for _, r := range cur {
 				for i := range r.Findings {
-					r.Findings[i].Excluded = key == "m" && r.Findings[i].Severity != "must-fix"
+					r.Findings[i].Excluded = key == "m" && r.Findings[i].Severity != core.MustFix
 				}
 			}
-			if err := m.core.MustFixOnly(d.item.PR.Key(), key == "m"); err != nil {
+			if err := m.core.MustFixOnly(d.item.Key, key == "m"); err != nil {
 				m.fail(err.Error())
 				return nil
 			}
@@ -998,7 +988,7 @@ func (m *Model) toggleViewed(d *detail) tea.Cmd {
 			break
 		}
 	}
-	co, key := m.core, d.item.PR.Key()
+	co, key := m.core, d.item.Key
 	return func() tea.Msg {
 		return viewedMsg{key: key, path: path, viewed: viewed, err: co.SetFileViewed(key, path, viewed)}
 	}
@@ -1234,7 +1224,7 @@ func (d *detail) docsTopic() string {
 }
 
 // threadAtCursor returns the review thread under the cursor, if any.
-func (d *detail) threadAtCursor() *gh.Thread {
+func (d *detail) threadAtCursor() *core.Thread {
 	if d.det == nil || d.tab == tabReview {
 		return nil
 	}
@@ -1255,18 +1245,18 @@ func (d *detail) threadAtCursor() *gh.Thread {
 
 // header returns the fixed lines above the tab body.
 func (d *detail) header(m *Model) []string {
-	pr := d.item.PR
+	pr := d.item
 	w := d.w
 	if pr.Local() {
 		return []string{
 			fit(styledTitle(pr.Title, true), w),
-			fit(sPink.Render("⌂ "+pr.HeadRefName)+sDim.Render(" → "+pr.BaseRefName+" · reviewed "+agoText(d.item.Since)), w),
+			fit(sPink.Render("⌂ "+pr.Branch)+sDim.Render(" → "+pr.Base+" · reviewed "+agoText(d.item.Since)), w),
 			fit(bucketStyle(d.item.Bucket).Render("local")+sDim.Render(": "+d.item.Reason), w),
 		}
 	}
 	meta := []string{
-		sPink.Render(pr.AuthorLogin()),
-		sDim.Render(pr.HeadRefName + " → " + pr.BaseRefName),
+		sPink.Render(pr.Author),
+		sDim.Render(pr.Branch + " → " + pr.Base),
 		sGreen.Render(fmt.Sprintf("+%d", pr.Additions)) + " " + sRed.Render(fmt.Sprintf("-%d", pr.Deletions)) + sDim.Render(fmt.Sprintf(" in %d files", pr.ChangedFiles)),
 		sDim.Render("opened " + agoText(pr.CreatedAt)),
 	}
@@ -1275,7 +1265,7 @@ func (d *detail) header(m *Model) []string {
 		reason = ansi.SetHyperlink(d.item.SlackLink) + reason + ansi.ResetHyperlink()
 	}
 	status := []string{reason, statusBadge(d.item.ReviewStatus)}
-	if ci := pr.CIState(); ci != "" {
+	if ci := pr.CI; ci != "" {
 		status = append(status, ciBadge(ci)+sDim.Render(" ci"))
 	}
 	if d.item.UnresolvedCount > 0 {
@@ -1374,12 +1364,12 @@ func modelName(id string) string {
 
 // firstReviewRunning is true while every agent is on its first draft, so the
 // tab has nothing to show yet.
-func firstReviewRunning(cur []*store.Run) bool {
+func firstReviewRunning(cur []*core.Review) bool {
 	if len(cur) == 0 {
 		return false
 	}
 	for _, r := range cur {
-		if r.Status != "running" || r.Summary != "" {
+		if r.Status != core.ReviewRunning || r.Summary != "" {
 			return false
 		}
 	}

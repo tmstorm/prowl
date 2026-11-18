@@ -541,29 +541,6 @@ func (s *Store) AllRuns() (map[string][]*Run, error) {
 	return out, nil
 }
 
-// Latest is a reviewer's current run in runs (newest first), or nil.
-func Latest(runs []*Run, reviewer string) *Run {
-	for _, r := range runs {
-		if r.Reviewer() == reviewer {
-			return r
-		}
-	}
-	return nil
-}
-
-// Current is each reviewer's latest run, newest first.
-func Current(runs []*Run) []*Run {
-	var out []*Run
-	seen := map[string]bool{}
-	for _, r := range runs {
-		if !seen[r.Reviewer()] {
-			seen[r.Reviewer()] = true
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
 func (s *Store) reviews(where string, args ...any) ([]*Run, error) {
 	rows, err := s.db.Query(`SELECT id, key, status, head_oid, session_id, pid, started_at, finished_at,
   activity, activity_at, summary, findings, replies, points, action, action_reason, origin, error, guidance, model, agent, profile FROM review_runs `+where, args...)

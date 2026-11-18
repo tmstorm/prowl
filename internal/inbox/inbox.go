@@ -57,12 +57,47 @@ func (b Bucket) NeedsMe() bool {
 	return b.Rank() <= Recheck.Rank()
 }
 
+// Why is the reason a PR is in its bucket, for code to compare: Reason is
+// the same for people, and its wording can change.
+type Why int
+
+const (
+	ReviewRequested Why = iota
+	TeamReviewRequested
+	AskedAgain
+	ReRequested
+	ReviewDismissed
+	ChangeRequestDismissed
+	AuthorPushed
+	AuthorReplied
+	Commented
+	RepliedInThread
+	ApprovalStands
+	PushedSinceApproval
+	YouRequestedChanges
+	YouCommented
+	YouApproved
+	Draft
+	NobodyAsked
+	WithOthers
+	Mentioned
+	NewFeedback
+	ReadyToMerge
+	ChangesRequested
+	AwaitingReviewers
+	SharedInChannel
+	SentToYou
+	LocalReview
+)
+
 type Item struct {
 	PR     gh.PR
 	Bucket Bucket
+	Why    Why
 	// When the ball landed in the viewer's court (or when the state began).
 	Since time.Time
-	// Short human explanation, e.g. "3 commits since your review".
+	// Short human explanation, e.g. "3 commits since your review". It leaves
+	// out SharedToo.
 	Reason string
 	// You approved and the PR changed since, but your approval still counts.
 	ChangedSinceApproval bool
@@ -74,8 +109,8 @@ type Item struct {
 	// On your PR: who reacted on its Slack share, e.g. "#reviews: Bob ✅".
 	SlackReactions string
 	SlackLink      string // the Slack message that shared it
-	// On a PR you were asked to review: where it was shared too, as its reason
-	// ends, e.g. "shared in #reviews by bob".
+	// On a PR you were asked to review: where it was shared too, e.g.
+	// "shared in #reviews by bob".
 	SharedToo string
 
 	ReviewStatus string // approved | changes requested | needs review | needs rebase | draft
@@ -112,9 +147,9 @@ func Classify(in *gh.Inbox) []Item {
 // watched classifies a PR from a watched repo that you aren't part of:
 // unclaimed when nobody was asked to review it and nobody has, otherwise
 // watching (someone else has it, or it's a draft).
-func watched(pr gh.PR, bots map[string]bool) (Bucket, time.Time, string) {
+func watched(pr gh.PR, bots map[string]bool) (Bucket, time.Time, Why, string) {
 	if pr.IsDraft {
-		return Watching, pr.UpdatedAt, "draft"
+		return Watching, pr.UpdatedAt, Draft, "draft"
 	}
 	var who []string
 	for _, rr := range pr.ReviewRequests.Nodes {
@@ -130,9 +165,9 @@ func watched(pr gh.PR, bots map[string]bool) (Bucket, time.Time, string) {
 		}
 	}
 	if len(who) == 0 {
-		return Unclaimed, pr.CreatedAt, "nobody asked to review"
+		return Unclaimed, pr.CreatedAt, NobodyAsked, "nobody asked to review"
 	}
-	return Watching, pr.UpdatedAt, "with " + strings.Join(who, ", ")
+	return Watching, pr.UpdatedAt, WithOthers, "with " + strings.Join(who, ", ")
 }
 
 // latest is the most recent thing someone did on a PR.
@@ -302,84 +337,84 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 	case login(pr.Author) == me:
 		it.Bucket = Mine
 		it.Since = maxT(reviewers.at, pr.CreatedAt)
-		it.Reason = mineReason(pr, reviewers.at, myLastActivity)
+		it.Why, it.Reason = mineReason(pr, reviewers.at, myLastActivity)
 
 	case requestedDirect && myLast == nil:
 		it.Bucket = NeedsReview
 		it.Since = orT(requestedAt, pr.CreatedAt)
-		it.Reason = "review requested"
+		it.Why, it.Reason = ReviewRequested, "review requested"
 
 	case requestedDirect && approved:
 		it.Bucket = ReApprove
 		it.Since = orT(requestedAt, lastPush)
-		it.Reason = "asked again after you approved" + commitsNote(commitsAfterReview)
+		it.Why, it.Reason = AskedAgain, "asked again after you approved"+commitsNote(commitsAfterReview)
 
 	case requestedDirect:
 		it.Bucket = ReReview
 		it.Since = orT(requestedAt, lastPush)
-		it.Reason = "re-requested" + commitsNote(commitsAfterReview)
+		it.Why, it.Reason = ReRequested, "re-requested"+commitsNote(commitsAfterReview)
 
 	case login(pr.Author) != me && !pr.IsDraft && myVerdict != nil && myVerdict.State == "DISMISSED":
 		it.Bucket = ReApprove
 		it.Since = maxT(lastPush, myVerdict.SubmittedAt)
-		it.Reason = "your review was dismissed" + commitsNote(commitsAfterReview)
+		it.Why, it.Reason = ReviewDismissed, "your review was dismissed"+commitsNote(commitsAfterReview)
 		if !approved {
 			it.Bucket = ReReview
-			it.Reason = "your change request was dismissed" + commitsNote(commitsAfterReview)
+			it.Why, it.Reason = ChangeRequestDismissed, "your change request was dismissed"+commitsNote(commitsAfterReview)
 		}
 
 	case feedback && (lastPush.After(myLastActivity) || threadActivity.After(myLastActivity)):
 		it.Bucket = Addressed
 		it.Since = maxT(lastPush, threadActivity)
 		if lastPush.After(myLastActivity) {
-			it.Reason = "author pushed" + commitsNote(commitsAfterReview)
+			it.Why, it.Reason = AuthorPushed, "author pushed"+commitsNote(commitsAfterReview)
 		} else {
-			it.Reason = "author replied to your threads"
+			it.Why, it.Reason = AuthorReplied, "author replied to your threads"
 		}
 
 	case threadActivity.After(myLastActivity) || (myLast != nil && othersLatest.After(myLastActivity)):
 		it.Bucket = Activity
 		it.Since = maxT(threadActivity, othersLatest)
-		it.Reason = others.String()
+		it.Why, it.Reason = Commented, others.String()
 		if threadActivity.After(othersLatest) {
-			it.Reason = threads.String()
+			it.Why, it.Reason = RepliedInThread, threads.String()
 		}
 
 	case myLastDecisive != nil && myLastDecisive.State == "APPROVED" && lastPush.After(myLastDecisive.SubmittedAt):
 		it.Bucket = Approved
 		it.Since = myLastDecisive.SubmittedAt
 		it.ChangedSinceApproval = true
-		it.Reason = "you approved; changed since" + commitsNote(commitsAfterReview) + ", approval still counts"
+		it.Why, it.Reason = ApprovalStands, "you approved; changed since"+commitsNote(commitsAfterReview)+", approval still counts"
 		if recheck {
 			it.Bucket, it.Since = Recheck, lastPush
-			it.Reason = "pushed since you approved" + commitsNote(commitsAfterReview) + "; your approval still counts"
+			it.Why, it.Reason = PushedSinceApproval, "pushed since you approved"+commitsNote(commitsAfterReview)+"; your approval still counts"
 		}
 
 	case requestedTeam && myLast == nil:
 		it.Bucket = TeamRequest
 		it.Since = orT(requestedAt, pr.CreatedAt)
-		it.Reason = "team review requested"
+		it.Why, it.Reason = TeamReviewRequested, "team review requested"
 
 	case feedback:
 		it.Bucket = WaitingOnAuthor
 		it.Since = myLast.SubmittedAt
-		it.Reason = "you requested changes"
+		it.Why, it.Reason = YouRequestedChanges, "you requested changes"
 		if myLastDecisive == nil {
-			it.Reason = "you reviewed with comments"
+			it.Why, it.Reason = YouCommented, "you reviewed with comments"
 		}
 
 	case myLastDecisive != nil && myLastDecisive.State == "APPROVED":
 		it.Bucket = Approved
 		it.Since = myLastDecisive.SubmittedAt
-		it.Reason = "you approved"
+		it.Why, it.Reason = YouApproved, "you approved"
 
 	case watchedRepo && myLastActivity.IsZero() && !requestedDirect:
-		it.Bucket, it.Since, it.Reason = watched(pr, bots)
+		it.Bucket, it.Since, it.Why, it.Reason = watched(pr, bots)
 
 	default:
 		it.Bucket = Involved
 		it.Since = pr.UpdatedAt
-		it.Reason = "mentioned / commented"
+		it.Why, it.Reason = Mentioned, "mentioned / commented"
 	}
 	if it.Since.IsZero() {
 		it.Since = pr.UpdatedAt
@@ -390,16 +425,15 @@ func classify(pr gh.PR, me string, myTeams, bots map[string]bool, watchedRepo, r
 // withShare moves a PR you haven't touched into Shared, or notes the share
 // on a review request.
 func withShare(it Item, share gh.Share) Item {
-	where := "sent to you by " + share.From
+	why, where := SentToYou, "sent to you by "+share.From
 	if share.Channel != "" {
-		where = "shared in #" + share.Channel + " by " + share.From
+		why, where = SharedInChannel, "shared in #"+share.Channel+" by "+share.From
 	}
 	switch {
 	case it.Bucket == NeedsReview:
-		it.Reason += " · " + where
 		it.SharedToo = where
 	case it.MyLastReview == nil && !it.PR.IsDraft && slices.Contains([]Bucket{TeamRequest, Involved, Unclaimed, Watching}, it.Bucket):
-		it.Bucket, it.Since, it.Reason = Shared, share.At, where
+		it.Bucket, it.Since, it.Why, it.Reason = Shared, share.At, why, where
 	}
 	return it
 }
@@ -419,16 +453,16 @@ func reviewStatus(pr gh.PR) string {
 	}
 }
 
-func mineReason(pr gh.PR, othersLatest, myLast time.Time) string {
+func mineReason(pr gh.PR, othersLatest, myLast time.Time) (Why, string) {
 	switch {
 	case othersLatest.After(myLast):
-		return "new feedback on your PR"
+		return NewFeedback, "new feedback on your PR"
 	case pr.ReviewDecision == "APPROVED":
-		return "approved, ready to merge"
+		return ReadyToMerge, "approved, ready to merge"
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
-		return "changes requested"
+		return ChangesRequested, "changes requested"
 	default:
-		return "awaiting reviewers"
+		return AwaitingReviewers, "awaiting reviewers"
 	}
 }
 

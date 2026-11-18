@@ -12,9 +12,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/tmstorm/prowl/internal/core"
-	"github.com/tmstorm/prowl/internal/gh"
-	"github.com/tmstorm/prowl/internal/inbox"
-	"github.com/tmstorm/prowl/internal/store"
 )
 
 // ---- layout
@@ -334,12 +331,12 @@ func reviewDot(status string) string {
 	return sDim.Render("○")
 }
 
-var bucketTags = map[inbox.Bucket]string{
-	inbox.NeedsReview: "review", inbox.ReReview: "re-review", inbox.Addressed: "addressed",
-	inbox.Activity: "activity", inbox.TeamRequest: "team", inbox.Mine: "mine",
-	inbox.WaitingOnAuthor: "waiting", inbox.Approved: "approved", inbox.Involved: "involved",
-	inbox.ReApprove: "re-approve", inbox.Unclaimed: "unclaimed", inbox.Watching: "watching", inbox.Recheck: "re-check", inbox.Local: "local",
-	inbox.Shared: "shared",
+var bucketTags = map[core.Bucket]string{
+	core.NeedsReview: "review", core.ReReview: "re-review", core.Addressed: "addressed",
+	core.Activity: "activity", core.TeamRequest: "team", core.Mine: "mine",
+	core.WaitingOnAuthor: "waiting", core.Approved: "approved", core.Involved: "involved",
+	core.ReApprove: "re-approve", core.Unclaimed: "unclaimed", core.Watching: "watching", core.Recheck: "re-check", core.Local: "local",
+	core.Shared: "shared",
 }
 
 // legend explains the icons currently on screen, wrapped to at most two lines.
@@ -356,14 +353,14 @@ func (m *Model) legend(w int) []string {
 		default:
 			seen[it.ReviewStatus] = true
 		}
-		if s := it.PR.CIState(); s != "" {
+		if s := it.CI; s != "" {
 			seen["ci:"+s] = true
 		}
-		if runs := m.runs[it.PR.Key()]; runs != nil {
+		if runs := m.runs[it.Key]; runs != nil {
 			seen["review"] = true
 			seen["replies"] = seen["replies"] || unsentReplies(runs) > 0
 		}
-		if _, ok := m.snoozed[it.PR.Key()]; ok {
+		if _, ok := m.snoozed[it.Key]; ok {
 			seen["snoozed"] = true
 		}
 		if threadText(it) != "" {
@@ -490,13 +487,13 @@ func (m *Model) listColumns() listCols {
 		if r.header {
 			continue
 		}
-		pr := m.items[r.item].PR
-		c.repo = max(c.repo, len(shortRepo(pr.Repository.Name)))
+		pr := m.items[r.item]
+		c.repo = max(c.repo, len(shortRepo(pr.RepoName)))
 		c.num = max(c.num, lipgloss.Width(prNumber(pr)))
-		if _, ok := m.snoozed[pr.Key()]; ok {
+		if _, ok := m.snoozed[pr.Key]; ok {
 			c.snooze = true
 		}
-		if m.runs[pr.Key()] != nil {
+		if m.runs[pr.Key] != nil {
 			c.review = true
 		}
 		c.size = max(c.size, len(sizeText(pr.Additions, pr.Deletions)))
@@ -538,12 +535,12 @@ func sizeStyle(add, del int) lipgloss.Style {
 
 // threadText is review-thread progress, "2/3" resolved, on PRs where the
 // author is answering review feedback.
-func threadText(it inbox.Item) string {
+func threadText(it core.PR) string {
 	if it.ThreadCount == 0 {
 		return ""
 	}
 	switch it.Bucket {
-	case inbox.Addressed, inbox.ReReview, inbox.WaitingOnAuthor, inbox.Mine:
+	case core.Addressed, core.ReReview, core.WaitingOnAuthor, core.Mine:
 		return fmt.Sprintf("%d/%d", it.ThreadCount-it.UnresolvedCount, it.ThreadCount)
 	}
 	return ""
@@ -551,7 +548,7 @@ func threadText(it inbox.Item) string {
 
 // waitStyle colors how long a PR has waited on you: its bucket color until
 // stale_after, yellow past it, bold red past twice that.
-func (m *Model) waitStyle(it inbox.Item) lipgloss.Style {
+func (m *Model) waitStyle(it core.PR) lipgloss.Style {
 	due := m.cfg.StaleAfter.Duration
 	if !it.Bucket.NeedsMe() || due <= 0 {
 		return bucketStyle(it.Bucket)
@@ -570,7 +567,7 @@ func (m *Model) waitStyle(it inbox.Item) lipgloss.Style {
 func (m *Model) snoozedNeeds() (int, time.Time) {
 	n, first := 0, time.Time{}
 	for _, it := range m.items {
-		until, ok := m.snoozed[it.PR.Key()]
+		until, ok := m.snoozed[it.Key]
 		if !ok || !it.Bucket.NeedsMe() {
 			continue
 		}
@@ -584,12 +581,12 @@ func (m *Model) snoozedNeeds() (int, time.Time) {
 
 // needs counts the PRs waiting on you (snoozed ones aside) and returns the
 // one that has waited longest.
-func (m *Model) needs() (int, *inbox.Item) {
+func (m *Model) needs() (int, *core.PR) {
 	var need int
-	var oldest *inbox.Item
+	var oldest *core.PR
 	for i := range m.items {
 		it := &m.items[i]
-		if _, ok := m.snoozed[it.PR.Key()]; ok || !it.Bucket.NeedsMe() {
+		if _, ok := m.snoozed[it.Key]; ok || !it.Bucket.NeedsMe() {
 			continue
 		}
 		need++
@@ -627,20 +624,20 @@ func (m *Model) windowTitle() string {
 func (m *Model) repoSummary(w int) string {
 	var open, need, unclaimed, waiting, approved, drafts int
 	for _, it := range m.items {
-		if it.PR.Repository.NameWithOwner != m.repoFocus {
+		if it.Repo != m.repoFocus {
 			continue
 		}
 		open++
 		switch {
-		case it.PR.IsDraft:
+		case it.Draft:
 			drafts++
 		case it.Bucket.NeedsMe():
 			need++
-		case it.Bucket == inbox.Unclaimed:
+		case it.Bucket == core.Unclaimed:
 			unclaimed++
-		case it.PR.ReviewDecision == "APPROVED":
+		case it.ReviewDecision == "APPROVED":
 			approved++
-		case it.Bucket == inbox.WaitingOnAuthor || it.PR.ReviewDecision == "CHANGES_REQUESTED":
+		case it.Bucket == core.WaitingOnAuthor || it.ReviewDecision == "CHANGES_REQUESTED":
 			waiting++
 		}
 	}
@@ -683,14 +680,14 @@ func (m *Model) summaryLine(w int) string {
 	var failing, conflicts int
 	for i := range m.items {
 		it := &m.items[i]
-		if _, ok := m.snoozed[it.PR.Key()]; ok {
+		if _, ok := m.snoozed[it.Key]; ok {
 			continue
 		}
-		if m.viewer != "" && it.PR.AuthorLogin() == m.viewer && !it.PR.IsDraft {
-			if s := it.PR.CIState(); s == "FAILURE" || s == "ERROR" {
+		if m.viewer != "" && it.Author == m.viewer && !it.Draft {
+			if s := it.CI; s == "FAILURE" || s == "ERROR" {
 				failing++
 			}
-			if it.PR.Mergeable == "CONFLICTING" {
+			if it.Mergeable == "CONFLICTING" {
 				conflicts++
 			}
 		}
@@ -744,16 +741,16 @@ func (m *Model) renderListRow(r listRow, w int, sel bool, cols listCols) string 
 		return s
 	}
 	it := m.items[r.item]
-	pr := it.PR
+	pr := it
 	ageS := m.waitStyle(it).Render(fmt.Sprintf("%4s", ago(it.Since)))
 
 	cell := func(s string) string { return fit(s, 1) + "  " }
 	snz, cl := " ", " "
-	if _, ok := m.snoozed[pr.Key()]; ok {
+	if _, ok := m.snoozed[pr.Key]; ok {
 		snz = sDim.Render("z")
 	}
-	if runs := m.runs[pr.Key()]; len(runs) > 0 {
-		cl = reviewGlyph(m, store.Current(runs))
+	if runs := m.runs[pr.Key]; len(runs) > 0 {
+		cl = reviewGlyph(m, core.Current(runs))
 	}
 	badges := " "
 	if cols.snooze {
@@ -766,7 +763,7 @@ func (m *Model) renderListRow(r listRow, w int, sel bool, cols listCols) string 
 	if it.ChangedSinceApproval {
 		dot = sGreen.Render("◐")
 	}
-	badges += cell(dot) + cell(ciBadge(pr.CIState()))
+	badges += cell(dot) + cell(ciBadge(pr.CI))
 
 	n := prNumber(pr)
 	numS := strings.Repeat(" ", max(cols.num-lipgloss.Width(n), 0))
@@ -780,7 +777,7 @@ func (m *Model) renderListRow(r listRow, w int, sel bool, cols listCols) string 
 	if byRepo {
 		left += fit(bucketStyle(it.Bucket).Render(bucketTags[it.Bucket]), 10) + numS + "  " + title
 	} else {
-		left += fit(repoColor(pr.Repository.Name).Render(squeeze(shortRepo(pr.Repository.Name), cols.repo)), cols.repo) + " " + numS + "  " + title
+		left += fit(repoColor(pr.RepoName).Render(squeeze(shortRepo(pr.RepoName), cols.repo)), cols.repo) + " " + numS + "  " + title
 	}
 
 	extra := ""
@@ -810,7 +807,7 @@ func (m *Model) renderListRow(r listRow, w int, sel bool, cols listCols) string 
 
 // reviewGlyph is the inbox icon for a PR's AI reviews: a spinner while any
 // agent is reviewing, red when they all failed, green once posted.
-func reviewGlyph(m *Model, cur []*store.Run) string {
+func reviewGlyph(m *Model, cur []*core.Review) string {
 	icon := "C"
 	if nerdIcons {
 		icon = "\U000f06a9"
@@ -818,11 +815,11 @@ func reviewGlyph(m *Model, cur []*store.Run) string {
 	failed, posted := 0, 0
 	for _, r := range cur {
 		switch r.Status {
-		case "running":
+		case core.ReviewRunning:
 			return spinner(m)
-		case "failed":
+		case core.ReviewFailed:
 			failed++
-		case "posted":
+		case core.ReviewPosted:
 			posted++
 		}
 	}
@@ -839,9 +836,9 @@ func reviewGlyph(m *Model, cur []*store.Run) string {
 
 // unsentReplies counts the drafted thread replies of the current reviews
 // that haven't been sent.
-func unsentReplies(runs []*store.Run) int {
+func unsentReplies(runs []*core.Review) int {
 	n := 0
-	for _, r := range store.Current(runs) {
+	for _, r := range core.Current(runs) {
 		n += r.Unsent()
 	}
 	return n
@@ -867,7 +864,7 @@ func (m *Model) detailPane(l layout, x int) string {
 		return box(sDim.Render("[1]")+sTitle.Render(" "+appName+" "), "", lines, w, h, focused)
 	}
 
-	pr := d.item.PR
+	pr := d.item
 	pnum := sDim.Render("[1]")
 	if m.focus == fDetail {
 		pnum = sTitle.Render("[1]")
@@ -882,9 +879,9 @@ func (m *Model) detailPane(l layout, x int) string {
 			label += " (since review)"
 		case i == tabReview:
 			n, running := 0, false
-			for _, r := range store.Current(d.runs) {
+			for _, r := range core.Current(d.runs) {
 				n += len(r.Findings)
-				running = running || r.Status == "running"
+				running = running || r.Status == core.ReviewRunning
 			}
 			var counts []string
 			if n > 0 {
@@ -1010,8 +1007,8 @@ func (m *Model) statusline() string {
 	}
 	ctx := "inbox"
 	if it := m.selectedItem(); it != nil {
-		ctx = prName(it.PR)
-		if d := m.details[it.PR.Key()]; d != nil && m.focus == fDetail {
+		ctx = prName(*it)
+		if d := m.details[it.Key]; d != nil && m.focus == fDetail {
 			ctx += " " + sDim.Render(thinR) + " " + strings.ToLower(tabNames[d.tab])
 			if n := len(d.pending); n > 0 {
 				ctx += sYellow.Render(fmt.Sprintf(" ◆%d", n))
@@ -1046,8 +1043,8 @@ func (m *Model) statusline() string {
 	switch running := m.running; {
 	case running == 1:
 		for _, runs := range m.runs {
-			for _, r := range store.Current(runs) {
-				if r.Status == "running" {
+			for _, r := range core.Current(runs) {
+				if r.Status == core.ReviewRunning {
 					sync = sYellow.Render(core.ReviewerTitle(r.Reviewer())+" reviewing") + " " + sDim.Render(thinR) + " " + sync
 				}
 			}
@@ -1570,7 +1567,7 @@ func inside(h hit, x, y int) bool {
 }
 
 // prNumber is how a row names its PR: #855, or ⌂ for a local review.
-func prNumber(pr gh.PR) string {
+func prNumber(pr core.PR) string {
 	if pr.Local() {
 		return "⌂"
 	}
@@ -1578,9 +1575,9 @@ func prNumber(pr gh.PR) string {
 }
 
 // prName names a PR for people: api#855, or api ⌂ feat/x for a local review.
-func prName(pr gh.PR) string {
+func prName(pr core.PR) string {
 	if pr.Local() {
-		return shortRepo(pr.Repository.Name) + " ⌂ " + pr.HeadRefName
+		return shortRepo(pr.RepoName) + " ⌂ " + pr.Branch
 	}
-	return shortRepo(pr.Repository.Name) + prNumber(pr)
+	return shortRepo(pr.RepoName) + prNumber(pr)
 }

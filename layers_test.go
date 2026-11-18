@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,7 +13,8 @@ import (
 
 // The packages below the TUI never import it or name its keys, so another
 // frontend can use them as they are. The config is the exception for keys:
-// its file documents the TUI's own settings.
+// its file documents the TUI's own settings. The TUI reaches GitHub, the
+// store, Slack and the agents only through core, as another frontend would.
 func TestLayers(t *testing.T) {
 	below := []string{"docs", "internal/agent", "internal/config", "internal/core", "internal/gh", "internal/inbox",
 		"internal/platform", "internal/skill", "internal/slack", "internal/store"}
@@ -34,6 +36,19 @@ func TestLayers(t *testing.T) {
 	}
 	if names(t, "main.go", "<leader>") {
 		t.Error("main.go names a TUI key (<leader>); name the action instead")
+	}
+	allowed := []string{"docs", "internal/config", "internal/core", "internal/platform"}
+	files, _ := filepath.Glob("internal/tui/*.go")
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		for _, imp := range imports(t, f) {
+			pkg, ours := strings.CutPrefix(imp, "github.com/tmstorm/prowl/")
+			if ours && !slices.Contains(allowed, pkg) {
+				t.Errorf("%s imports %s; go through core", f, pkg)
+			}
+		}
 	}
 }
 

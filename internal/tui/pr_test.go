@@ -105,7 +105,7 @@ func TestMultiAgentReviews(t *testing.T) {
 	a.want("[4] AI review (2)", "▾ Claude", "▾ Codex", "also found by Codex", "also found by Claude",
 		"1 of 2 findings will be posted", "History · 1 earlier run")
 	runs, _ := a.st.Runs("o/api#7")
-	a.want(store.Latest(runs, "codex").StartedAt.Format("Jan 2 15:04") + ", took 0s")
+	a.want(runs[0].StartedAt.Format("Jan 2 15:04") + ", took 0s")
 	a.before("▾ Claude", "▾ Codex")
 	a.search("History · 1 earlier run")
 	a.keys("K")

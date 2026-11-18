@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tmstorm/prowl/internal/store"
+	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/tui"
 )
 
@@ -15,10 +15,10 @@ import (
 // writing.
 func TestProgress(t *testing.T) {
 	now := time.Now()
-	at := func(act string, ago time.Duration) *store.Run {
-		return &store.Run{Activity: act, ActivityAt: now.Add(-ago)}
+	at := func(act string, ago time.Duration) *core.Review {
+		return &core.Review{Activity: act, ActivityAt: now.Add(-ago)}
 	}
-	if got := tui.Progress(&store.Run{}, now, true); got != "starting" {
+	if got := tui.Progress(&core.Review{}, now, true); got != "starting" {
 		t.Errorf("no activity yet: %q", got)
 	}
 	if got := tui.Progress(at("reviewing: reading a.go", time.Second), now, true); got != "reviewing: reading a.go" {

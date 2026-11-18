@@ -4,8 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-
-	"github.com/tmstorm/prowl/internal/inbox"
+	"github.com/tmstorm/prowl/internal/core"
 )
 
 // colorRepos gives each repo its own color; off, all repos share one.
@@ -41,7 +40,7 @@ func paletteColor(name string) string {
 
 // titleType is a PR title's conventional commit type, or "other".
 func titleType(title string) string {
-	t := inbox.ParseTitle(title)
+	t := core.ParseTitle(title)
 	if !t.OK {
 		return "other"
 	}
@@ -69,7 +68,7 @@ func typeStyle(typ string) lipgloss.Style {
 // the scope dimmed, a breaking "!" in bold red, and the subject plain.
 func styledTitle(title string, bold bool) string {
 	subject := lipgloss.NewStyle().Foreground(lipgloss.Color(pal.Fg)).Bold(bold)
-	t := inbox.ParseTitle(title)
+	t := core.ParseTitle(title)
 	if !t.OK {
 		return subject.Render(title)
 	}

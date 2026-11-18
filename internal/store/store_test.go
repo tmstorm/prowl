@@ -10,8 +10,8 @@ import (
 	"github.com/tmstorm/prowl/internal/store"
 )
 
-// Each new review is a run; the latest per agent is current, earlier ones are
-// history, and closing the PR removes them.
+// Each new review is a run, listed newest first, and closing the PR removes
+// them.
 func TestRunsAndPrune(t *testing.T) {
 	st, err := store.Open(t.TempDir())
 	if err != nil {
@@ -26,12 +26,8 @@ func TestRunsAndPrune(t *testing.T) {
 	if len(runs) != 3 || runs[0].ID != c {
 		t.Fatalf("runs = %d, newest %d", len(runs), runs[0].ID)
 	}
-	cur := store.Current(runs)
-	if len(cur) != 2 || cur[0].ID != c || cur[1].ID != b {
-		t.Fatalf("current runs wrong: %+v", cur)
-	}
-	if store.Latest(runs, "claude").ID != c {
-		t.Fatal("latest claude run should be the newest")
+	if runs[1].ID != b {
+		t.Fatalf("runs out of order: %+v", runs)
 	}
 	_ = st.AddReviewLog("o/r#1", "codex", "you", "hi")
 	if log, _ := st.ReviewLog("o/r#1", "claude"); len(log) != 0 {

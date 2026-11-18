@@ -10,10 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/core"
-	"github.com/tmstorm/prowl/internal/gh"
-	"github.com/tmstorm/prowl/internal/store"
 )
 
 func (d *detail) buildReview() []brow {
@@ -42,7 +39,7 @@ func (d *detail) buildReview() []brow {
 		}
 		return rows
 	}
-	total, inc := 0, len(agent.Combine(cur, false))
+	total, inc := 0, len(core.Combine(cur, false))
 	for _, r := range cur {
 		total += len(r.Findings)
 	}
@@ -73,7 +70,7 @@ func (d *detail) buildReview() []brow {
 
 // agentSection is one agent's current review, folded under its name, with
 // its earlier runs in a History fold at the end.
-func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
+func (d *detail) agentSection(run *core.Review, cur []*core.Review) []brow {
 	name := run.Reviewer()
 	id := "agent:" + name
 	folded := d.folded(id, false)
@@ -97,11 +94,11 @@ func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
 		case "draft":
 			head += sYellow.Render(" · suggests a draft")
 		}
-		head += sDim.Render(" · at " + gh.Short(run.HeadOid) + " · " + ranText(run))
+		head += sDim.Render(" · at " + short(run.HeadOid) + " · " + ranText(run))
 		if run.Origin == "local" {
 			head += sDim.Render(" · in your checkout, before the PR")
 		}
-		if run.HeadOid != d.item.PR.HeadRefOid {
+		if run.HeadOid != d.item.HeadOid {
 			head += sYellow.Render(" · new commits since")
 		}
 	}
@@ -111,10 +108,10 @@ func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
 		a.rows[len(a.rows)-1].finding = f
 	}
 	if !folded {
-		if run.Status == "running" && run.Summary == "" {
+		if run.Status == core.ReviewRunning && run.Summary == "" {
 			a.add("  " + sDim.Render("reviewing… progress is shown above"))
 		}
-		if run.Status == "failed" {
+		if run.Status == core.ReviewFailed {
 			for _, l := range wrap(run.Error, d.w-4) {
 				a.add("  " + sRed.Render(l))
 			}
@@ -152,7 +149,7 @@ func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
 				case "you":
 					who = sPink.Render("you")
 				case "agent":
-					who = sTitle.Render(strings.ToLower(agent.Title(run.Agent)))
+					who = sTitle.Render(strings.ToLower(core.ReviewerTitle(run.Agent)))
 				}
 				for i, l := range wrap(e.Text, d.w-14) {
 					if i == 0 {
@@ -216,8 +213,8 @@ func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
 
 // historyRows are an agent's earlier runs on the PR, folded away, each with
 // what became of its findings.
-func (d *detail) historyRows(current *store.Run) []brow {
-	var earlier []*store.Run
+func (d *detail) historyRows(current *core.Review) []brow {
+	var earlier []*core.Review
 	for _, r := range d.runs {
 		if r.Reviewer() == current.Reviewer() && r.ID != current.ID {
 			earlier = append(earlier, r)
@@ -253,7 +250,7 @@ func (d *detail) historyRows(current *store.Run) []brow {
 				excluded++
 			}
 		}
-		line := "    " + foldGlyph(rf) + sDim.Render(ranText(r)+" · at "+gh.Short(r.HeadOid)+" · ") + runState(r)
+		line := "    " + foldGlyph(rf) + sDim.Render(ranText(r)+" · at "+short(r.HeadOid)+" · ") + runState(r)
 		if r.Model != "" {
 			line += sDim.Render(" · " + modelName(r.Model))
 		}
@@ -285,38 +282,38 @@ func (d *detail) historyRows(current *store.Run) []brow {
 	return rows
 }
 
-func severityStyle(sev string) lipgloss.Style {
+func severityStyle(sev core.Severity) lipgloss.Style {
 	switch sev {
-	case "must-fix":
+	case core.MustFix:
 		return sRed
-	case "should-fix":
+	case core.ShouldFix:
 		return sYellow
 	}
 	return sDim
 }
 
 // runState is a run's status in a word or two.
-func runState(r *store.Run) string {
+func runState(r *core.Review) string {
 	switch r.Status {
-	case "running":
+	case core.ReviewRunning:
 		return sYellow.Render("reviewing")
-	case "failed":
+	case core.ReviewFailed:
 		return sRed.Render("failed")
-	case "posted":
+	case core.ReviewPosted:
 		return sGreen.Render("posted")
 	}
 	return sGreen.Render("ready")
 }
 
 // alsoFoundBy names the other agents whose current review raised f too.
-func alsoFoundBy(f store.Finding, run *store.Run, cur []*store.Run) string {
+func alsoFoundBy(f core.Finding, run *core.Review, cur []*core.Review) string {
 	var names []string
 	for _, o := range cur {
 		if o == run {
 			continue
 		}
 		for _, g := range o.Findings {
-			if agent.Agree(f, g) {
+			if core.Agree(f, g) {
 				names = append(names, core.ReviewerTitle(o.Reviewer()))
 				break
 			}
@@ -356,29 +353,29 @@ func (d *detail) reviewStatus(m *Model) string {
 	if len(cur) == 0 {
 		var names []string
 		for _, n := range m.cfg.Agent.Reviewers {
-			names = append(names, agent.Title(n))
+			names = append(names, core.ReviewerTitle(n))
 		}
 		return sDim.Render("idle · " + leader + "cc runs " + strings.Join(names, " and "))
 	}
 	var parts []string
 	running := 0
 	for _, r := range cur {
-		if r.Status == "running" {
+		if r.Status == core.ReviewRunning {
 			running++
 		}
 	}
 	for _, r := range cur {
 		name := core.ReviewerTitle(r.Reviewer())
 		switch r.Status {
-		case "running":
+		case core.ReviewRunning:
 			p := spinner(m) + " " + sYellow.Render(name) + sDim.Render(" "+time.Since(r.StartedAt).Round(time.Second).String())
 			if running == 1 {
 				p += sDim.Render(" · " + trunc(Progress(r, time.Now(), playful), max(d.w-50, 10)))
 			}
 			parts = append(parts, p)
-		case "failed":
+		case core.ReviewFailed:
 			parts = append(parts, sRed.Render("✗ "+name+" failed"))
-		case "posted":
+		case core.ReviewPosted:
 			parts = append(parts, sGreen.Render("↑ "+name+" posted"))
 		default:
 			parts = append(parts, sGreen.Render("✓ "+name))
@@ -388,7 +385,7 @@ func (d *detail) reviewStatus(m *Model) string {
 }
 
 // replyRows lists the replies a reviewer drafted to review threads.
-func (d *detail) replyRows(a *rowAdder, run *store.Run) {
+func (d *detail) replyRows(a *rowAdder, run *core.Review) {
 	if len(run.Replies) == 0 {
 		return
 	}
@@ -414,7 +411,7 @@ func (d *detail) replyRows(a *rowAdder, run *store.Run) {
 		}
 		head, body := r.To+" wrote:", r.Last
 		if last != nil {
-			head, body = author(last.Author)+", "+agoText(last.CreatedAt)+":", last.Body
+			head, body = last.Author.Login+", "+agoText(last.CreatedAt)+":", last.Body
 		}
 		add("      " + sPink.Render(head))
 		quote := renderMarkdown(body, d.w-10)
@@ -441,16 +438,16 @@ const quotedLines = 12
 // threadEnds are the first comment of a draft reply's thread, when you
 // wrote it, and its latest comment, from the PR as last loaded; nil when
 // the thread isn't loaded.
-func (d *detail) threadEnds(r store.ThreadReply) (opener, last *gh.Comment) {
+func (d *detail) threadEnds(r core.ThreadReply) (opener, last *core.Comment) {
 	if d.det == nil {
 		return nil, nil
 	}
 	for _, t := range d.det.Threads {
-		if t.ID != r.ThreadID || len(t.Comments.Nodes) == 0 {
+		if t.ID != r.ThreadID || len(t.Comments) == 0 {
 			continue
 		}
-		cms := t.Comments.Nodes
-		if author(cms[0].Author) == d.me && len(cms) > 1 {
+		cms := t.Comments
+		if cms[0].Author.Login == d.me && len(cms) > 1 {
 			opener = &cms[0]
 		}
 		return opener, &cms[len(cms)-1]
@@ -460,7 +457,7 @@ func (d *detail) threadEnds(r store.ThreadReply) (opener, last *gh.Comment) {
 
 // draftReply is the unsent reply a current review drafted for a thread, and
 // the run it belongs to.
-func (d *detail) draftReply(threadID string) (*store.ThreadReply, int64) {
+func (d *detail) draftReply(threadID string) (*core.ThreadReply, int64) {
 	for _, run := range d.current() {
 		for i := range run.Replies {
 			if r := &run.Replies[i]; r.ThreadID == threadID && !r.Posted {
@@ -474,7 +471,7 @@ func (d *detail) draftReply(threadID string) (*store.ThreadReply, int64) {
 // replyPopup opens the reply box for a thread, filled with the agent's
 // draft when there is one.
 func (m *Model) replyPopup(d *detail, threadID string) tea.Cmd {
-	var t *gh.Thread
+	var t *core.Thread
 	if d.det != nil {
 		for i := range d.det.Threads {
 			if d.det.Threads[i].ID == threadID {
@@ -505,7 +502,7 @@ var pointVerdicts = []struct {
 
 // pointRows lists what reviewers, bots and checks raised, as the agent
 // checked it against the code. They are for you only.
-func (d *detail) pointRows(a *rowAdder, run *store.Run) {
+func (d *detail) pointRows(a *rowAdder, run *core.Review) {
 	if len(run.Points) == 0 {
 		return
 	}
@@ -539,7 +536,7 @@ func (d *detail) pointRows(a *rowAdder, run *store.Run) {
 }
 
 // ranText is when a review started and how long it took.
-func ranText(r *store.Run) string {
+func ranText(r *core.Review) string {
 	s := r.StartedAt.Format("Jan 2 15:04")
 	if !r.FinishedAt.IsZero() {
 		s += ", took " + r.FinishedAt.Sub(r.StartedAt).Round(time.Second).String()

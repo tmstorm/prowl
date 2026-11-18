@@ -322,7 +322,7 @@ func TestShared(t *testing.T) {
 			p := pr("alice")
 			requestMe(&p)
 			return p
-		}, inbox.NeedsReview, "review requested · shared in #reviews by alice"},
+		}, inbox.NeedsReview, "review requested"},
 		{"shared, then approved", func() gh.PR {
 			p := pr("alice")
 			p.Reviews.Nodes = []gh.Review{review("me", "APPROVED", 4)}
@@ -339,6 +339,9 @@ func TestShared(t *testing.T) {
 		got := inbox.Classify(in)[0]
 		if got.Bucket != c.bucket || got.Reason != c.reason {
 			t.Errorf("%s: got %s %q, want %s %q", c.name, got.Bucket, got.Reason, c.bucket, c.reason)
+		}
+		if c.bucket == inbox.NeedsReview && got.SharedToo != "shared in #reviews by alice" {
+			t.Errorf("%s: shared too %q", c.name, got.SharedToo)
 		}
 	}
 	dm := &gh.Inbox{Viewer: "me", PRs: []gh.PR{pr("alice")}, Shared: map[string]gh.Share{"org/repo#1": {From: "bob", At: at(3)}}}

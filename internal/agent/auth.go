@@ -15,9 +15,6 @@ type Auth struct {
 	Expires  time.Time // zero when the agent doesn't say
 }
 
-// RenewWithin is how early prowl starts asking you to log in again.
-const RenewWithin = 72 * time.Hour
-
 // ExpiresSoon is true when a login runs out within d.
 func (a Auth) ExpiresSoon(d time.Duration) bool {
 	return a.LoggedIn && !a.Expires.IsZero() && time.Until(a.Expires) < d

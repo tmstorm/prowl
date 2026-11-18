@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/store"
@@ -17,13 +16,36 @@ import (
 // Draft is a review on its way to GitHub. A UI shows it, lets you change the
 // event and body, and passes it to Submit.
 type Draft struct {
-	Event    string // APPROVE, REQUEST_CHANGES, COMMENT; CLOSE / DRAFT: a comment, then close the PR or make it a draft; NOTE: a plain comment, not a review
+	Event    ReviewEvent
 	Body     string
-	Comments []gh.DraftComment // inline comments: the agents' findings, then your pending ones
-	Runs     []int64           // the agent runs it was made from; empty for your own review
-	Replies  []DraftReply      // drafted thread replies sent after the review, each in its thread
-	Commit   string            // the commit the comments' lines are on; "" is the PR's head
-	Reopened bool              // Body is the review you wrote for this event that failed to post
+	Comments []DraftComment // inline comments: the agents' findings, then your pending ones
+	Runs     []int64        // the agent runs it was made from; empty for your own review
+	Replies  []DraftReply   // drafted thread replies sent after the review, each in its thread
+	Commit   string         // the commit the comments' lines are on; "" is the PR's head
+	Reopened bool           // Body is the review you wrote for this event that failed to post
+}
+
+// ReviewEvent is what a Draft does: GitHub's review events, or prowl's own.
+type ReviewEvent string
+
+const (
+	EventApprove        ReviewEvent = "APPROVE"
+	EventRequestChanges ReviewEvent = "REQUEST_CHANGES"
+	EventComment        ReviewEvent = "COMMENT"
+	EventClose          ReviewEvent = "CLOSE" // a comment, then close the PR
+	EventDraft          ReviewEvent = "DRAFT" // a comment, then make the PR a draft
+	EventNote           ReviewEvent = "NOTE"  // a plain comment in the conversation, not a review
+)
+
+// DraftComment is an inline comment on its way to GitHub.
+type DraftComment struct {
+	Path      string
+	Line      int
+	Side      string // RIGHT (new) or LEFT (old)
+	StartLine int
+	StartSide string
+	Body      string
+	Commit    string // the commit the line is on; "" is the review's
 }
 
 // DraftReply is a drafted thread reply that goes out with an agent draft.
@@ -37,26 +59,26 @@ type DraftReply struct {
 
 // Pending are your inline comments on a PR that go out with your next
 // review. They live until then, or until prowl quits.
-func (co *Core) Pending(key string) []gh.DraftComment {
+func (co *Core) Pending(key string) []DraftComment {
 	co.mu.Lock()
 	defer co.mu.Unlock()
-	return append([]gh.DraftComment(nil), co.pending[key]...)
+	return append([]DraftComment(nil), co.pending[key]...)
 }
 
 // SetPending replaces your pending inline comments on a PR. Each is on the
 // commit that was the PR's head when you wrote it; editing a comment keeps
 // its commit.
-func (co *Core) SetPending(key string, comments []gh.DraftComment) {
+func (co *Core) SetPending(key string, comments []DraftComment) {
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	if co.pending == nil {
-		co.pending = map[string][]gh.DraftComment{}
+		co.pending = map[string][]DraftComment{}
 	}
 	head := ""
 	if it, ok := co.item(key); ok {
 		head = it.PR.HeadRefOid
 	}
-	next := make([]gh.DraftComment, len(comments))
+	next := make([]DraftComment, len(comments))
 	for i, c := range comments {
 		if c.Commit == "" {
 			c.Commit = head
@@ -72,7 +94,7 @@ func (co *Core) SetPending(key string, comments []gh.DraftComment) {
 }
 
 // Draft is your own review of a PR: the event and your pending comments.
-func (co *Core) Draft(key, event string) Draft {
+func (co *Core) Draft(key string, event ReviewEvent) Draft {
 	d := Draft{Event: event, Comments: co.Pending(key)}
 	co.reopen(key, &d)
 	return d
@@ -97,8 +119,8 @@ func (co *Core) reopen(key string, d *Draft) {
 func (co *Core) AgentDraft(key string) (Draft, error) {
 	cfg := co.Config()
 	co.mu.Lock()
-	var done []*store.Run
-	for _, r := range store.Current(co.runs[key]) {
+	var done []*Review
+	for _, r := range Current(co.runs[key]) {
 		if r.Finished() {
 			done = append(done, r)
 		}
@@ -107,7 +129,7 @@ func (co *Core) AgentDraft(key string) (Draft, error) {
 	if len(done) == 0 {
 		return Draft{}, fmt.Errorf("no finished AI review to post")
 	}
-	d := Draft{Event: "COMMENT"}
+	d := Draft{Event: EventComment}
 	summary := done[0]
 	for _, r := range done {
 		d.Runs = append(d.Runs, r.ID)
@@ -116,18 +138,18 @@ func (co *Core) AgentDraft(key string) (Draft, error) {
 		}
 	}
 	var prLevel []string
-	for _, f := range agent.Combine(done, false) {
+	for _, f := range Combine(done, false) {
 		if f.Posted {
 			continue
 		}
-		if f.Severity == "must-fix" {
-			d.Event = "REQUEST_CHANGES"
+		if f.Severity == MustFix {
+			d.Event = EventRequestChanges
 		}
 		if f.Path == "" || f.Line == 0 {
 			prLevel = append(prLevel, "- "+strings.ReplaceAll(findingBody(f), "\n\n", " "))
 			continue
 		}
-		d.Comments = append(d.Comments, gh.DraftComment{Path: f.Path, Line: f.Line, Side: "RIGHT", Body: findingBody(f)})
+		d.Comments = append(d.Comments, DraftComment{Path: f.Path, Line: f.Line, Side: "RIGHT", Body: findingBody(f)})
 	}
 	d.Body = stripVerdict(summary.Summary)
 	d.Commit = summary.HeadOid
@@ -193,27 +215,27 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 		return out, fmt.Errorf("submit %s: not in the inbox", key)
 	}
 	pr := it.PR
-	if d.Event == "NOTE" {
+	if d.Event == EventNote {
 		if err := co.gh.Comment(pr.ID, d.Body); err != nil {
 			return out, fmt.Errorf("comment on %s: %w", key, err)
 		}
 		out.Review = true
 		return out, nil
 	}
-	event, then := d.Event, ""
-	if event == "CLOSE" || event == "DRAFT" {
-		event, then = "COMMENT", d.Event
+	event, then := d.Event, ReviewEvent("")
+	if event == EventClose || event == EventDraft {
+		event, then = EventComment, d.Event
 	}
-	reviewed := ""
+	var reviewed ReviewEvent
 	main, earlier := byCommit(d, pr.HeadRefOid)
-	if event == "APPROVE" && main.commit != pr.HeadRefOid {
+	if event == EventApprove && main.commit != pr.HeadRefOid {
 		if len(main.comments) > 0 {
 			earlier = append(earlier, main)
 		}
 		main = commitComments{commit: pr.HeadRefOid}
 	}
 	for _, g := range earlier {
-		u, err := co.gh.SubmitReview(pr.Repository.NameWithOwner, pr.Number, g.commit, "COMMENT", "", g.comments)
+		u, err := co.gh.SubmitReview(pr.Repository.NameWithOwner, pr.Number, g.commit, string(EventComment), "", ghComments(g.comments))
 		if err != nil {
 			return out, fmt.Errorf("submit %s: comments on %s: %w", key, gh.Short(g.commit), err)
 		}
@@ -230,8 +252,8 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 				return out, fmt.Errorf("comment on %s: %w", key, err)
 			}
 		}
-	case event != "COMMENT" || strings.TrimSpace(d.Body) != "" || len(main.comments) > 0:
-		u, err := co.gh.SubmitReview(pr.Repository.NameWithOwner, pr.Number, main.commit, event, d.Body, main.comments)
+	case event != EventComment || strings.TrimSpace(d.Body) != "" || len(main.comments) > 0:
+		u, err := co.gh.SubmitReview(pr.Repository.NameWithOwner, pr.Number, main.commit, string(event), d.Body, ghComments(main.comments))
 		if err != nil {
 			return out, fmt.Errorf("submit %s: %w", key, err)
 		}
@@ -281,11 +303,11 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 		}
 	}
 	switch then {
-	case "CLOSE":
+	case EventClose:
 		if err := co.gh.ClosePR(pr.ID); err != nil {
 			failed = append(failed, fmt.Errorf("close: %w", err))
 		}
-	case "DRAFT":
+	case EventDraft:
 		if err := co.gh.SetDraft(pr.ID, true); err != nil {
 			failed = append(failed, fmt.Errorf("convert to draft: %w", err))
 		}
@@ -299,8 +321,8 @@ func (co *Core) submit(key string, d Draft) (Submitted, error) {
 // reviewed puts the approval or change request you just posted on the PR as
 // prowl holds it, so it changes section before RefreshPR confirms it. A
 // comment review waits for RefreshPR: where it lands depends on its threads.
-func (co *Core) reviewed(key, event, commit string) {
-	state := map[string]string{"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED"}[event]
+func (co *Core) reviewed(key string, event ReviewEvent, commit string) {
+	state := map[ReviewEvent]string{EventApprove: "APPROVED", EventRequestChanges: "CHANGES_REQUESTED"}[event]
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	i := slices.IndexFunc(co.inbox.Items, func(it inbox.Item) bool { return it.PR.Key() == key })
@@ -359,7 +381,15 @@ func (co *Core) SetReplyExcluded(runID int64, threadID string, excluded bool) er
 
 // reviewText is a review's body and inline comments, as the posts table
 // keeps them.
-func reviewText(body string, comments []gh.DraftComment) store.Review {
+func ghComments(comments []DraftComment) []gh.DraftComment {
+	var out []gh.DraftComment
+	for _, c := range comments {
+		out = append(out, gh.DraftComment(c))
+	}
+	return out
+}
+
+func reviewText(body string, comments []DraftComment) store.Review {
 	r := store.Review{Body: body}
 	for _, c := range comments {
 		r.Comments = append(r.Comments, store.Comment{Path: c.Path, Line: c.Line, Body: c.Body})
@@ -367,8 +397,8 @@ func reviewText(body string, comments []gh.DraftComment) store.Review {
 	return r
 }
 
-func findingBody(f store.Finding) string {
-	b := "**" + f.Severity + ":** " + f.Title + "\n\n" + f.Body
+func findingBody(f Finding) string {
+	b := "**" + string(f.Severity) + ":** " + f.Title + "\n\n" + f.Body
 	if f.Rule != "" {
 		b += "\n\n_Per " + f.Rule + "_"
 	}
@@ -445,19 +475,19 @@ func (co *Core) markReplied(runID int64, threadID, body string) error {
 // commitComments are the inline comments of a draft on one commit.
 type commitComments struct {
 	commit   string
-	comments []gh.DraftComment
+	comments []DraftComment
 }
 
 // markSent marks the findings that went out as inline comments posted, so a
 // retry after a later call fails doesn't post them twice.
-func (co *Core) markSent(runs []int64, sent []gh.DraftComment) {
+func (co *Core) markSent(runs []int64, sent []DraftComment) {
 	for _, id := range runs {
 		r, _ := co.st.Run(id)
 		if r == nil {
 			continue
 		}
 		for i, f := range r.Findings {
-			if !f.Excluded && slices.ContainsFunc(sent, func(c gh.DraftComment) bool { return c.Path == f.Path && c.Line == f.Line }) {
+			if !f.Excluded && slices.ContainsFunc(sent, func(c DraftComment) bool { return c.Path == f.Path && c.Line == f.Line }) {
 				r.Findings[i].Posted = true
 			}
 		}
@@ -468,14 +498,14 @@ func (co *Core) markSent(runs []int64, sent []gh.DraftComment) {
 
 // dropPending forgets pending comments that went out, so a retry after a
 // later call fails doesn't post them twice.
-func (co *Core) dropPending(key string, sent []gh.DraftComment) {
+func (co *Core) dropPending(key string, sent []DraftComment) {
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	if len(co.pending[key]) == 0 {
 		return
 	}
-	co.pending[key] = slices.DeleteFunc(co.pending[key], func(c gh.DraftComment) bool {
-		return slices.ContainsFunc(sent, func(s gh.DraftComment) bool {
+	co.pending[key] = slices.DeleteFunc(co.pending[key], func(c DraftComment) bool {
+		return slices.ContainsFunc(sent, func(s DraftComment) bool {
 			return s.Path == c.Path && s.Line == c.Line && s.StartLine == c.StartLine && s.Side == c.Side && s.Commit == c.Commit
 		})
 	})

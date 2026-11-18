@@ -8,14 +8,13 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-
-	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/core"
 )
 
 // activity is one event in a PR's timeline.
 type activity struct {
 	at     time.Time
-	who    *gh.Actor
+	who    core.Actor
 	glyph  string
 	action string // styled, e.g. "requested changes"
 	body   string // markdown, may be empty
@@ -71,7 +70,7 @@ func (d *detail) activities() []activity {
 		if line == 0 {
 			line = t.OriginalLine
 		}
-		for i, c := range t.Comments.Nodes {
+		for i, c := range t.Comments {
 			verb := "replied on "
 			if i == 0 {
 				verb = "commented on "
@@ -82,22 +81,18 @@ func (d *detail) activities() []activity {
 	}
 	out = append(out, d.pushes(g)...)
 	for _, e := range d.det.Events {
-		switch e.Typename {
+		switch e.Kind {
 		case "HeadRefForcePushedEvent":
-			out = append(out, activity{at: e.CreatedAt, who: e.Actor, id: "",
+			out = append(out, activity{at: e.At, who: e.Actor, id: "",
 				glyph: sOrange.Render(g["force"]), action: sOrange.Render("force-pushed") + sDim.Render(" (rebased or rewrote history)")})
 		case "ReviewRequestedEvent":
-			if e.RequestedReviewer == nil {
+			if e.Requested == "" {
 				continue
 			}
-			n := e.RequestedReviewer.Login
-			if n == "" {
-				n = "@" + e.RequestedReviewer.Slug
-			}
-			out = append(out, activity{at: e.CreatedAt, who: e.Actor,
-				glyph: sDim.Render(g["request"]), action: sDim.Render("requested review from ") + sPink.Render(n)})
+			out = append(out, activity{at: e.At, who: e.Actor,
+				glyph: sDim.Render(g["request"]), action: sDim.Render("requested review from ") + sPink.Render(e.Requested)})
 		case "ReadyForReviewEvent":
-			out = append(out, activity{at: e.CreatedAt, who: e.Actor,
+			out = append(out, activity{at: e.At, who: e.Actor,
 				glyph: sGreen.Render(g["ready"]), action: sGreen.Render("marked ready for review")})
 		}
 	}
@@ -108,7 +103,7 @@ func (d *detail) activities() []activity {
 // pushCommit is a commit grouped into a push.
 type pushCommit struct {
 	at        time.Time
-	who       *gh.Actor
+	who       core.Actor
 	oid, head string
 }
 
@@ -118,26 +113,22 @@ type pushCommit struct {
 func (d *detail) pushes(g map[string]string) []activity {
 	var cs []pushCommit
 	for _, e := range d.det.Events {
-		if e.Typename != "PullRequestCommit" || e.Commit == nil {
+		if e.Kind != "PullRequestCommit" || e.Oid == "" {
 			continue
 		}
-		var who *gh.Actor
-		if e.Commit.Author != nil {
-			who = e.Commit.Author.User
-		}
-		cs = append(cs, pushCommit{e.Commit.CommittedDate, who, e.Commit.Oid, e.Commit.MessageHeadline})
+		cs = append(cs, pushCommit{e.At, e.Actor, e.Oid, e.Headline})
 	}
 	sort.SliceStable(cs, func(i, j int) bool { return cs[i].at.Before(cs[j].at) })
 	var out []activity
 	for i := 0; i < len(cs); {
 		j := i + 1
-		for j < len(cs) && author(cs[j].who) == author(cs[i].who) && cs[j].at.Sub(cs[j-1].at) < 15*time.Minute {
+		for j < len(cs) && cs[j].who.Login == cs[i].who.Login && cs[j].at.Sub(cs[j-1].at) < 15*time.Minute {
 			j++
 		}
 		group := cs[i:j]
 		var b strings.Builder
 		for _, c := range slices.Backward(group) {
-			fmt.Fprintf(&b, "- `%s` %s\n", gh.Short(c.oid), c.head)
+			fmt.Fprintf(&b, "- `%s` %s\n", short(c.oid), c.head)
 		}
 		action := "pushed 1 commit"
 		if len(group) > 1 {
@@ -168,9 +159,9 @@ func (d *detail) activityRows(w int) []brow {
 	newAbove, dividerDone := false, false
 	const authorW = 16
 	for _, ac := range acts {
-		bot := ac.who.IsBot(botLogins)
+		bot := ac.who.Bot
 		fresh := !bot && !d.read(ac.at, ac.who)
-		older := d.read(ac.at, nil)
+		older := d.read(ac.at, core.Actor{})
 		if older && newAbove && !dividerDone {
 			dividerDone = true
 			label := " you last looked " + agoText(d.seen()) + " · older below "
@@ -178,8 +169,8 @@ func (d *detail) activityRows(w int) []brow {
 		}
 		newAbove = newAbove || !older
 		folded := ac.body == "" || d.folded(ac.id, !fresh)
-		name := author(ac.who)
-		if ac.who != nil && ac.who.Login == d.me {
+		name := ac.who.Login
+		if ac.who.Login == d.me {
 			name = "you"
 		}
 		nameS := sPink.Render(name)

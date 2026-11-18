@@ -11,18 +11,17 @@ import (
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
-	"github.com/tmstorm/prowl/internal/slack"
 )
 
 // nameRow is one GitHub login in the Slack names popup.
 type nameRow struct {
 	login  string
-	group  string     // Proposed, No match or Mapped, as it was when the popup opened
-	user   slack.User // the proposed, picked or mapped Slack user; zero for none
-	why    string     // why it was proposed, "" once mapped
-	mapped bool       // slack_names maps it to user already
-	accept bool       // save user for it
-	clear  bool       // save it without a Slack user
+	group  string         // Proposed, No match or Mapped, as it was when the popup opened
+	user   core.SlackUser // the proposed, picked or mapped Slack user; zero for none
+	why    string         // why it was proposed, "" once mapped
+	mapped bool           // slack_names maps it to user already
+	accept bool           // save user for it
+	clear  bool           // save it without a Slack user
 }
 
 // namesPopup reviews the Slack user of each GitHub login: proposals to
@@ -31,10 +30,10 @@ type namesPopup struct {
 	rows    []nameRow
 	nav           // over lines: each group's heading, then its rows
 	lineRow []int // per line: index into rows, or -1 for a heading
-	users   []slack.User
+	users   []core.SlackUser
 	picking bool // choosing a Slack user for the current row
 	input   filterInput
-	results []slack.User
+	results []core.SlackUser
 	pick    nav
 	back    *optionsPopup        // the options to return to, if they were open
 	then    func(*Model) tea.Cmd // what to do after saving, e.g. send a DM
@@ -43,7 +42,7 @@ type namesPopup struct {
 
 type namesProposedMsg struct {
 	matches []core.NameMatch
-	users   []slack.User
+	users   []core.SlackUser
 	err     error
 	back    *optionsPopup
 	then    func(*Model) tea.Cmd
@@ -103,7 +102,7 @@ func newNamesPopup(m *Model, msg namesProposedMsg) *namesPopup {
 	}
 	for _, login := range slices.Sorted(maps.Keys(m.cfg.SlackNames)) {
 		id := m.cfg.SlackNames[login]
-		i := slices.IndexFunc(msg.users, func(u slack.User) bool { return u.ID == id })
+		i := slices.IndexFunc(msg.users, func(u core.SlackUser) bool { return u.ID == id })
 		if !seen[login] && i >= 0 {
 			mapped = append(mapped, nameRow{login: login, group: "Mapped", user: msg.users[i], mapped: true})
 		}
