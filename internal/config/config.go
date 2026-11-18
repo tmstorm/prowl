@@ -317,23 +317,6 @@ catch.`
 // mode, so none shadows a motion.
 var Leaders = []string{"space", ",", "\\", ";"}
 
-// LeaderKey is the leader as a key press reads it.
-func (c Config) LeaderKey() string {
-	if c.Leader == "space" || c.Leader == "" {
-		return " "
-	}
-	return c.Leader
-}
-
-// LeaderLabel is the leader as prowl shows it in hints: "<space>", or the
-// key itself.
-func (c Config) LeaderLabel() string {
-	if c.Leader == "space" || c.Leader == "" {
-		return "<space>"
-	}
-	return c.Leader
-}
-
 // Instructions are the review instructions in use.
 func (a Agent) Instructions() string {
 	if strings.TrimSpace(a.ReviewInstructions) == "" {

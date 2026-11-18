@@ -483,7 +483,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 	}
 	fail := func(err error) error {
 		if a := be.Auth(); a.Known && !a.LoggedIn {
-			err = fmt.Errorf("%s isn't logged in; press %sl in prowl to log in", Title(be.Name()), cfg.LeaderLabel())
+			err = fmt.Errorf("%s isn't logged in; log in again from prowl's accounts", Title(be.Name()))
 		}
 		if j.Refine != "" && prev != nil {
 			_ = st.EndRevise(id)

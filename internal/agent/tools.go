@@ -37,7 +37,7 @@ type RunOutput struct {
 }
 
 type DocsInput struct {
-	Topic string `json:"topic,omitempty" jsonschema:"a page, a heading, a key, a setting or a bucket, e.g. config, Running tests, <leader>cc, stale_after, re-check; other words return the lines that mention them; empty lists the pages"`
+	Topic string `json:"topic,omitempty" jsonschema:"a page, a heading, a key, a setting or a bucket, e.g. config, Running tests, ]f, stale_after, re-check; other words return the lines that mention them; empty lists the pages"`
 }
 
 type DocsOutput struct {

@@ -324,7 +324,7 @@ func remindLogin(co *core.Core, last string) string {
 	}
 	state := strings.Join(states, ",")
 	if state != "" && state != last {
-		platform.Notify("prowl", strings.Join(msgs, " ")+" Press "+cfg.LeaderLabel()+"l in prowl to log in.", cfg.NotifyTimeout.Duration)
+		platform.Notify("prowl", strings.Join(msgs, " ")+" Log in again from prowl's accounts.", cfg.NotifyTimeout.Duration)
 	}
 	return state
 }
@@ -367,7 +367,7 @@ func edits(cfg config.Config, st *store.Store, args []string) error {
 		})
 	}
 	if len(posts) == 0 {
-		return fmt.Errorf("no posted AI reviews in that time; post one with %sp in prowl", cfg.LeaderLabel())
+		return errors.New("no posted AI reviews in that time; post one from prowl")
 	}
 	fmt.Print(agent.EditsMarkdown(posts))
 	return nil
@@ -441,7 +441,7 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 		if strings.HasPrefix(key, "local:") {
 			return fmt.Errorf("no finished review of %s yet; run prowl review", strings.TrimPrefix(key, "local:"))
 		}
-		return fmt.Errorf("no finished review for %s yet; open it in prowl and press %scc", key, cfg.LeaderLabel())
+		return fmt.Errorf("no finished review for %s yet; open it in prowl and run an AI review", key)
 	}
 	notes := map[string][]store.LogEntry{}
 	for _, r := range cur {
@@ -865,7 +865,7 @@ func connectSlack(cfg config.Config, st *store.Store, args []string) error {
 		return err
 	}
 	fmt.Printf("signed in to Slack as %s in %s\n", id.User, id.Team)
-	fmt.Println("Next, in prowl's options (<leader>,), under Slack: pick the channels to watch, and\nmatch your teammates to their Slack users under Slack names.")
+	fmt.Println("Next, in prowl's options, under Slack: pick the channels to watch, and match\nyour teammates to their Slack users under Slack names.")
 	return nil
 }
 

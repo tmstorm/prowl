@@ -165,7 +165,10 @@ var leader, leaderPress = "<space>", " "
 
 // applyConfig sets the package-level display settings from cfg.
 func applyConfig(cfg config.Config) {
-	leader, leaderPress = cfg.LeaderLabel(), cfg.LeaderKey()
+	leader, leaderPress = cfg.Leader, cfg.Leader
+	if cfg.Leader == "space" || cfg.Leader == "" {
+		leader, leaderPress = "<space>", " "
+	}
 	applyTheme(cfg.Theme)
 	nerdIcons = cfg.NerdFont
 	colorRepos = cfg.ColorRepos

@@ -47,7 +47,7 @@ type Backend interface {
 	// Resumes is true when Review can continue a session. Without it prowl
 	// resends the context with the earlier review on every turn.
 	Resumes() bool
-	// Chat is the interactive session for <leader>ci, or nil if the agent
+	// Chat is the interactive session for the review's chat, or nil if the agent
 	// has none.
 	Chat(session, dir, model string, toolServer []string) *exec.Cmd
 	// ChatQuit is what ends the interactive session, e.g. "/exit".
