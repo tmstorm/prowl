@@ -125,6 +125,10 @@ func (a Agent) ExtensionsFor(repo string, onDemand bool) []Extension {
 	return out
 }
 
+// extensionListKeys are the letters the list of on-demand extensions keeps
+// for itself, so none can be an extension's key.
+const extensionListKeys = "jkgGHMLqv"
+
 func (a Agent) checkExtensions() error {
 	names := map[string]bool{}
 	keys := map[string]string{}
@@ -140,6 +144,8 @@ func (a Agent) checkExtensions() error {
 			return fmt.Errorf("extension %q: key is only for on_demand extensions", e.Name)
 		case e.Key != "" && (len(e.Key) != 1 || !unicode.IsLetter(rune(e.Key[0]))):
 			return fmt.Errorf("extension %q: key = %q: use one letter", e.Name, e.Key)
+		case e.Key != "" && strings.Contains(extensionListKeys, e.Key):
+			return fmt.Errorf("extension %q: key = %q: the list of extensions uses %s to move, show a result and close; pick another letter", e.Name, e.Key, extensionListKeys)
 		}
 		k := fmt.Sprint(e.Name, e.OnDemand)
 		if names[k] {

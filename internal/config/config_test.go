@@ -256,6 +256,7 @@ func TestExtensionsRefused(t *testing.T) {
 		ext(`name = "a"` + "\ncommand = \"x\""):    `"a": set repos`,
 		ext(ok + `key = "f"`):                      "only for on_demand",
 		ext(ok + "on_demand = true\nkey = \"ff\""): `key = "ff": use one letter`,
+		ext(ok + "on_demand = true\nkey = \"j\""):  `key = "j": the list of extensions uses jkgGHMLqv`,
 		ext(ok) + ext(ok):                          `"a" is listed twice`,
 		ext(ok) + ext(ok+"on_demand = true"):       "",
 		ext(ok+"on_demand = true\nkey = \"f\"") + ext(strings.Replace(ok, `"a"`, `"b"`, 1)+"on_demand = true\nkey = \"f\""): `"a" and "b" both use key "f"`,

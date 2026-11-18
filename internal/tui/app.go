@@ -1372,6 +1372,7 @@ var leaderKeys = []leaderKey{
 	{cat: "Review", key: "D", desc: "draft / ready for review", write: true},
 	{cat: "Agent", key: "c", desc: "AI review", sub: agentKeys, run: (*Model).agentAction},
 	{cat: "Agent", key: "p", desc: "post the AI review", write: true},
+	{cat: "Agent", key: "e", desc: "extensions"},
 	{cat: "Agent", key: "l", desc: "accounts / log in"},
 	{cat: "Inbox", key: "f", desc: "find & focus", sub: findKeys, run: (*Model).findAction},
 	{cat: "Inbox", key: "g", desc: "group by repo / status"},
@@ -1438,6 +1439,10 @@ func (m *Model) leader(key string) tea.Cmd {
 		return m.schedulePreview()
 	case "r":
 		return m.reload()
+	case "e":
+		if need() {
+			m.openExtensions(*it)
+		}
 	case "l":
 		m.popup = &accountsPopup{loading: true}
 		return m.checkAuth()

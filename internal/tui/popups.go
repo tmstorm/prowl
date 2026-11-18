@@ -811,6 +811,151 @@ func (p *agentPicker) list(*Model) (*nav, int) {
 	return &p.nav, 3
 }
 
+// ---- extensions: the on-demand extensions for a PR
+
+type extensionPicker struct {
+	item core.PR
+	exts []core.OnDemandExtension
+	nav
+}
+
+func (m *Model) openExtensions(it core.PR) {
+	exts := m.core.OnDemandExtensions(it.Key)
+	if len(exts) == 0 {
+		m.fail("no on-demand extensions for " + it.Repo + "; add one with on_demand = true under [[agent.extensions]]")
+		return
+	}
+	m.popup = &extensionPicker{item: it, exts: exts}
+}
+
+func (p *extensionPicker) mode() mode { return modeNormal }
+
+func (p *extensionPicker) list(*Model) (*nav, int) {
+	p.setLen(len(p.exts), len(p.exts))
+	return &p.nav, 3
+}
+
+// job is ext's newest run on the PR, or nil.
+func (p *extensionPicker) job(m *Model, ext core.OnDemandExtension) *core.ExtensionJob {
+	for _, j := range m.core.ExtensionJobs(p.item.Key) {
+		if j.Name == ext.Name {
+			return &j
+		}
+	}
+	return nil
+}
+
+func (p *extensionPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
+	key := k.String()
+	if i := slices.IndexFunc(p.exts, func(e core.OnDemandExtension) bool { return e.Key == key }); i >= 0 {
+		p.cur = i
+		key = "enter"
+	}
+	switch key {
+	case "esc", "ctrl+c", "q":
+		m.popup = nil
+	case "enter":
+		m.popup = nil
+		return m.runExtension(p.item, p.exts[p.cur])
+	case "v":
+		ext := p.exts[p.cur]
+		j := p.job(m, ext)
+		if j == nil {
+			m.fail(ext.Name + " hasn't run on " + prName(p.item) + " yet")
+			return nil
+		}
+		m.popup = &notesPopup{title: ext.Name + " on " + prName(p.item), notes: extensionResult(*j)}
+	}
+	return nil
+}
+
+// runExtension starts ext on the PR, asking first when it says to.
+func (m *Model) runExtension(it core.PR, ext core.OnDemandExtension) tea.Cmd {
+	start := func() tea.Cmd {
+		if err := m.core.RunExtension(it.Key, ext.Name); err != nil {
+			m.fail(err.Error())
+			return nil
+		}
+		m.info(ext.Name + " running on " + prName(it) + " · it keeps going if you quit prowl, and a notification says when it's done")
+		return nil
+	}
+	if ext.Confirm {
+		m.confirm = &confirm{prompt: "run " + ext.Name + " on " + prName(it) + "? It can change things outside prowl.", yes: start}
+		return nil
+	}
+	return start()
+}
+
+func (p *extensionPicker) view(m *Model) string {
+	w := min(popWidth(m), 72)
+	var rows []string
+	for i, ext := range p.exts {
+		key := ext.Key
+		if key == "" {
+			key = " "
+		}
+		state := "never run here"
+		if j := p.job(m, ext); j != nil {
+			switch j.Status {
+			case core.ReviewRunning:
+				state = sYellow.Render("running " + ago(j.StartedAt))
+			case core.ReviewFailed:
+				state = sRed.Render("failed " + agoText(j.FinishedAt))
+			default:
+				state = "done " + agoText(j.FinishedAt)
+				if j.Summary != "" {
+					state += " · " + j.Summary
+				}
+			}
+		}
+		row := " " + sBold.Render(key) + "  " + fit(ext.Name, 14) + sDim.Render(state)
+		if ext.Confirm {
+			row += sDim.Render(" · asks first")
+		}
+		row = fit(row, w-4)
+		if i == p.cur {
+			row = highlight(row, w-4, sTitle)
+		}
+		rows = append(rows, row)
+	}
+	foot := sDim.Render(" its letter or enter runs it · v shows its last result · esc close")
+	return popBox("Extensions for "+prName(p.item), strings.Join(rows, "\n")+"\n\n"+foot, w, pal.Accent)
+}
+
+// extensionResult is an extension job's result as Markdown: how it ended,
+// its summary and section, and its findings.
+func extensionResult(j core.ExtensionJob) string {
+	var b strings.Builder
+	switch j.Status {
+	case core.ReviewRunning:
+		fmt.Fprintf(&b, "Running since %s.\n\n", agoText(j.StartedAt))
+	case core.ReviewFailed:
+		fmt.Fprintf(&b, "**Failed %s.** What it printed before it failed is below.\n\n```\n%s\n```\n\n", agoText(j.FinishedAt), j.Error)
+	default:
+		fmt.Fprintf(&b, "Finished %s.\n\n", agoText(j.FinishedAt))
+	}
+	if j.Summary != "" {
+		b.WriteString(j.Summary + "\n\n")
+	}
+	if j.Prompt != "" {
+		b.WriteString(j.Prompt + "\n\n")
+	}
+	if len(j.Findings) > 0 {
+		b.WriteString("## Findings\n\n")
+		for _, f := range j.Findings {
+			where := ""
+			if f.Path != "" {
+				where = fmt.Sprintf(" `%s:%d`", f.Path, f.Line)
+			}
+			fmt.Fprintf(&b, "- **%s**%s %s: %s\n", f.Severity, where, f.Title, f.Body)
+		}
+		if j.Added > 0 {
+			fmt.Fprintf(&b, "\n%s joined the AI review as drafts.\n", count(j.Added, "finding"))
+		}
+	}
+	return b.String()
+}
+
 // ---- profile picker: run a named review profile
 
 type profilePicker struct {
