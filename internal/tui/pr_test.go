@@ -415,7 +415,7 @@ func TestLocalReview(t *testing.T) {
 	run("commit", "--quiet", "-am", "feat: add A")
 
 	a := newApp(t, &fakeGitHub{Bins: map[string]string{"git": `exec ` + gitBin + ` "$@"`}})
-	key := store.LocalKey("o/api", "feat/x")
+	key := gh.LocalKey("o/api", "feat/x")
 	_ = a.st.SaveLocal(store.Local{Key: key, Repo: "o/api", Branch: "feat/x", Dir: dir, Base: "main", At: time.Now()})
 	id, _ := a.st.StartRun(key, "abc1234", "claude", "", 0)
 	_ = a.st.FinishRun(id, "s1", "A is fine.", "", nil)

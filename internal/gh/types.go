@@ -4,10 +4,9 @@ import (
 	"cmp"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
-
-	"github.com/tmstorm/prowl/internal/store"
 )
 
 type Actor struct {
@@ -187,9 +186,9 @@ func (p *PR) NeedsRebase() bool {
 // branch reviewed before it has a pull request: local:owner/name@branch.
 func (p *PR) Key() string {
 	if p.Local() {
-		return store.LocalKey(p.Repository.NameWithOwner, p.HeadRefName)
+		return LocalKey(p.Repository.NameWithOwner, p.HeadRefName)
 	}
-	return store.PRKey(p.Repository.NameWithOwner, p.Number)
+	return PRKey(p.Repository.NameWithOwner, p.Number)
 }
 
 // Local reports whether this is a local branch, not a pull request.
@@ -241,3 +240,9 @@ func RemoteRepo(url string) string {
 	}
 	return ""
 }
+
+// PRKey names a pull request: owner/name#number.
+func PRKey(repo string, n int) string { return repo + "#" + strconv.Itoa(n) }
+
+// LocalKey names a local review: local:owner/name@branch.
+func LocalKey(repo, branch string) string { return "local:" + repo + "@" + branch }

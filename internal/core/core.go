@@ -589,7 +589,7 @@ func (co *Core) PruneClosed(ctx context.Context) {
 func (co *Core) PruneOrphans() {
 	agent.PruneOrphans(co.Config(), func(repo string, n int) bool {
 		keys, err := co.st.ReviewedPRs()
-		want := store.PRKey(repo, n)
+		want := gh.PRKey(repo, n)
 		return err != nil || slices.ContainsFunc(keys, func(k string) bool { return strings.EqualFold(k, want) })
 	})
 }

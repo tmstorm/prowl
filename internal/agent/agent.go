@@ -70,9 +70,9 @@ func prWorktrees(repo string, number int) string {
 
 func (j Job) Key() string {
 	if j.Dir != "" {
-		return store.LocalKey(j.Repo, j.Branch)
+		return gh.LocalKey(j.Repo, j.Branch)
 	}
-	return store.PRKey(j.Repo, j.Number)
+	return gh.PRKey(j.Repo, j.Number)
 }
 
 func logDir() string { return filepath.Join(config.DataDir(), "logs") }

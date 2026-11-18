@@ -350,7 +350,7 @@ func TestRunShowsLocalReviewStartedElsewhere(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 	go co.Run(ctx)
-	key := store.LocalKey("o/api", "feat/x")
+	key := gh.LocalKey("o/api", "feat/x")
 	if err := st.SaveLocal(store.Local{Key: key, Repo: "o/api", Branch: "feat/x", Dir: dir, Base: "main", At: time.Now()}); err != nil {
 		t.Fatal(err)
 	}

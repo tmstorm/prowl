@@ -50,7 +50,7 @@ func checkout(dir string) (store.Local, error) {
 			base = "master"
 		}
 	}
-	return store.Local{Key: store.LocalKey(repo, branch), Repo: repo, Branch: branch, Dir: top, Base: base, At: time.Now()}, nil
+	return store.Local{Key: gh.LocalKey(repo, branch), Repo: repo, Branch: branch, Dir: top, Base: base, At: time.Now()}, nil
 }
 
 // ErrNothingToReview is ReviewLocal's answer for a branch with no changes,

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -744,12 +743,6 @@ type Local struct {
 	Key, Repo, Branch, Dir, Base string
 	At                           time.Time
 }
-
-// PRKey names a pull request: owner/name#number.
-func PRKey(repo string, n int) string { return repo + "#" + strconv.Itoa(n) }
-
-// LocalKey names a local review: local:owner/name@branch.
-func LocalKey(repo, branch string) string { return "local:" + repo + "@" + branch }
 
 // SaveLocal records a local review, replacing one for the same branch.
 func (s *Store) SaveLocal(l Local) error {

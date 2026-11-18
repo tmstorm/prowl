@@ -480,7 +480,7 @@ func TestReReviewTestsWhatChanged(t *testing.T) {
 func TestLocalReReviewTestsWhatChanged(t *testing.T) {
 	st, roots, bin, head := setupRun(t)
 	dir := filepath.Join(roots, "api")
-	prev, _ := st.StartRun(store.LocalKey("o/api", "main"), head, "claude", "", 0)
+	prev, _ := st.StartRun(gh.LocalKey("o/api", "main"), head, "claude", "", 0)
 	_ = st.FinishRun(prev, "s0", "earlier", "", nil)
 	cfg := config.Default()
 	cfg.Agent.RunImages = map[string]string{"*": "golang:1.27"}
