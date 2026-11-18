@@ -15,11 +15,18 @@ var chromaThemes = map[string]string{
 	"gruvbox": "gruvbox", "nord": "nord", "rose-pine": "rose-pine", "kanagawa": "kanagawa-wave",
 }
 
+// md is a glamour renderer per width, and what each rendered, for one
+// theme: the PR pane renders at several widths at once, so one renderer
+// for the last width would start over on every block.
 var md struct {
 	theme string
-	w     int
-	r     *glamour.TermRenderer
-	cache map[string][]string
+	r     map[int]*glamour.TermRenderer
+	cache map[mdKey][]string
+}
+
+type mdKey struct {
+	w   int
+	src string
 }
 
 var htmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
@@ -58,25 +65,25 @@ func mdStyle(theme string) gansi.StyleConfig {
 
 // renderMarkdown renders GitHub markdown to styled lines of at most w cells.
 func renderMarkdown(src string, w int, theme string) []string {
-	if md.r == nil || md.w != w || md.theme != theme {
-		r, err := glamour.NewTermRenderer(
-			glamour.WithStyles(mdStyle(theme)),
-			glamour.WithWordWrap(w),
-			glamour.WithEmoji(),
-		)
-		if err != nil {
+	if md.r == nil || md.theme != theme {
+		md.theme, md.r, md.cache = theme, map[int]*glamour.TermRenderer{}, map[mdKey][]string{}
+	}
+	if out, ok := md.cache[mdKey{w, src}]; ok {
+		return out
+	}
+	r := md.r[w]
+	if r == nil {
+		var err error
+		if r, err = glamour.NewTermRenderer(glamour.WithStyles(mdStyle(theme)), glamour.WithWordWrap(w), glamour.WithEmoji()); err != nil {
 			return wrap(src, w)
 		}
-		md.r, md.w, md.theme, md.cache = r, w, theme, map[string][]string{}
-	}
-	if out, ok := md.cache[src]; ok {
-		return out
+		md.r[w] = r
 	}
 	clean := strings.TrimSpace(htmlComment.ReplaceAllString(src, ""))
 	if clean == "" {
 		return nil
 	}
-	out, err := md.r.Render(clean)
+	out, err := r.Render(clean)
 	if err != nil {
 		return wrap(clean, w)
 	}
@@ -87,6 +94,6 @@ func renderMarkdown(src string, w int, theme string) []string {
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], " ")
 	}
-	md.cache[src] = lines
+	md.cache[mdKey{w, src}] = lines
 	return lines
 }
