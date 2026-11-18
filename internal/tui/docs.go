@@ -16,17 +16,19 @@ import (
 // docsPopup reads prowl's built-in docs: one page at a time with a cursor
 // line, links to follow, and a search over every page.
 type docsPopup struct {
-	prev           popup // what esc goes back to
-	pages          []core.DocPage
-	page, cur, top int
-	visual         bool // v: lines from anchor to cur are selected
-	anchor         int
-	yanking        bool       // y pressed once: a second y copies the line
-	back           []docsSpot // where links were followed from, for backspace
-	searching      bool
-	input          filterInput
-	hits           []docsSpot
-	hit            int
+	prev      popup // what esc goes back to
+	pages     []core.DocPage
+	page      int
+	nav            // over the page's lines
+	visual    bool // v: lines from anchor to cur are selected
+	anchor    int
+	yanking   bool // y pressed once on line yankAt: a second y there copies it
+	yankAt    int
+	back      []docsSpot // where links were followed from, for backspace
+	searching bool
+	input     filterInput
+	hits      []docsSpot
+	hit       nav
 }
 
 type docsSpot struct{ page, line int }
@@ -45,7 +47,9 @@ func linkLabel(md string) string {
 }
 
 func newDocsPopup() *docsPopup {
-	return &docsPopup{pages: core.Docs(), input: newFilterInput("search the docs", 50)}
+	p := &docsPopup{pages: core.Docs(), input: newFilterInput("search the docs", 50)}
+	p.scrolloff = 2
+	return p
 }
 
 // openDocs opens the docs at a topic's tag. A tag with several places lists
@@ -109,6 +113,17 @@ func (p *docsPopup) lines(m *Model, page int) []string {
 	return gutter(slices.Clone(renderMarkdown(md, p.width(m)-5, m.cfg.Theme)))
 }
 
+// list is the page, or in a search its results, which start below the
+// title, the page names and their rule, and the search's input.
+func (p *docsPopup) list(m *Model) (*nav, int) {
+	if p.searching {
+		p.hit.setLen(len(p.hits), p.height(m)-1)
+		return &p.hit, 6
+	}
+	p.setLen(len(p.lines(m, p.page)), p.height(m))
+	return &p.nav, 5
+}
+
 func (p *docsPopup) mode() mode {
 	switch {
 	case p.searching:
@@ -165,28 +180,15 @@ func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	if p.searching {
 		return p.updateSearch(m, k)
 	}
-	n := len(p.lines(m, p.page))
-	yanking := p.yanking
+	yanking := p.yanking && p.yankAt == p.cur
 	p.yanking = false
 	switch k.String() {
-	case "j", "down":
-		p.cur = min(p.cur+1, n-1)
-	case "k", "up":
-		p.cur = max(p.cur-1, 0)
-	case "ctrl+d":
-		p.cur = min(p.cur+p.height(m)/2, n-1)
-	case "ctrl+u":
-		p.cur = max(p.cur-p.height(m)/2, 0)
-	case "g", "home":
-		p.cur = 0
-	case "G", "end":
-		p.cur = n - 1
 	case "tab", "l", "right":
 		p.show((p.page+1)%len(p.pages), 0)
 	case "shift+tab", "h", "left":
 		p.show((p.page+len(p.pages)-1)%len(p.pages), 0)
 	case "enter":
-		p.follow(m)
+		p.followLink(m)
 	case "backspace":
 		if len(p.back) > 0 {
 			s := p.back[len(p.back)-1]
@@ -194,7 +196,7 @@ func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 			p.show(s.page, s.line)
 		}
 	case "/":
-		p.searching, p.hits, p.hit, p.visual = true, nil, 0, false
+		p.searching, p.hits, p.hit.cur, p.visual = true, nil, 0, false
 		p.input.SetValue("")
 		return p.input.Focus()
 	case "v":
@@ -203,9 +205,9 @@ func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		if p.visual || yanking {
 			p.yank(m)
 		} else {
-			p.yanking = true
+			p.yanking, p.yankAt = true, p.cur
 		}
-	case "esc", "q":
+	case "esc", "q", "ctrl+c":
 		if p.visual {
 			p.visual = false
 			return nil
@@ -215,11 +217,11 @@ func (p *docsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// follow opens what the first link on the cursor line points to, at its
+// followLink opens what the first link on the cursor line points to, at its
 // heading when it names one. The page is read as one text, so a label
 // wrapped across lines counts, and a label used for several links is told
 // apart by how many came before it.
-func (p *docsPopup) follow(m *Model) {
+func (p *docsPopup) followLink(m *Model) {
 	var b strings.Builder
 	start, end := 0, 0
 	for i, l := range p.lines(m, p.page) {
@@ -284,22 +286,18 @@ func (p *docsPopup) target(label string, nth int) (page, anchor string, ok bool)
 
 func (p *docsPopup) updateSearch(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
-	case "esc":
+	case "esc", "ctrl+c":
 		p.searching = false
 		p.input.Blur()
-	case "down", "ctrl+n", "ctrl+j":
-		p.hit = min(p.hit+1, max(len(p.hits)-1, 0))
-	case "up", "ctrl+p", "ctrl+k":
-		p.hit = max(p.hit-1, 0)
 	case "enter":
 		p.searching = false
 		p.input.Blur()
-		if p.hit < len(p.hits) {
+		if p.hit.cur < len(p.hits) {
 			p.back = append(p.back, docsSpot{p.page, p.cur})
-			p.show(p.hits[p.hit].page, p.hits[p.hit].line)
+			p.show(p.hits[p.hit.cur].page, p.hits[p.hit.cur].line)
 		}
 	default:
-		return p.forward(m, k)
+		return p.input.key(&p.hit, k, func() { p.search(m) })
 	}
 	return nil
 }
@@ -307,7 +305,7 @@ func (p *docsPopup) updateSearch(m *Model, k tea.KeyMsg) tea.Cmd {
 // search finds the lines, on every page, that hold every word typed.
 func (p *docsPopup) search(m *Model) {
 	words := strings.Fields(strings.ToLower(p.input.Value()))
-	p.hits, p.hit = nil, 0
+	p.hits, p.hit.cur = nil, 0
 	if len(words) == 0 {
 		return
 	}
@@ -321,70 +319,30 @@ func (p *docsPopup) search(m *Model) {
 	}
 }
 
-// bodyTop is the popup line, from the top border, of the first page or
-// search-result line: below the title, the page names and their rule, and
-// in a search the input.
-func (p *docsPopup) bodyTop() int {
-	if p.searching {
-		return 6
+// click opens the page whose name is clicked, or selects a line or search
+// result and goes to it when it is clicked again, as enter does. x and y
+// count from the popup's border.
+func (p *docsPopup) click(m *Model, x, y, row int) tea.Cmd {
+	if y != 3 {
+		v, _ := p.list(m)
+		return m.pick(v, row)
 	}
-	return 5
-}
-
-// click opens the page whose name is clicked, selects a line, or follows the
-// selected line's link when it is clicked again (as enter does). In a search
-// it does the same for a result. x and y count from the popup's border.
-func (p *docsPopup) click(m *Model, x, y int) tea.Cmd {
-	if y == 3 {
-		at := 3
-		for i, d := range p.pages {
-			if x >= at && x < at+len(d.Name) {
-				p.searching = false
-				p.input.Blur()
-				p.show(i, 0)
-				return nil
-			}
-			at += len(d.Name) + 3
-		}
-		return nil
-	}
-	if p.searching {
-		i := max(p.hit-p.height(m)+2, 0) + y - p.bodyTop()
-		if i < 0 || i >= len(p.hits) {
+	at := 3
+	for i, d := range p.pages {
+		if x >= at && x < at+len(d.Name) {
+			p.searching = false
+			p.input.Blur()
+			p.show(i, 0)
 			return nil
 		}
-		if i == p.hit {
-			return p.updateSearch(m, tea.KeyMsg{Type: tea.KeyEnter})
-		}
-		p.hit = i
-		return nil
+		at += len(d.Name) + 3
 	}
-	i := p.top + y - p.bodyTop()
-	if i < p.top || i >= min(p.top+p.height(m), len(p.lines(m, p.page))) {
-		return nil
-	}
-	if i == p.cur {
-		p.follow(m)
-		return nil
-	}
-	p.cur = i
 	return nil
 }
 
-// wheel scrolls the page three lines at a time, taking the cursor along
-// only when it would leave the window. In a search it moves the selection.
-func (p *docsPopup) wheel(m *Model, d int) {
-	if p.searching {
-		p.hit = min(max(p.hit+d, 0), max(len(p.hits)-1, 0))
-		return
-	}
-	h, n := p.height(m), len(p.lines(m, p.page))
-	p.top = min(max(p.top+3*d, 0), max(n-h, 0))
-	p.cur = min(max(p.cur, p.top), p.top+h-1, n-1)
-}
-
 func (p *docsPopup) view(m *Model) string {
-	w, h := p.width(m), p.height(m)
+	w := p.width(m)
+	v, _ := p.list(m)
 	var tabs []string
 	for i, d := range p.pages {
 		if i == p.page {
@@ -396,10 +354,10 @@ func (p *docsPopup) view(m *Model) string {
 	head := fit(" "+strings.Join(tabs, sDim.Render(" · ")), w-4) + "\n" + sBorder.Render(strings.Repeat("─", w-4))
 	if p.searching {
 		var rows []string
-		for i := max(p.hit-h+2, 0); i < len(p.hits) && len(rows) < h-1; i++ {
+		for i := v.top; i < min(v.top+v.h, v.n); i++ {
 			s := p.hits[i]
 			row := fit(" "+sDim.Render(fit(p.pages[s.page].Name, 12))+strings.TrimSpace(xansi.Strip(p.lines(m, s.page)[s.line])), w-4)
-			if i == p.hit {
+			if i == v.cur {
 				row = highlight(row, w-4, sTitle)
 			}
 			rows = append(rows, row)
@@ -410,11 +368,8 @@ func (p *docsPopup) view(m *Model) string {
 		foot := sDim.Render(" ↑↓ move · enter go there · esc back to the page")
 		return popBox("prowl docs", head+"\n"+p.input.View()+"\n"+strings.Join(rows, "\n")+"\n\n"+foot, w, pal.Accent)
 	}
-	lines := slices.Clone(p.lines(m, p.page))
-	p.cur = min(p.cur, len(lines)-1)
-	p.top = min(max(p.top, p.cur-h+1), p.cur)
-	p.top = max(min(p.top, len(lines)-h), 0)
-	shown := lines[p.top:min(p.top+h, len(lines))]
+	lines := p.lines(m, p.page)
+	shown := lines[p.top:min(p.top+p.h, p.n)]
 	a, b := p.selection()
 	for i := range shown {
 		shown[i] = fit(shown[i], w-4)

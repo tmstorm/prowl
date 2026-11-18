@@ -1509,13 +1509,6 @@ func (m *Model) popupMouse(msg tea.MouseMsg) tea.Cmd {
 		}
 		return nil
 	}
-	if p, ok := m.popup.(*docsPopup); ok {
-		if d != 0 {
-			p.wheel(m, d)
-			return nil
-		}
-		return p.click(m, x, y)
-	}
 	p, ok := m.popup.(rowPopup)
 	if !ok {
 		return nil

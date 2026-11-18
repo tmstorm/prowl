@@ -670,6 +670,23 @@ func TestDocsViewer(t *testing.T) {
 	a.wantNot("prowl docs")
 }
 
+// The docs move like the panes: M goes to the middle of the screen, g to the
+// top, and ctrl+e scrolls, keeping two lines above the cursor. y then a
+// motion copies nothing.
+func TestDocsMotions(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
+	a.resize(160, 24)
+	a.keys("?", "d", "M")
+	a.want("close   7/")
+	a.keys("g")
+	a.send(tea.KeyMsg{Type: tea.KeyCtrlE})
+	a.want("close   4/")
+	a.keys("y", "j", "y")
+	if got := a.copied(); got != "" {
+		t.Fatalf("y j y copied %q", got)
+	}
+}
+
 // A search pasted from the clipboard with ctrl+v finds lines as typing does.
 func TestDocsSearchPaste(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}, Bins: map[string]string{"wl-paste": "printf Snoozing"}})

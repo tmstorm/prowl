@@ -156,4 +156,4 @@ When prowl has installed a new version, the TUI you have open keeps the one it s
 
 ## Reading these docs
 
-`:help` (or `?` then `d`) opens these docs, and `:help stale_after` opens them at that topic. `K` opens them at what the cursor is on. In the docs, `tab` moves between pages, `/` searches every page, `enter` follows a link and `backspace` comes back. `yy`, `v` and `y` copy lines as they read on screen. `esc` closes the docs, back to where you opened them.
+`:help` (or `?` then `d`) opens these docs, and `:help stale_after` opens them at that topic. `K` opens them at what the cursor is on. In the docs, the keys that move the panes move the cursor, `tab` moves between pages, `/` searches every page, `enter` follows a link and `backspace` comes back. `yy`, `v` and `y` copy lines as they read on screen. `esc` closes the docs, back to where you opened them.
