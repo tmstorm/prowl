@@ -201,3 +201,9 @@ Last, once the features above have settled:
 - The VS Code extension, released for people to try. What it needs from `internal/core` goes into the core before the API is settled.
 - A stable core: settle `internal/core`'s API, and the extension protocol with it, so other interfaces and extensions can rely on it.
 - Packages: AUR (`prowl-bin`), then Homebrew and Scoop.
+
+## Being considered
+
+Not scheduled. Each needs a reason from using prowl before it gets a place above.
+
+- Ask prowl: a chat about prowl itself, opened from anywhere, with only the `docs` tool and a read-only view of the inbox (each PR's bucket and why, its CI and review state). It would answer "why is api#12 under re-check?" or "what's blocking the oldest PR waiting on me?", which the review chat can't: it only exists after a review, and can't see the inbox. It needs an agent session without a checkout, an inbox tool for the tool server, and a place in the UI.
