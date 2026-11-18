@@ -18,7 +18,7 @@ type Turn struct {
 	Model       string   // "" = the agent's default
 	ContextDirs []string // extra directories the agent may read
 	ToolServer  []string // the command that starts prowl's tool server; nil: no tools
-	Schema      string   // the JSON Schema of the answer; "" is a review with every severity
+	Schema      string   // the JSON Schema the answer must match
 	Activity    func(string)
 	SetModel    func(string)
 }
