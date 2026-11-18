@@ -200,9 +200,8 @@ func New(co *core.Core) *Model {
 	}
 	m.list.scrolloff = 2
 	m.loadRuns()
-	if in := m.core.Inbox(); !in.At.IsZero() {
-		m.setInbox(in)
-		m.rebuildRows()
+	if !m.core.Inbox().At.IsZero() {
+		m.takeInbox("")
 	}
 
 	m.list.skip = func(i int) bool { return m.rows[i].header && !m.collapsed[groupID(m.rows[i])] }
@@ -252,23 +251,23 @@ func (m *Model) reload() tea.Cmd {
 	return tea.Batch(m.refresh(), page)
 }
 
-// setItems replaces the inbox list, refiltering an open finder, whose
-// results point into it.
-func (m *Model) setItems(items []inbox.Item) {
-	m.items = items
-	m.refilter()
-}
-
-// refilter runs an open finder's search again over the current list.
-func (m *Model) refilter() {
+// takeInbox shows the inbox core holds now in the list, the open PRs and
+// an open finder, whose results point into the list. sel stays selected,
+// and visible even when it no longer fits the tab. Read sel before the
+// list changes: rows index into it.
+func (m *Model) takeInbox(sel string) {
+	in := m.core.Inbox()
+	m.items, m.snoozed, m.viewer, m.lastSync = in.Items, in.Snoozed, in.Viewer, in.At
+	for _, it := range m.items {
+		if d := m.details[it.PR.Key()]; d != nil {
+			d.setItem(it)
+		}
+	}
+	m.sticky = sel
+	m.rebuildRowsKeeping(sel)
 	if f, ok := m.popup.(*finder); ok {
 		f.filter(m)
 	}
-}
-
-// setInbox takes the inbox from core.
-func (m *Model) setInbox(in core.Inbox) {
-	m.items, m.snoozed, m.viewer, m.lastSync = in.Items, in.Snoozed, in.Viewer, in.At
 }
 
 // configChanged applies the config core holds now: display settings, the
@@ -346,17 +345,8 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 		}
 		m.fail(msg)
 	}
-	selKey := m.selectionKey()
-	m.setInbox(m.core.Inbox())
 	m.loadRuns()
-	for _, it := range m.items {
-		if d := m.details[it.PR.Key()]; d != nil {
-			d.setItem(it)
-		}
-	}
-	m.sticky = selKey
-	m.rebuildRowsKeeping(selKey)
-	m.refilter()
+	m.takeInbox(m.selectionKey())
 	var reload tea.Cmd
 	if d := m.current(); d != nil {
 		reload = d.ensureLoaded(m.core)
@@ -499,9 +489,8 @@ func (m *Model) openFetched(msg prFetchedMsg) tea.Cmd {
 		return nil
 	}
 	key := msg.item.PR.Key()
-	m.setItems(m.core.Inbox().Items)
 	m.filter = fAll
-	m.rebuildRowsKeeping(key)
+	m.takeInbox(key)
 	m.focus = fDetail
 	m.info("opened " + key + " · " + leader + "R requests you as reviewer")
 	if it := m.selectedItem(); it != nil {
@@ -1583,7 +1572,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 	target := m.targetRun(*it)
 	switch key {
 	case "c":
-		return m.startAll(*it)
+		return m.startReviews(*it, m.cfg.Agent.Reviewers)
 	case "C":
 		m.popup = newAgentPicker(m, *it)
 		return nil
@@ -1646,8 +1635,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 				return nil
 			}
 			m.loadRuns()
-			m.setItems(m.core.Inbox().Items)
-			m.rebuildRows()
+			m.takeInbox(m.selectionKey())
 			m.info("discarded " + core.ReviewerTitle(target.Reviewer()) + "'s review; its previous one (if any) is current again")
 			return nil
 		}
@@ -2026,21 +2014,13 @@ func (m *Model) applyPR(msg prRefreshedMsg) {
 	if msg.err != nil {
 		return
 	}
-	sel := m.selectionKey()
-	m.setItems(m.core.Inbox().Items)
-	for _, it := range m.items {
-		if d := m.details[it.PR.Key()]; d != nil && it.PR.Key() == msg.key {
-			d.setItem(it)
-		}
-	}
-	m.sticky = sel
-	m.rebuildRowsKeeping(sel)
+	m.takeInbox(m.selectionKey())
 }
 
-// startAll runs a review by every reviewer at once.
-func (m *Model) startAll(it inbox.Item) tea.Cmd {
+// startReviews runs a review by each reviewer at once.
+func (m *Model) startReviews(it inbox.Item, reviewers []string) tea.Cmd {
 	var started, problems []string
-	for _, name := range m.cfg.Agent.Reviewers {
+	for _, name := range reviewers {
 		title, err := m.launchReview(it, "", false, name)
 		if err != nil {
 			problems = append(problems, err.Error())
@@ -2086,26 +2066,15 @@ func (m *Model) startReview(it inbox.Item, refine string, sync bool, reviewer st
 // startProfile runs a review profile with its reviewers (the main agent when
 // it names none).
 func (m *Model) startProfile(it inbox.Item, p config.Profile) tea.Cmd {
-	reviewers := p.Reviewers
-	if len(reviewers) == 0 {
-		reviewers = []string{m.cfg.Agent.Main()}
+	agents := p.Reviewers
+	if len(agents) == 0 {
+		agents = []string{m.cfg.Agent.Main()}
 	}
-	var started, problems []string
-	for _, name := range reviewers {
-		title, err := m.launchReview(it, "", false, name+":"+p.Name)
-		if err != nil {
-			problems = append(problems, err.Error())
-			continue
-		}
-		started = append(started, title)
+	var reviewers []string
+	for _, name := range agents {
+		reviewers = append(reviewers, name+":"+p.Name)
 	}
-	if len(started) == 0 {
-		m.fail(strings.Join(problems, " · "))
-		return nil
-	}
-	m.info(strings.Join(started, " and ") + " reviewing")
-	m.loadRuns()
-	return m.startAnim()
+	return m.startReviews(it, reviewers)
 }
 
 // launchReview starts one reviewer (agent or agent:profile; "" is the main
