@@ -207,3 +207,5 @@ Last, once the features above have settled:
 Not scheduled. Each needs a reason from using prowl before it gets a place above.
 
 - Ask prowl: a chat about prowl itself, opened from anywhere, with only the `docs` tool and a read-only view of the inbox (each PR's bucket and why, its CI and review state). It would answer "why is api#12 under re-check?" or "what's blocking the oldest PR waiting on me?", which the review chat can't: it only exists after a review, and can't see the inbox. It needs an agent session without a checkout, an inbox tool for the tool server, and a place in the UI.
+- Old file contents for Codex's re-reviews: review checkouts are partial clones, and Codex's sandbox has no network, so `git range-diff` against the last reviewed commit fails on missing blobs. prowl could fetch what a re-review needs before the agent starts, or put the range-diff in Codex's prompt as it does the PR's history.
+- CI logs for the review agents: their allowed `gh` commands include `gh pr checks` but not `gh run view --log-failed`, so a failing check shows only its annotations. prowl could put the failed job's log tail in the prompt, as `gl` shows it in the TUI.
