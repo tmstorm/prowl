@@ -134,7 +134,7 @@ var options = []option{
 	{section: "Appearance", title: "Leader key", key: "leader", help: "The key that opens the action menu; the docs call it the leader. Takes effect at once.", kind: optChoice, choices: config.Leaders,
 		get: func(c *config.Config) string { return c.Leader },
 		set: func(c *config.Config, v string) error { c.Leader = v; return nil }},
-	{section: "Appearance", title: "Theme", key: "theme", help: "h/l previews each theme as you go.", kind: optChoice, choices: themeNames,
+	{section: "Appearance", title: "Theme", key: "theme", help: "h/l previews each theme as you go.", kind: optChoice, choices: config.Themes,
 		get: func(c *config.Config) string { return c.Theme },
 		set: func(c *config.Config, v string) error { c.Theme = v; return nil }},
 	boolOpt("Appearance", "Nerd Font icons", "nerd_font", "Powerline separators and icons. Needs a Nerd Font in your terminal.", func(c *config.Config) *bool { return &c.NerdFont }),

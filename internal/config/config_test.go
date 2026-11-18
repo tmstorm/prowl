@@ -166,3 +166,29 @@ func TestLeader(t *testing.T) {
 		t.Fatalf("want j refused, got %v", err)
 	}
 }
+
+// A setting with a fixed set of values refuses any other when the config
+// loads, and says which it takes.
+func TestEnums(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := os.MkdirAll(config.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for line, want := range map[string]string{
+		`group_by = "author"`:      `group_by = "author": use "status" or "repo"`,
+		`chat_mode = "tab"`:        `chat_mode = "tab": use "popup" or "fullscreen"`,
+		`theme = "solarized"`:      `theme = "solarized": use "dracula", "catppuccin"`,
+		`slack_after_review = "x"`: `slack_after_review = "x": use "react", "reply" or "off"`,
+		`theme = "nord"`:           "",
+		`group_by = "repo"`:        "",
+		`chat_mode = "fullscreen"`: "",
+	} {
+		if err := os.WriteFile(config.Path(), []byte(line+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := config.Load()
+		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Errorf("%s: got %v, want %q", line, err, want)
+		}
+	}
+}
