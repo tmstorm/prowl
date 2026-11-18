@@ -193,7 +193,7 @@ func (co *Core) UpdateConfig(fn func(*config.Config) error) (config.Config, erro
 	co.mu.Lock()
 	co.cfgMod = config.ModTime()
 	co.mu.Unlock()
-	co.SetConfig(next)
+	co.setConfig(next)
 	return next, nil
 }
 
@@ -214,7 +214,7 @@ func (co *Core) reloadConfig() (bool, error) {
 	if err != nil {
 		return true, fmt.Errorf("%s: %w", config.Path(), err)
 	}
-	co.SetConfig(cfg)
+	co.setConfig(cfg)
 	return true, nil
 }
 

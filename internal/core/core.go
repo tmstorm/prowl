@@ -296,8 +296,8 @@ func New(cfg config.Config, c *gh.Client, st *store.Store) *Core {
 	return co
 }
 
-// SetConfig replaces the config without saving it. UpdateConfig saves.
-func (co *Core) SetConfig(cfg config.Config) {
+// setConfig replaces the config without saving it. UpdateConfig saves.
+func (co *Core) setConfig(cfg config.Config) {
 	accts := accountList(cfg)
 	co.mu.Lock()
 	defer co.mu.Unlock()
@@ -519,8 +519,7 @@ func states(items []inbox.Item) []store.PRState {
 	out := make([]store.PRState, 0, len(items))
 	for _, it := range items {
 		out = append(out, store.PRState{
-			Key: it.PR.Key(), Bucket: int(it.Bucket), Reason: it.Reason,
-			HeadOid: it.PR.HeadRefOid, Title: it.PR.Title, URL: it.PR.URL,
+			Key: it.PR.Key(), Bucket: int(it.Bucket), Reason: it.Reason, HeadOid: it.PR.HeadRefOid,
 		})
 	}
 	return out

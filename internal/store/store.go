@@ -1,8 +1,10 @@
-// Package store persists prowl's local state in SQLite: last-seen PR states
-// (for notifications and response-time tracking), snoozes, and agent reviews.
+// Package store persists prowl's local state in SQLite: the inbox as last
+// notified, snoozes, agent reviews with their notes, summaries, Slack shares
+// and local reviews.
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -24,10 +26,7 @@ CREATE TABLE IF NOT EXISTS pr_state (
   key TEXT PRIMARY KEY,
   bucket INTEGER NOT NULL,
   reason TEXT NOT NULL,
-  head_oid TEXT NOT NULL,
-  title TEXT NOT NULL,
-  url TEXT NOT NULL,
-  seen_at INTEGER NOT NULL
+  head_oid TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS snooze (
   key TEXT PRIMARY KEY,
@@ -146,10 +145,55 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate(db); err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// migrations change the tables of a database an older prowl made, oldest
+// first; its user_version counts the ones it has run. A new database is
+// made from schema and starts after them all.
+var migrations = []string{
+	`ALTER TABLE pr_state DROP COLUMN title; ALTER TABLE pr_state DROP COLUMN url; ALTER TABLE pr_state DROP COLUMN seen_at`,
+}
+
+// migrate brings the database up to date. It holds the write lock
+// throughout, so two prowls starting at once migrate it once.
+func migrate(db *sql.DB) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	defer conn.ExecContext(ctx, `ROLLBACK`)
+	var version, tables int
+	if err := conn.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	if err := conn.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master`).Scan(&tables); err != nil {
+		return err
+	}
+	if tables == 0 {
+		version = len(migrations)
+	}
+	for i := version; i < len(migrations); i++ {
+		if _, err := conn.ExecContext(ctx, migrations[i]); err != nil {
+			return fmt.Errorf("migration %d: %w", i+1, err)
+		}
+	}
+	if _, err := conn.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, max(version, len(migrations)))); err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, `COMMIT`)
+	return err
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -157,12 +201,12 @@ func (s *Store) Close() error { return s.db.Close() }
 // ---- PR state snapshots
 
 type PRState struct {
-	Key, Reason, HeadOid, Title, URL string
-	Bucket                           int
+	Key, Reason, HeadOid string
+	Bucket               int
 }
 
 func (s *Store) AllStates() (map[string]PRState, error) {
-	rows, err := s.db.Query(`SELECT key, bucket, reason, head_oid, title, url FROM pr_state`)
+	rows, err := s.db.Query(`SELECT key, bucket, reason, head_oid FROM pr_state`)
 	if err != nil {
 		return nil, fmt.Errorf("all states: %w", err)
 	}
@@ -170,7 +214,7 @@ func (s *Store) AllStates() (map[string]PRState, error) {
 	out := map[string]PRState{}
 	for rows.Next() {
 		var p PRState
-		if err := rows.Scan(&p.Key, &p.Bucket, &p.Reason, &p.HeadOid, &p.Title, &p.URL); err != nil {
+		if err := rows.Scan(&p.Key, &p.Bucket, &p.Reason, &p.HeadOid); err != nil {
 			return nil, fmt.Errorf("all states: %w", err)
 		}
 		out[p.Key] = p
@@ -185,13 +229,11 @@ func (s *Store) ReplaceStates(states []PRState) error {
 		return fmt.Errorf("replace states: %w", err)
 	}
 	defer tx.Rollback()
-	now := time.Now().Unix()
 	if _, err := tx.Exec(`DELETE FROM pr_state`); err != nil {
 		return fmt.Errorf("replace states: %w", err)
 	}
 	for _, st := range states {
-		if _, err := tx.Exec(`INSERT INTO pr_state VALUES (?,?,?,?,?,?,?)`,
-			st.Key, st.Bucket, st.Reason, st.HeadOid, st.Title, st.URL, now); err != nil {
+		if _, err := tx.Exec(`INSERT INTO pr_state VALUES (?,?,?,?)`, st.Key, st.Bucket, st.Reason, st.HeadOid); err != nil {
 			return fmt.Errorf("replace states: %w", err)
 		}
 	}
