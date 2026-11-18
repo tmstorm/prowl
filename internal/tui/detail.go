@@ -1955,7 +1955,7 @@ func (d *detail) reviewStatus(m *Model) string {
 	return strings.Join(parts, sDim.Render("  ·  "))
 }
 
-// replyRows lists the replies a reviewer drafted to threads waiting on you.
+// replyRows lists the replies a reviewer drafted to review threads.
 func (d *detail) replyRows(a *rowAdder, run *store.Run) {
 	if len(run.Replies) == 0 {
 		return

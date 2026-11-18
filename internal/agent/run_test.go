@@ -204,14 +204,20 @@ func mustRuns(t *testing.T, st *store.Store) []*store.Run {
 
 // A thread you are in where the author answered last is shown in full with
 // its id, and the agent's draft reply to it is kept with where it is and
-// what it answers. A draft for a thread that isn't waiting on you is dropped.
+// what it answers. An unresolved thread you aren't in has an id too, so a
+// sync can keep a reply you asked for there. A draft for a thread not
+// listed is dropped.
 func TestThreadReplies(t *testing.T) {
 	st, roots, bin, head := setupRun(t)
 	thread := gh.Thread{ID: "t1", IsResolved: true, Path: "a.go", Line: 3}
 	thread.Comments.Nodes = []gh.Comment{
 		{Author: &gh.Actor{Login: "me"}, Body: "Return the error here.", CreatedAt: time.Now().Add(-time.Hour)},
 		{Author: &gh.Actor{Login: "alice"}, Body: "Done, and I wrapped it with the path too.", CreatedAt: time.Now()}}
-	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.PR("api", 7, "fix: a", "alice")}, Threads: map[int][]gh.Thread{7: {thread}}}
+	other := gh.Thread{ID: "t2", Path: "b.go", Line: 9}
+	other.Comments.Nodes = []gh.Comment{
+		{Author: &gh.Actor{Login: "bob"}, Body: "Who approved this?", CreatedAt: time.Now().Add(-time.Hour)},
+		{Author: &gh.Actor{Login: "alice"}, Body: "Nobody yet.", CreatedAt: time.Now()}}
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.PR("api", 7, "fix: a", "alice")}, Threads: map[int][]gh.Thread{7: {thread, other}}}
 	c, err := fake.Client()
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +236,7 @@ echo '{"type":"result","session_id":"s1","structured_output":`+answer+`}'
 		t.Fatal(err)
 	}
 	prompt := read(filepath.Join(bin, "prompts"))
-	for _, want := range []string{"Threads waiting on me", "id `t1` · a.go:3 (resolved)", "wrapped it with the path too", "## Replies to threads"} {
+	for _, want := range []string{"Threads waiting on me", "id `t1` · a.go:3 (resolved)", "wrapped it with the path too", "## Replies to threads", "id `t2` · b.go:9"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the prompt is missing %q", want)
 		}
@@ -244,6 +250,28 @@ echo '{"type":"result","session_id":"s1","structured_output":`+answer+`}'
 	}
 	if n := read(filepath.Join(bin, "notified")); !strings.Contains(n, "api#7: 1 finding, 1 must-fix · 1 reply to send") {
 		t.Errorf("notification: %q", n)
+	}
+
+	answer = strings.Replace(answer, `{"thread_id":"nope"`, `{"thread_id":"t2","body":"I approve it."},{"thread_id":"nope"`, 1)
+	_ = os.WriteFile(filepath.Join(bin, "claude"), []byte(`#!/bin/sh
+d="$(dirname "$0")"
+echo '=== turn' >> "$d/prompts"
+cat >> "$d/prompts"
+echo '{"type":"result","session_id":"s1","structured_output":`+answer+`}'
+`), 0o755)
+	if err := agent.Run(cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude",
+		Refine: agent.SyncInstruction, Sync: true, RunID: run.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(filepath.Join(bin, "prompts")), "whether or not the thread is waiting on the reader") {
+		t.Error("the sync doesn't say a reply can go to any listed thread")
+	}
+	run = store.Latest(mustRuns(t, st), "claude")
+	if len(run.Replies) != 2 {
+		t.Fatalf("replies after the sync: %+v", run.Replies)
+	}
+	if r := run.Replies[1]; r.ThreadID != "t2" || r.Path != "b.go" || r.Line != 9 || r.To != "alice" || r.Last != "Nobody yet." || r.Body != "I approve it." {
+		t.Fatalf("reply to a thread I'm not in: %+v", r)
 	}
 }
 

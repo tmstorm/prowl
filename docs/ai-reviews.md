@@ -69,6 +69,8 @@ Instead it checks what was raised. Every unsettled point on the PR (unresolved t
 
 When you are in a review thread and someone else answered last, for example the author replying to your inline comment, the agent reads the whole thread, resolved or not. Where you have something to say back, a short confirmation or the one question still open, it drafts a reply. Drafts show under the reviewer's section as Draft replies, and the thread is marked `↩ draft reply`.
 
+In a revise or a chat you can also ask for a reply on any unresolved thread, including one you aren't in. It lands with the other drafts when the review updates.
+
 Draft replies go out with the review: posting lists them in the editor, and once the review is posted each is sent in its thread. You can leave one out the same way as a finding, or edit one and send it right away.
 
 Until they are sent, the review's icon in the inbox is yellow, the AI review counts them (`(3 · ↩2)`), and the desktop notification for a finished review says so: `docs#97: 3 findings, 1 must-fix · 2 replies to send`. Nothing is sent without you, and `prowl edits` keeps each draft beside what you sent.
