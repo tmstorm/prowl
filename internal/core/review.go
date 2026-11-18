@@ -123,11 +123,184 @@ func (co *Core) Run(ctx context.Context) {
 	tasks.Wait()
 }
 
+// Review is an AI review run: an agent reviewing a PR at one commit. A
+// revise or sync updates it; a new review starts a new one, and the earlier
+// runs are the agent's history for that PR.
+type Review struct {
+	ID                    int64
+	Agent, Profile        string // Profile is "" for a plain review
+	Status                ReviewStatus
+	HeadOid, SessionID    string
+	StartedAt, FinishedAt time.Time
+	Activity              string    // what it is doing while it runs
+	ActivityAt            time.Time // when Activity last changed
+	Model, Guidance       string
+	Summary, Error        string
+	Findings              []Finding
+	Replies               []ThreadReply
+	Points                []Point
+	Action, ActionReason  string // the agent suggests closing the PR ("close") or a draft ("draft"), and why
+	Origin                string // "local" for a run made in your checkout before the PR existed
+}
+
+type ReviewStatus string
+
+const (
+	ReviewRunning ReviewStatus = "running"
+	ReviewDone    ReviewStatus = "done"
+	ReviewPosted  ReviewStatus = "posted"
+	ReviewFailed  ReviewStatus = "failed"
+)
+
+type Finding struct {
+	Severity         Severity
+	Rule             string // the guideline it comes from
+	Path             string
+	Line             int
+	Title, Body      string
+	Excluded, Posted bool
+}
+
+type Severity string
+
+const (
+	MustFix   Severity = "must-fix"
+	ShouldFix Severity = "should-fix"
+	Nit       Severity = "nit"
+)
+
+// Point is something a reviewer, a bot or a check raised on the PR, as an
+// agent checked it against the code. Points are never posted.
+type Point struct {
+	Who     string // login, or the check's name
+	Path    string
+	Line    int
+	Point   string
+	Verdict string // addressed | open | wrong | unclear
+	Why     string
+}
+
+// ThreadReply is a reply an agent drafted to a review thread, for you to
+// edit and send.
+type ThreadReply struct {
+	ThreadID string
+	Path     string
+	Line     int
+	To       string // who wrote the comment it answers
+	Last     string // that comment
+	Body     string
+	Excluded bool // you chose not to send it
+	Posted   bool
+}
+
+// Note is a line between you ("you") and a reviewer ("agent") about its
+// review.
+type Note struct {
+	At        time.Time
+	Who, Text string
+}
+
+func reviewOf(r *store.Run) *Review {
+	out := &Review{ID: r.ID, Agent: r.Agent, Profile: r.Profile, Status: ReviewStatus(r.Status), HeadOid: r.HeadOid,
+		SessionID: r.SessionID, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Activity: r.Activity, ActivityAt: r.ActivityAt,
+		Model: r.Model, Guidance: r.Guidance, Summary: r.Summary, Error: r.Error, Action: r.Action,
+		ActionReason: r.ActionReason, Origin: r.Origin}
+	for _, f := range r.Findings {
+		out.Findings = append(out.Findings, Finding{Severity: Severity(f.Severity), Rule: f.Rule, Path: f.Path, Line: f.Line,
+			Title: f.Title, Body: f.Body, Excluded: f.Excluded, Posted: f.Posted})
+	}
+	for _, rp := range r.Replies {
+		out.Replies = append(out.Replies, ThreadReply(rp))
+	}
+	for _, p := range r.Points {
+		out.Points = append(out.Points, Point(p))
+	}
+	return out
+}
+
+func storedFindings(findings []Finding) []store.Finding {
+	var out []store.Finding
+	for _, f := range findings {
+		out = append(out, store.Finding{Severity: string(f.Severity), Rule: f.Rule, Path: f.Path, Line: f.Line,
+			Title: f.Title, Body: f.Body, Excluded: f.Excluded, Posted: f.Posted})
+	}
+	return out
+}
+
+// MustFix counts the review's must-fix findings.
+func (r *Review) MustFix() int {
+	n := 0
+	for _, f := range r.Findings {
+		if f.Severity == MustFix {
+			n++
+		}
+	}
+	return n
+}
+
+// StillOpen counts the points raised that still hold.
+func (r *Review) StillOpen() int {
+	n := 0
+	for _, p := range r.Points {
+		if p.Verdict == "open" {
+			n++
+		}
+	}
+	return n
+}
+
+// Unsent counts the drafted thread replies still to send: not sent, and
+// not left out.
+func (r *Review) Unsent() int {
+	n := 0
+	for _, rp := range r.Replies {
+		if !rp.Posted && !rp.Excluded {
+			n++
+		}
+	}
+	return n
+}
+
+// Reviewer names who reviewed: the agent, or agent:profile.
+func (r *Review) Reviewer() string { return store.Reviewer(r.Agent, r.Profile) }
+
+// Finished reports whether the review ran to its end, posted or not.
+func (r *Review) Finished() bool { return r.Status == ReviewDone || r.Status == ReviewPosted }
+
+// Latest is a reviewer's current review in reviews (newest first), or nil.
+func Latest(reviews []*Review, reviewer string) *Review {
+	for _, r := range reviews {
+		if r.Reviewer() == reviewer {
+			return r
+		}
+	}
+	return nil
+}
+
+// Current is each reviewer's latest review, newest first.
+func Current(reviews []*Review) []*Review {
+	var out []*Review
+	seen := map[string]bool{}
+	for _, r := range reviews {
+		if !seen[r.Reviewer()] {
+			seen[r.Reviewer()] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // loadRuns reloads every review run and reports whether any changed.
 func (co *Core) loadRuns() bool {
-	all, err := co.st.AllRuns()
+	stored, err := co.st.AllRuns()
 	if err != nil {
 		return false
+	}
+	all := make(map[string][]*Review, len(stored))
+	for key, runs := range stored {
+		for _, r := range runs {
+			all[key] = append(all[key], reviewOf(r))
+		}
 	}
 	co.mu.Lock()
 	defer co.mu.Unlock()
@@ -139,10 +312,10 @@ func (co *Core) loadRuns() bool {
 }
 
 // Runs are every PR's review runs, newest first, by PR key.
-func (co *Core) Runs() map[string][]*store.Run {
+func (co *Core) Runs() map[string][]*Review {
 	co.mu.Lock()
 	defer co.mu.Unlock()
-	out := make(map[string][]*store.Run, len(co.runs))
+	out := make(map[string][]*Review, len(co.runs))
 	for key, runs := range co.runs {
 		for _, r := range runs {
 			c := *r
@@ -157,14 +330,15 @@ func (co *Core) Runs() map[string][]*store.Run {
 
 // Notes are what you and each current reviewer said to each other about a
 // PR, by reviewer. They are never posted.
-func (co *Core) Notes(key string) map[string][]store.LogEntry {
+func (co *Core) Notes(key string) map[string][]Note {
 	co.mu.Lock()
-	runs := store.Current(co.runs[key])
+	runs := Current(co.runs[key])
 	co.mu.Unlock()
-	out := map[string][]store.LogEntry{}
+	out := map[string][]Note{}
 	for _, r := range runs {
-		if log, err := co.st.ReviewLog(key, r.Reviewer()); err == nil && len(log) > 0 {
-			out[r.Reviewer()] = log
+		log, _ := co.st.ReviewLog(key, r.Reviewer())
+		for _, e := range log {
+			out[r.Reviewer()] = append(out[r.Reviewer()], Note(e))
 		}
 	}
 	return out
@@ -218,12 +392,12 @@ func (co *Core) job(key, reviewer, refine string, sync bool) (agent.Job, error) 
 	co.mu.Lock()
 	it, ok := co.item(key)
 	viewer := co.inbox.Viewer
-	cur := store.Latest(co.runs[key], reviewer)
+	cur := Latest(co.runs[key], reviewer)
 	co.mu.Unlock()
 	if !ok {
 		return agent.Job{}, fmt.Errorf("review %s: not in the inbox", key)
 	}
-	if cur != nil && cur.Status == "running" {
+	if cur != nil && cur.Status == ReviewRunning {
 		return agent.Job{}, fmt.Errorf("%s is already reviewing %s", title, key)
 	}
 	if err := co.loggedIn(be.Name()); err != nil {
@@ -249,7 +423,7 @@ func (co *Core) job(key, reviewer, refine string, sync bool) (agent.Job, error) 
 		if cur == nil {
 			return agent.Job{}, fmt.Errorf("no %s review to revise yet", title)
 		}
-		if cur.Status == "failed" {
+		if cur.Status == ReviewFailed {
 			return agent.Job{}, fmt.Errorf("%s's last review failed, so there is nothing to revise; start a new one", title)
 		}
 		if cur.Origin == "local" {
@@ -293,7 +467,7 @@ func (co *Core) Discard(runID int64) error {
 
 // SetExcluded includes a finding in what gets posted, or leaves it out.
 func (co *Core) SetExcluded(runID int64, finding int, excluded bool) error {
-	return co.editFindings(func(r *store.Run) bool { return r.ID == runID }, func(i int, f store.Finding) bool {
+	return co.editFindings(func(r *Review) bool { return r.ID == runID }, func(i int, f Finding) bool {
 		if i == finding {
 			return excluded
 		}
@@ -306,17 +480,17 @@ func (co *Core) SetExcluded(runID int64, finding int, excluded bool) error {
 func (co *Core) MustFixOnly(key string, on bool) error {
 	co.mu.Lock()
 	var ids []int64
-	for _, r := range store.Current(co.runs[key]) {
+	for _, r := range Current(co.runs[key]) {
 		ids = append(ids, r.ID)
 	}
 	co.mu.Unlock()
-	return co.editFindings(func(r *store.Run) bool { return slices.Contains(ids, r.ID) }, func(_ int, f store.Finding) bool {
-		return on && f.Severity != "must-fix"
+	return co.editFindings(func(r *Review) bool { return slices.Contains(ids, r.ID) }, func(_ int, f Finding) bool {
+		return on && f.Severity != MustFix
 	})
 }
 
 // editFindings sets Excluded on the findings of the runs that match.
-func (co *Core) editFindings(match func(*store.Run) bool, excluded func(int, store.Finding) bool) error {
+func (co *Core) editFindings(match func(*Review) bool, excluded func(int, Finding) bool) error {
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	for _, runs := range co.runs {
@@ -327,7 +501,7 @@ func (co *Core) editFindings(match func(*store.Run) bool, excluded func(int, sto
 			for i := range r.Findings {
 				r.Findings[i].Excluded = excluded(i, r.Findings[i])
 			}
-			if err := co.st.SaveFindings(r.ID, r.Findings); err != nil {
+			if err := co.st.SaveFindings(r.ID, storedFindings(r.Findings)); err != nil {
 				return fmt.Errorf("save findings: %w", err)
 			}
 		}
@@ -351,10 +525,10 @@ func commandOf(cmd *exec.Cmd, quit string) Command {
 // Chat is the command for talking to a reviewer about its review of a PR.
 func (co *Core) Chat(key, reviewer string) (Command, error) {
 	co.mu.Lock()
-	run := store.Latest(co.runs[key], reviewer)
+	run := Latest(co.runs[key], reviewer)
 	co.mu.Unlock()
 	switch {
-	case run != nil && run.Status == "running":
+	case run != nil && run.Status == ReviewRunning:
 		return Command{}, fmt.Errorf("wait for the review to finish before chatting")
 	case run == nil || run.SessionID == "":
 		return Command{}, fmt.Errorf("no review session to talk to yet; start a review first")

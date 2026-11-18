@@ -422,16 +422,13 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-	runs, err := st.Runs(key)
-	if err != nil {
-		return err
-	}
-	var cur []*store.Run
-	for _, r := range store.Current(runs) {
+	co := core.New(cfg, nil, st)
+	var cur []*core.Review
+	for _, r := range core.Current(co.Runs()[key]) {
 		if only != "" && r.Agent != only && r.Reviewer() != only {
 			continue
 		}
-		if r.Status == "running" {
+		if r.Status == core.ReviewRunning {
 			fmt.Fprintf(os.Stderr, "the %s review of %s is still running; leaving it out\n", agent.Title(r.Agent), key)
 			continue
 		}
@@ -443,13 +440,9 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 		}
 		return fmt.Errorf("no finished review for %s yet; open it in prowl and run an AI review", key)
 	}
-	notes := map[string][]store.LogEntry{}
-	for _, r := range cur {
-		notes[r.Reviewer()], _ = st.ReviewLog(key, r.Reviewer())
-	}
-	md := agent.FindingsMarkdown(cur, notes, key, head, all)
+	md := core.FindingsMarkdown(cur, co.Notes(key), key, head, all)
 	if asPrompt {
-		md = agent.HandoffPrompt(md)
+		md = core.HandoffPrompt(md)
 	}
 	if asPrompt {
 		fmt.Print(md)
@@ -658,8 +651,8 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 	start := time.Now()
 	stop := showProgress(co, start, func(now time.Time) string {
 		runs, _ := st.Runs(key)
-		if i := slices.IndexFunc(runs, func(r *store.Run) bool { return r.Status == "running" }); i >= 0 {
-			return tui.Progress(runs[i], now, cfg.Playful)
+		if i := slices.IndexFunc(runs, func(r *store.Run) bool { return r.Status == string(core.ReviewRunning) }); i >= 0 {
+			return tui.Progress(&core.Review{Activity: runs[i].Activity, ActivityAt: runs[i].ActivityAt}, now, cfg.Playful)
 		}
 		return ""
 	})
@@ -676,7 +669,7 @@ func review(cfg config.Config, c *gh.Client, st *store.Store, args []string) err
 		return err
 	}
 	total, mustFix := 0, 0
-	for _, r := range store.Current(co.Runs()[key]) {
+	for _, r := range core.Current(co.Runs()[key]) {
 		total += len(r.Findings)
 		mustFix += r.MustFix()
 	}

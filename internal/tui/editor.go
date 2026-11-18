@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,7 +17,6 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/platform"
-	"github.com/tmstorm/prowl/internal/store"
 )
 
 type editorDoneMsg struct {
@@ -103,16 +103,16 @@ func (m *Model) editReview(it inbox.Item, d core.Draft) tea.Cmd {
 	b.WriteString("Write the review below this block. :wq submits it.\n")
 	b.WriteString(":q! or :cq cancels. An empty comment or request-changes review cancels\n")
 	b.WriteString("too, unless it has inline comments or replies: they post with no body.\n\n")
-	fmt.Fprintf(&b, "event: %s\n", strings.ToLower(event))
+	fmt.Fprintf(&b, "event: %s\n", strings.ToLower(string(event)))
 	b.WriteString("       (approve | request_changes | comment | close | draft | note)\n")
 	b.WriteString("       close and draft post this as a comment, then close the PR or make it a draft.\n")
 	b.WriteString("       note posts a plain comment in the conversation, not a review; pending\n")
 	b.WriteString("       inline comments stay pending.\n")
-	if action, reason := m.suggestedAction(pr.Key()); action != "" && event != strings.ToUpper(action) {
+	if action, reason := m.suggestedAction(pr.Key()); action != "" && string(event) != strings.ToUpper(action) {
 		first, _, _ := strings.Cut(reason, "\n")
 		fmt.Fprintf(&b, "       The agent suggests %s: %s\n", map[string]string{"close": "closing", "draft": "a draft"}[action], first)
 	}
-	if fromAgent && event == "COMMENT" {
+	if fromAgent && event == core.EventComment {
 		b.WriteString("       Posting as a comment: no finding is must-fix. To block the merge\n")
 		b.WriteString("       until the author responds, change it to request_changes.\n")
 	}
@@ -152,14 +152,14 @@ func (m *Model) editReview(it inbox.Item, d core.Draft) tea.Cmd {
 		header, rest := splitHeader(text)
 		ev := event
 		if mm := eventLine.FindStringSubmatch(header); mm != nil {
-			ev = strings.ToUpper(mm[1])
+			ev = core.ReviewEvent(strings.ToUpper(mm[1]))
 		}
-		if ev != "APPROVE" && ev != "REQUEST_CHANGES" && ev != "COMMENT" && ev != "CLOSE" && ev != "DRAFT" && ev != "NOTE" {
-			m.fail("unknown event " + strings.ToLower(ev))
+		if !slices.Contains([]core.ReviewEvent{core.EventApprove, core.EventRequestChanges, core.EventComment, core.EventClose, core.EventDraft, core.EventNote}, ev) {
+			m.fail("unknown event " + strings.ToLower(string(ev)))
 			return nil
 		}
 		rest = strings.TrimSpace(rest)
-		if rest == "" && (ev == "NOTE" || (ev == "COMMENT" || ev == "REQUEST_CHANGES") && len(comments) == 0 && len(d.Replies) == 0) {
+		if rest == "" && (ev == core.EventNote || (ev == core.EventComment || ev == core.EventRequestChanges) && len(comments) == 0 && len(d.Replies) == 0) {
 			m.info("empty review, cancelled")
 			return nil
 		}
@@ -204,7 +204,7 @@ func spansCommits(d core.Draft) bool {
 // suggestedAction is what a current agent review suggests doing with the PR
 // ("close", "draft" or "") and why.
 func (m *Model) suggestedAction(key string) (string, string) {
-	for _, r := range store.Current(m.runs[key]) {
+	for _, r := range core.Current(m.runs[key]) {
 		if r.Action != "" && r.Finished() {
 			return r.Action, r.ActionReason
 		}

@@ -14,7 +14,6 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/inbox"
-	"github.com/tmstorm/prowl/internal/store"
 )
 
 // ---- layout
@@ -753,7 +752,7 @@ func (m *Model) renderListRow(r listRow, w int, sel bool, cols listCols) string 
 		snz = sDim.Render("z")
 	}
 	if runs := m.runs[pr.Key()]; len(runs) > 0 {
-		cl = reviewGlyph(m, store.Current(runs))
+		cl = reviewGlyph(m, core.Current(runs))
 	}
 	badges := " "
 	if cols.snooze {
@@ -810,7 +809,7 @@ func (m *Model) renderListRow(r listRow, w int, sel bool, cols listCols) string 
 
 // reviewGlyph is the inbox icon for a PR's AI reviews: a spinner while any
 // agent is reviewing, red when they all failed, green once posted.
-func reviewGlyph(m *Model, cur []*store.Run) string {
+func reviewGlyph(m *Model, cur []*core.Review) string {
 	icon := "C"
 	if nerdIcons {
 		icon = "\U000f06a9"
@@ -818,11 +817,11 @@ func reviewGlyph(m *Model, cur []*store.Run) string {
 	failed, posted := 0, 0
 	for _, r := range cur {
 		switch r.Status {
-		case "running":
+		case core.ReviewRunning:
 			return spinner(m)
-		case "failed":
+		case core.ReviewFailed:
 			failed++
-		case "posted":
+		case core.ReviewPosted:
 			posted++
 		}
 	}
@@ -839,9 +838,9 @@ func reviewGlyph(m *Model, cur []*store.Run) string {
 
 // unsentReplies counts the drafted thread replies of the current reviews
 // that haven't been sent.
-func unsentReplies(runs []*store.Run) int {
+func unsentReplies(runs []*core.Review) int {
 	n := 0
-	for _, r := range store.Current(runs) {
+	for _, r := range core.Current(runs) {
 		n += r.Unsent()
 	}
 	return n
@@ -882,9 +881,9 @@ func (m *Model) detailPane(l layout, x int) string {
 			label += " (since review)"
 		case i == tabReview:
 			n, running := 0, false
-			for _, r := range store.Current(d.runs) {
+			for _, r := range core.Current(d.runs) {
 				n += len(r.Findings)
-				running = running || r.Status == "running"
+				running = running || r.Status == core.ReviewRunning
 			}
 			var counts []string
 			if n > 0 {
@@ -1046,8 +1045,8 @@ func (m *Model) statusline() string {
 	switch running := m.running; {
 	case running == 1:
 		for _, runs := range m.runs {
-			for _, r := range store.Current(runs) {
-				if r.Status == "running" {
+			for _, r := range core.Current(runs) {
+				if r.Status == core.ReviewRunning {
 					sync = sYellow.Render(core.ReviewerTitle(r.Reviewer())+" reviewing") + " " + sDim.Render(thinR) + " " + sync
 				}
 			}

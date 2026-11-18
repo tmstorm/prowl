@@ -20,7 +20,6 @@ import (
 	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/slack"
-	"github.com/tmstorm/prowl/internal/store"
 )
 
 type filter int
@@ -101,8 +100,8 @@ type Model struct {
 
 	items    []inbox.Item
 	snoozed  map[string]time.Time
-	runs     map[string][]*store.Run // every PR's review runs, newest first
-	running  int                     // agents reviewing right now, across PRs
+	runs     map[string][]*core.Review // every PR's review runs, newest first
+	running  int                       // agents reviewing right now, across PRs
 	viewer   string
 	lastSync time.Time
 	loading  bool
@@ -192,7 +191,7 @@ func New(co *core.Core) *Model {
 	ti.ShowSuggestions = true
 	m := &Model{
 		cfg: cfg, core: co, loading: true, waking: true, started: time.Now(),
-		runs:        map[string][]*store.Run{},
+		runs:        map[string][]*core.Review{},
 		snoozed:     map[string]time.Time{},
 		details:     map[string]*detail{},
 		searchInput: ti,
@@ -222,10 +221,11 @@ type previewMsg struct{ seq int }
 type errMsg struct{ err error }
 type infoMsg string
 type submittedMsg struct {
-	key, event string
-	posted     bool   // your review went out, even if err says a reply didn't
-	slack      string // what prowl did on the PR's Slack share, if anything
-	err        error
+	key    string
+	event  core.ReviewEvent
+	posted bool   // your review went out, even if err says a reply didn't
+	slack  string // what prowl did on the PR's Slack share, if anything
+	err    error
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -1456,11 +1456,11 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 	case "x":
 		if onGitHub() {
-			return m.editReview(*it, m.core.Draft(it.PR.Key(), "REQUEST_CHANGES"))
+			return m.editReview(*it, m.core.Draft(it.PR.Key(), core.EventRequestChanges))
 		}
 	case "m":
 		if onGitHub() {
-			return m.editReview(*it, m.core.Draft(it.PR.Key(), "COMMENT"))
+			return m.editReview(*it, m.core.Draft(it.PR.Key(), core.EventComment))
 		}
 	case "p":
 		if onGitHub() {
@@ -1497,7 +1497,7 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 	case "n":
 		if onGitHub() {
-			return m.editReview(*it, core.Draft{Event: "NOTE"})
+			return m.editReview(*it, core.Draft{Event: core.EventNote})
 		}
 	case "A":
 		if onGitHub() {
@@ -1505,7 +1505,7 @@ func (m *Model) leader(key string) tea.Cmd {
 		}
 	case "X":
 		if onGitHub() {
-			d := m.core.Draft(it.PR.Key(), "CLOSE")
+			d := m.core.Draft(it.PR.Key(), core.EventClose)
 			if action, reason := m.suggestedAction(it.PR.Key()); action == "close" {
 				d.Body = reason
 			}
@@ -1520,7 +1520,7 @@ func (m *Model) leader(key string) tea.Cmd {
 				}}
 				return nil
 			}
-			d := m.core.Draft(it.PR.Key(), "DRAFT")
+			d := m.core.Draft(it.PR.Key(), core.EventDraft)
 			if action, reason := m.suggestedAction(it.PR.Key()); action == "draft" {
 				d.Body = reason
 			}
@@ -1588,7 +1588,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 		}
 		return m.openChat(*it, target.Reviewer())
 	case "r":
-		if target == nil || target.Status == "running" {
+		if target == nil || target.Status == core.ReviewRunning {
 			m.fail("no finished review to revise yet (" + leader + "cc starts one)")
 			return nil
 		}
@@ -1603,8 +1603,8 @@ func (m *Model) agentAction(key string) tea.Cmd {
 		}
 		return m.startReview(*it, "", true, target.Reviewer())
 	case "h":
-		var done []*store.Run
-		for _, r := range store.Current(m.runs[k]) {
+		var done []*core.Review
+		for _, r := range core.Current(m.runs[k]) {
 			if r.Finished() {
 				done = append(done, r)
 			}
@@ -1613,7 +1613,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 			m.fail("no finished review to hand off")
 			return nil
 		}
-		prompt := agent.HandoffPrompt(agent.FindingsMarkdown(done, m.core.Notes(k), k, it.PR.HeadRefOid, false))
+		prompt := core.HandoffPrompt(core.FindingsMarkdown(done, m.core.Notes(k), k, it.PR.HeadRefOid, false))
 		if err := platform.Copy(prompt); err != nil {
 			m.fail(err.Error())
 			return nil
@@ -1639,7 +1639,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 			m.info("discarded " + core.ReviewerTitle(target.Reviewer()) + "'s review; its previous one (if any) is current again")
 			return nil
 		}
-		if target.Status == "running" {
+		if target.Status == core.ReviewRunning {
 			m.confirm = &confirm{prompt: core.ReviewerTitle(target.Reviewer()) + " still shows as reviewing. Discard the run anyway?", yes: discard}
 			return nil
 		}
@@ -1900,7 +1900,7 @@ type slackPostedMsg struct {
 }
 
 func (m *Model) askApprove(it inbox.Item) tea.Cmd {
-	d := m.core.Draft(it.PR.Key(), "APPROVE")
+	d := m.core.Draft(it.PR.Key(), core.EventApprove)
 	prompt := "approve " + prName(it.PR)
 	if len(d.Comments) > 0 {
 		prompt += " with " + count(len(d.Comments), "inline comment")
@@ -1911,7 +1911,7 @@ func (m *Model) askApprove(it inbox.Item) tea.Cmd {
 
 func (m *Model) submit(it inbox.Item, d core.Draft) tea.Cmd {
 	co, key := m.core, it.PR.Key()
-	m.info("submitting " + strings.ToLower(strings.ReplaceAll(d.Event, "_", " ")) + "…")
+	m.info("submitting " + strings.ToLower(strings.ReplaceAll(string(d.Event), "_", " ")) + "…")
 	return func() tea.Msg {
 		sent, err := co.Submit(key, d)
 		return submittedMsg{key: key, event: d.Event, posted: sent.Review, slack: sent.Slack, err: err}
@@ -1938,21 +1938,21 @@ func (m *Model) submitted(msg submittedMsg) tea.Cmd {
 		reload = d.fetch(m.core)
 	}
 	m.applyPR(prRefreshedMsg{key: msg.key})
-	note := map[string]string{"APPROVE": "approved", "REQUEST_CHANGES": "requested changes", "COMMENT": "commented",
-		"CLOSE": "closed", "DRAFT": "made it a draft", "NOTE": "commented in the conversation"}[msg.event]
+	note := map[core.ReviewEvent]string{core.EventApprove: "approved", core.EventRequestChanges: "requested changes", core.EventComment: "commented",
+		core.EventClose: "closed", core.EventDraft: "made it a draft", core.EventNote: "commented in the conversation"}[msg.event]
 	if msg.slack != "" {
 		note += " · " + msg.slack
 	}
 	for _, it := range m.items {
-		if msg.slack != "" || msg.event == "CLOSE" || msg.event == "DRAFT" || msg.event == "NOTE" {
+		if msg.slack != "" || msg.event == core.EventClose || msg.event == core.EventDraft || msg.event == core.EventNote {
 			break
 		}
 		if it.PR.Key() != msg.key {
 			continue
 		}
 		cp := it
-		cp.MyLastReview = &gh.Review{State: map[string]string{
-			"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED",
+		cp.MyLastReview = &gh.Review{State: map[core.ReviewEvent]string{
+			core.EventApprove: "APPROVED", core.EventRequestChanges: "CHANGES_REQUESTED", core.EventComment: "COMMENTED",
 		}[msg.event]}
 		if err := platform.Copy(m.core.SlackLine(cp, false)); err == nil {
 			note += " · slack line yanked"
@@ -2105,8 +2105,8 @@ func (m *Model) loadRuns() {
 	m.runs = m.core.Runs()
 	m.running = 0
 	for _, runs := range m.runs {
-		for _, r := range store.Current(runs) {
-			if r.Status == "running" {
+		for _, r := range core.Current(runs) {
+			if r.Status == core.ReviewRunning {
 				m.running++
 			}
 		}
@@ -2122,18 +2122,18 @@ func (m *Model) loadRuns() {
 // targetRun is the review an agent action applies to: the agent whose
 // section the cursor is in on the AI review tab, else the main reviewer's,
 // else whichever agent has reviewed the PR.
-func (m *Model) targetRun(it inbox.Item) *store.Run {
+func (m *Model) targetRun(it inbox.Item) *core.Review {
 	runs := m.runs[it.PR.Key()]
 	if d := m.details[it.PR.Key()]; d != nil && d.tab == tabReview && m.focus == fDetail {
 		v := &d.navs[tabReview]
 		if rows := d.rows[tabReview]; v.cur < len(rows) && rows[v.cur].agent != "" {
-			return store.Latest(runs, rows[v.cur].agent)
+			return core.Latest(runs, rows[v.cur].agent)
 		}
 	}
-	if r := store.Latest(runs, m.cfg.Agent.Main()); r != nil {
+	if r := core.Latest(runs, m.cfg.Agent.Main()); r != nil {
 		return r
 	}
-	if cur := store.Current(runs); len(cur) > 0 {
+	if cur := core.Current(runs); len(cur) > 0 {
 		return cur[0]
 	}
 	return nil

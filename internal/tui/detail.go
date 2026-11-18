@@ -15,7 +15,6 @@ import (
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/platform"
-	"github.com/tmstorm/prowl/internal/store"
 )
 
 const (
@@ -88,20 +87,20 @@ type detail struct {
 	diffs       map[bool][]diffLine
 	diffLoading bool
 	diffErr     error
-	pending     []gh.DraftComment
+	pending     []core.DraftComment
 	viewed      map[string]string // path -> VIEWED / UNVIEWED / DISMISSED
 	hl          map[bool]*highlighter
 
 	folds   map[string]bool // explicit fold state per block
 	foldAll *bool           // zR / zM override
 
-	runs        []*store.Run   // every agent's review runs, newest first
-	summary     *store.Summary // the AI summary, if one was written
+	runs        []*core.Review // every agent's review runs, newest first
+	summary     *core.Summary  // the AI summary, if one was written
 	summarizing bool           // a summary is being written
 	flat        []findingRef   // the current reviews' findings, as rows refer to them
 	reviewSig   string
-	logs        map[string][]store.LogEntry // per agent: your instructions and its replies (local only)
-	ciLogs      map[int64]ciLog             // failed Actions jobs' logs, as gl loaded them
+	logs        map[string][]core.Note // per agent: your instructions and its replies (local only)
+	ciLogs      map[int64]ciLog        // failed Actions jobs' logs, as gl loaded them
 
 	navs    [3]nav
 	rows    [3][]brow
@@ -148,7 +147,7 @@ func (d *detail) setItem(it inbox.Item) {
 
 // setRuns updates the review runs, rebuilding rows only when something
 // visible in them changed (the live status line renders separately).
-func (d *detail) setRuns(runs []*store.Run) {
+func (d *detail) setRuns(runs []*core.Review) {
 	var sig strings.Builder
 	for _, r := range runs {
 		fmt.Fprintf(&sig, "#%d|%s|%s|%s|%d|%s", r.ID, r.Status, r.SessionID, r.Error, r.FinishedAt.Unix(), r.Summary)
@@ -163,14 +162,14 @@ func (d *detail) setRuns(runs []*store.Run) {
 	}
 }
 
-func (d *detail) setSummary(sum *store.Summary, running bool) {
+func (d *detail) setSummary(sum *core.Summary, running bool) {
 	if sum != d.summary || running != d.summarizing {
 		d.summary, d.summarizing = sum, running
 		d.dirty = true
 	}
 }
 
-func (d *detail) setLogs(logs map[string][]store.LogEntry) {
+func (d *detail) setLogs(logs map[string][]core.Note) {
 	changed := len(logs) != len(d.logs)
 	for a, l := range logs {
 		if len(l) != len(d.logs[a]) {
@@ -185,11 +184,11 @@ func (d *detail) setLogs(logs map[string][]store.LogEntry) {
 
 // current is each agent's latest run, in reviewer order, then any other
 // agent that has reviewed the PR.
-func (d *detail) current() []*store.Run {
-	cur := store.Current(d.runs)
-	var out []*store.Run
+func (d *detail) current() []*core.Review {
+	cur := core.Current(d.runs)
+	var out []*core.Review
 	for _, name := range reviewerOrder {
-		if r := store.Latest(cur, name); r != nil {
+		if r := core.Latest(cur, name); r != nil {
 			out = append(out, r)
 		}
 	}
@@ -943,7 +942,7 @@ func (m *Model) detailKey(d *detail, key string) tea.Cmd {
 			}
 			for _, r := range cur {
 				for i := range r.Findings {
-					r.Findings[i].Excluded = key == "m" && r.Findings[i].Severity != "must-fix"
+					r.Findings[i].Excluded = key == "m" && r.Findings[i].Severity != core.MustFix
 				}
 			}
 			if err := m.core.MustFixOnly(d.item.PR.Key(), key == "m"); err != nil {
@@ -1374,12 +1373,12 @@ func modelName(id string) string {
 
 // firstReviewRunning is true while every agent is on its first draft, so the
 // tab has nothing to show yet.
-func firstReviewRunning(cur []*store.Run) bool {
+func firstReviewRunning(cur []*core.Review) bool {
 	if len(cur) == 0 {
 		return false
 	}
 	for _, r := range cur {
-		if r.Status != "running" || r.Summary != "" {
+		if r.Status != core.ReviewRunning || r.Summary != "" {
 			return false
 		}
 	}

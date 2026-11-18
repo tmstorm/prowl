@@ -475,7 +475,7 @@ func TestAgentDraftAndSubmit(t *testing.T) {
 	c, _ := fake.Client()
 	co := core.New(config.Default(), c, st)
 	refresh(t, co)
-	co.SetPending("o/api#7", []gh.DraftComment{{Path: "b.go", Line: 3, Side: "RIGHT", Body: "mine"}})
+	co.SetPending("o/api#7", []core.DraftComment{{Path: "b.go", Line: 3, Side: "RIGHT", Body: "mine"}})
 
 	d, err := co.AgentDraft("o/api#7")
 	if err != nil {
@@ -550,7 +550,7 @@ func TestApproveWithPending(t *testing.T) {
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
 	co, st := newCore(t, fake)
 	refresh(t, co)
-	co.SetPending("o/api#7", []gh.DraftComment{{Path: "b.go", Line: 3, Side: "RIGHT", Body: "nice"}})
+	co.SetPending("o/api#7", []core.DraftComment{{Path: "b.go", Line: 3, Side: "RIGHT", Body: "nice"}})
 	d := co.Draft("o/api#7", "APPROVE")
 	if len(d.Comments) != 1 {
 		t.Fatalf("draft: %+v", d)
@@ -1069,10 +1069,10 @@ func TestPendingCommitAndFailedRevise(t *testing.T) {
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
 	co, st := newCore(t, fake)
 	refresh(t, co)
-	co.SetPending("o/api#7", []gh.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "one"}})
+	co.SetPending("o/api#7", []core.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "one"}})
 	fake.PRs[0].HeadRefOid = "def5678"
 	refresh(t, co)
-	co.SetPending("o/api#7", []gh.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "one, edited"}, {Path: "a.go", Line: 9, Side: "RIGHT", Body: "two"}})
+	co.SetPending("o/api#7", []core.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "one, edited"}, {Path: "a.go", Line: 9, Side: "RIGHT", Body: "two"}})
 	d := co.Draft("o/api#7", "APPROVE")
 	if d.Comments[0].Commit != "abc1234" || d.Comments[1].Commit != "def5678" {
 		t.Fatalf("commits: %q %q", d.Comments[0].Commit, d.Comments[1].Commit)
@@ -1108,10 +1108,10 @@ func TestSplitReviewRetryAndNoEmptyReview(t *testing.T) {
 		RejectReview: map[int]bool{2: true}}
 	co, _ := newCore(t, fake)
 	refresh(t, co)
-	co.SetPending("o/api#7", []gh.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "on A"}})
+	co.SetPending("o/api#7", []core.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "on A"}})
 	fake.PRs[0].HeadRefOid = "bbb2222"
 	refresh(t, co)
-	co.SetPending("o/api#7", append(co.Pending("o/api#7"), gh.DraftComment{Path: "a.go", Line: 5, Side: "RIGHT", Body: "on B"}))
+	co.SetPending("o/api#7", append(co.Pending("o/api#7"), core.DraftComment{Path: "a.go", Line: 5, Side: "RIGHT", Body: "on B"}))
 	fake.PRs[0].HeadRefOid = "ccc3333"
 	refresh(t, co)
 
@@ -1194,7 +1194,7 @@ func TestCloseAndDraft(t *testing.T) {
 	if !fake.Wrote("mutation addComment") || !fake.Wrote("mutation closePullRequest") || len(fake.Reviews()) != 0 {
 		t.Fatalf("close: comment and close, no review; reviews %v", fake.Reviews())
 	}
-	d := core.Draft{Event: "DRAFT", Body: "Not ready yet.", Comments: []gh.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "missing test"}}}
+	d := core.Draft{Event: "DRAFT", Body: "Not ready yet.", Comments: []core.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "missing test"}}}
 	if _, err := co.Submit("o/api#8", d); err != nil {
 		t.Fatal(err)
 	}
@@ -1213,7 +1213,7 @@ func TestNoteAndRequestReviews(t *testing.T) {
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 7, "fix: crash", "alice"), "me")}}
 	co, _ := newCore(t, fake)
 	refresh(t, co)
-	co.SetPending("o/api#7", []gh.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "later"}})
+	co.SetPending("o/api#7", []core.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "later"}})
 	if _, err := co.Submit("o/api#7", core.Draft{Event: "NOTE", Body: "Is this still needed?"}); err != nil {
 		t.Fatal(err)
 	}

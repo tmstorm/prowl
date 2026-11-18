@@ -262,8 +262,8 @@ func (co *Core) reaction(cfg config.Config, it inbox.Item, me string, since time
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	key := it.PR.Key()
-	if len(co.pending[key]) > 0 || slices.ContainsFunc(co.runs[key], func(r *store.Run) bool {
-		return r.StartedAt.After(since) && (r.Status == "running" || r.Status == "done")
+	if len(co.pending[key]) > 0 || slices.ContainsFunc(co.runs[key], func(r *Review) bool {
+		return r.StartedAt.After(since) && (r.Status == ReviewRunning || r.Status == ReviewDone)
 	}) {
 		return emoji.Reviewing
 	}
@@ -319,14 +319,14 @@ func (co *Core) setReaction(sl *slack.Client, s store.SlackShare, want string) e
 // afterReview tells the newest Slack share of the PR about the review you
 // just posted, as slack_after_review says, and says what it did: "" when
 // the PR has no share or Slack isn't connected.
-func (co *Core) afterReview(key, event string) (string, error) {
+func (co *Core) afterReview(key string, event ReviewEvent) (string, error) {
 	co.mu.Lock()
 	sl, cfg := co.slack, co.cfg
 	loggedOut := co.authErr("slack")
 	s, shared := co.slackShares[key]
 	it, _ := co.item(key)
 	co.mu.Unlock()
-	state := map[string]string{"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED"}[event]
+	state := map[ReviewEvent]string{EventApprove: "APPROVED", EventRequestChanges: "CHANGES_REQUESTED", EventComment: "COMMENTED"}[event]
 	if sl == nil || !shared || state == "" || cfg.SlackAfterReview == "off" {
 		return "", nil
 	}

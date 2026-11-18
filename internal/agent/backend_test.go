@@ -8,7 +8,6 @@ import (
 
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
-	"github.com/tmstorm/prowl/internal/store"
 )
 
 const review = `{"summary":"ok","verdict":"comment","findings":[{"severity":"nit","path":"a.go","line":3,"title":"t","body":"b","rule":""}],"note":"I could not check the repo settings.","guidelines_read":["AGENTS.md"],"skills_used":[]}`
@@ -192,27 +191,6 @@ func TestCodexModels(t *testing.T) {
 	fakeBin(t, "codex", `exit 1`)
 	if got := backend(t, "codex").Models(); len(got) != 1 || got[0] != "" {
 		t.Fatalf("a failing catalog should leave only the default, got %q", got)
-	}
-}
-
-// Posting combines agents' findings: excluded ones out, a problem two agents
-// raised kept once at the higher severity, one agent's findings never merged.
-func TestCombine(t *testing.T) {
-	runs := []*store.Run{
-		{Status: "done", Findings: []store.Finding{{Severity: "should-fix", Path: "a.go", Line: 11, Title: "x"}, {Path: "c.go", Line: 1, Excluded: true}}},
-		{Status: "done", Findings: []store.Finding{{Severity: "must-fix", Path: "a.go", Line: 9, Title: "y"}, {Severity: "nit", Path: "b.go", Line: 1}}},
-		{Status: "running", Findings: []store.Finding{{Path: "z.go", Line: 1}}},
-	}
-	got := agent.Combine(runs, false)
-	if len(got) != 2 || got[0].Path != "a.go" || got[0].Severity != "must-fix" || got[1].Path != "b.go" {
-		t.Fatalf("combined = %+v", got)
-	}
-	if len(agent.Combine(runs, true)) != 3 {
-		t.Fatal("all includes excluded findings")
-	}
-	one := []*store.Run{{Status: "done", Findings: []store.Finding{{Path: "a.go", Line: 10}, {Path: "a.go", Line: 12}}}}
-	if len(agent.Combine(one, false)) != 2 {
-		t.Fatal("two findings from one agent are two findings")
 	}
 }
 

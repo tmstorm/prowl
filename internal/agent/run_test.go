@@ -46,7 +46,7 @@ func TestRunReview(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := store.Latest(mustRuns(t, st), "claude:adversarial")
+	run := latestRun(t, st, "claude:adversarial")
 	if run == nil || run.Status != "done" || run.Model != "claude-test" || len(run.Findings) != 1 || run.SessionID != "s1" {
 		t.Fatalf("stored run: %+v", run)
 	}
@@ -163,7 +163,7 @@ func TestSeverityToggles(t *testing.T) {
 	if err := agent.Run(cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
-	if run := store.Latest(mustRuns(t, st), "claude"); run == nil || len(run.Findings) != 0 {
+	if run := latestRun(t, st, "claude"); run == nil || len(run.Findings) != 0 {
 		t.Fatalf("the nit should be dropped: %+v", run)
 	}
 	if args := read(filepath.Join(bin, "args")); !strings.Contains(args, `"enum": ["must-fix","should-fix"]`) {
@@ -193,13 +193,19 @@ func TestRunToolOptIn(t *testing.T) {
 	}
 }
 
-func mustRuns(t *testing.T, st *store.Store) []*store.Run {
+// latestRun is reviewer's newest run on o/api#7, or nil.
+func latestRun(t *testing.T, st *store.Store, reviewer string) *store.Run {
 	t.Helper()
 	runs, err := st.Runs("o/api#7")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return runs
+	for _, r := range runs {
+		if r.Reviewer() == reviewer {
+			return r
+		}
+	}
+	return nil
 }
 
 // A thread you are in where the author answered last is shown in full with
@@ -241,7 +247,7 @@ echo '{"type":"result","session_id":"s1","structured_output":`+answer+`}'
 			t.Errorf("the prompt is missing %q", want)
 		}
 	}
-	run := store.Latest(mustRuns(t, st), "claude")
+	run := latestRun(t, st, "claude")
 	if run == nil || len(run.Replies) != 1 {
 		t.Fatalf("replies: %+v", run)
 	}
@@ -266,7 +272,7 @@ echo '{"type":"result","session_id":"s1","structured_output":`+answer+`}'
 	if !strings.Contains(read(filepath.Join(bin, "prompts")), "whether or not the thread is waiting on the reader") {
 		t.Error("the sync doesn't say a reply can go to any listed thread")
 	}
-	run = store.Latest(mustRuns(t, st), "claude")
+	run = latestRun(t, st, "claude")
 	if len(run.Replies) != 2 {
 		t.Fatalf("replies after the sync: %+v", run.Replies)
 	}
@@ -308,7 +314,7 @@ echo '{"type":"result","session_id":"s1","structured_output":`+answer+`}'
 			t.Errorf("the prompt is missing %q", want)
 		}
 	}
-	run := store.Latest(mustRuns(t, st), "claude")
+	run := latestRun(t, st, "claude")
 	if run == nil || len(run.Points) != 2 || run.Points[0].Verdict != "open" || run.Points[1].Why != "a_test.go covers it." {
 		t.Fatalf("points: %+v", run)
 	}
@@ -383,7 +389,7 @@ func TestLaunchFailure(t *testing.T) {
 	if err := agent.Launch(st, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"}); err == nil {
 		t.Fatal("launch should fail when the job can't be written")
 	}
-	if run := store.Latest(mustRuns(t, st), "claude"); run == nil || run.Status != "failed" {
+	if run := latestRun(t, st, "claude"); run == nil || run.Status != "failed" {
 		t.Fatalf("run: %+v", run)
 	}
 }
@@ -400,7 +406,7 @@ git clone --quiet "$o" "${4%.cloning-*}"
 	if err := agent.Run(config.Default(), st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude"}); err != nil {
 		t.Fatal(err)
 	}
-	if run := store.Latest(mustRuns(t, st), "claude"); run == nil || run.Status != "done" {
+	if run := latestRun(t, st, "claude"); run == nil || run.Status != "done" {
 		t.Fatalf("run: %+v", run)
 	}
 }

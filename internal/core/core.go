@@ -41,15 +41,15 @@ type Core struct {
 	inbox       Inbox
 	peek        map[string]bool  // repos (owner/name) whose open PRs are fetched this session
 	opened      map[string]prRef // PRs opened by link this session, kept through syncs
-	runs        map[string][]*store.Run
-	pending     map[string][]gh.DraftComment // your inline comments, by PR, until the next review
-	drafted     map[string]store.Review      // agent drafts on their way out, as prowl wrote them
-	unsent      map[string]Draft             // reviews that failed to post, by PR, until reopened
-	shared      map[string]gh.Share          // PRs shared in Slack, as of the last sync
-	reactions   map[string]string            // Slack reactions on your PRs, as of the last sync
-	slackLinks  map[string]string            // the Slack message that shared each PR, as of the last sync
-	slackShares map[string]store.SlackShare  // each shared PR's newest share by someone else
-	candidates  map[string][]gh.Candidate    // who can review, by repo, for the session
+	runs        map[string][]*Review
+	pending     map[string][]DraftComment   // your inline comments, by PR, until the next review
+	drafted     map[string]store.Review     // agent drafts on their way out, as prowl wrote them
+	unsent      map[string]Draft            // reviews that failed to post, by PR, until reopened
+	shared      map[string]gh.Share         // PRs shared in Slack, as of the last sync
+	reactions   map[string]string           // Slack reactions on your PRs, as of the last sync
+	slackLinks  map[string]string           // the Slack message that shared each PR, as of the last sync
+	slackShares map[string]store.SlackShare // each shared PR's newest share by someone else
+	candidates  map[string][]Candidate      // who can review, by repo, for the session
 
 	slack      *slack.Client     // nil when you aren't signed in to Slack
 	slackErr   error             // why the last sync couldn't read Slack
@@ -620,10 +620,18 @@ func (co *Core) RequestReviews(key string, names []string) error {
 	return nil
 }
 
+// Candidate is someone who can be asked to review: a login, or org/team for
+// a team.
+type Candidate struct {
+	Login string
+	Name  string
+	Team  bool
+}
+
 // ReviewCandidates lists who can be asked to review the PR: people who can
 // be assigned in its repo, then its org's teams. It asks GitHub once per repo
 // per session.
-func (co *Core) ReviewCandidates(key string) ([]gh.Candidate, error) {
+func (co *Core) ReviewCandidates(key string) ([]Candidate, error) {
 	repo, _, err := parseKey(key)
 	if err != nil {
 		return nil, fmt.Errorf("reviewers: %w", err)
@@ -634,13 +642,14 @@ func (co *Core) ReviewCandidates(key string) ([]gh.Candidate, error) {
 	if ok {
 		return cached, nil
 	}
-	out, err := co.gh.ReviewCandidates(repo)
+	found, err := co.gh.ReviewCandidates(repo)
 	if err != nil {
 		return nil, err
 	}
+	out := candidates(found)
 	co.mu.Lock()
 	if co.candidates == nil {
-		co.candidates = map[string][]gh.Candidate{}
+		co.candidates = map[string][]Candidate{}
 	}
 	co.candidates[repo] = out
 	co.mu.Unlock()
@@ -649,12 +658,21 @@ func (co *Core) ReviewCandidates(key string) ([]gh.Candidate, error) {
 
 // SuggestedReviewers are the people GitHub suggests for the PR, from the code
 // owners and recent authors of the files it changes.
-func (co *Core) SuggestedReviewers(key string) ([]gh.Candidate, error) {
+func (co *Core) SuggestedReviewers(key string) ([]Candidate, error) {
 	repo, n, err := parseKey(key)
 	if err != nil {
 		return nil, fmt.Errorf("suggested reviewers: %w", err)
 	}
-	return co.gh.SuggestedReviewers(repo, n)
+	found, err := co.gh.SuggestedReviewers(repo, n)
+	return candidates(found), err
+}
+
+func candidates(found []gh.Candidate) []Candidate {
+	var out []Candidate
+	for _, c := range found {
+		out = append(out, Candidate(c))
+	}
+	return out
 }
 
 // Claim requests you as a reviewer on GitHub, for a PR shared without

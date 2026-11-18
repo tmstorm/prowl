@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 )
 
@@ -270,7 +271,7 @@ func (d *detail) setPending(sel []diffLine, body string) {
 		}
 		return
 	}
-	c := gh.DraftComment{Path: last.path, Line: line, Side: side, Body: body}
+	c := core.DraftComment{Path: last.path, Line: line, Side: side, Body: body}
 	if len(sel) > 1 {
 		c.StartLine, c.StartSide = sel[0].anchor()
 	}

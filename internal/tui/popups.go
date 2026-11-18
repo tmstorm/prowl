@@ -880,7 +880,7 @@ type reviewerRow struct {
 
 type candidatesMsg struct {
 	item                  inbox.Item
-	candidates, suggested []gh.Candidate
+	candidates, suggested []core.Candidate
 	err                   error
 }
 
@@ -902,7 +902,7 @@ func (m *Model) askForReviews(it inbox.Item) tea.Cmd {
 // who reviewed (not you, the author or a bot), then the people GitHub
 // suggests, then everyone else who can review. Someone who reviewed and
 // isn't asked now starts checked, to ask them again.
-func newReviewerPicker(m *Model, it inbox.Item, candidates, suggested []gh.Candidate) *reviewerPicker {
+func newReviewerPicker(m *Model, it inbox.Item, candidates, suggested []core.Candidate) *reviewerPicker {
 	p := &reviewerPicker{item: it}
 	seen := map[string]bool{}
 	add := func(r reviewerRow) {

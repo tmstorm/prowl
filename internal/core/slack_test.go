@@ -179,7 +179,7 @@ func TestSlackReactions(t *testing.T) {
 	if calls := sl.took(); len(calls) != 0 {
 		t.Fatalf("before any review: %q", calls)
 	}
-	co.SetPending("o/api#7", []gh.DraftComment{{Path: "a.go", Line: 1, Body: "why?"}})
+	co.SetPending("o/api#7", []core.DraftComment{{Path: "a.go", Line: 1, Body: "why?"}})
 	refresh(t, co)
 	if calls := sl.took(); fmt.Sprint(calls) != fmt.Sprint([]string{"reactions.add C1 " + ts + " eyes"}) {
 		t.Fatalf("reviewing: %q", calls)
