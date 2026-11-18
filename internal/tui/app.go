@@ -322,18 +322,18 @@ func (m *Model) applySync(changes []inbox.Item, err error) tea.Cmd {
 	if m.synced && !m.core.WatchRunning() {
 		core.Notify(changes, m.cfg.NotifyTimeout.Duration)
 	}
-	if !m.synced && m.core.OfferService() {
+	if !m.synced && m.core.FirstTime("service") && !m.core.Service() {
 		m.tip = "tip: <leader>, → Background notifications tells you about PRs while prowl is closed"
 	}
-	if !m.synced && m.core.AskNerdFont() {
+	if !m.synced && !m.cfg.NerdFont && m.core.FirstTime("nerd font") {
 		m.askIcons()
 	}
 	var offerNames tea.Cmd
 	switch {
 	case m.synced:
-	case m.core.OfferChannels():
+	case m.core.SlackConnected() && len(m.cfg.SlackChannels) == 0 && m.core.FirstTime("slack channels"):
 		m.tip = "Slack: pick the channels whose PR links you want in the inbox: <leader>, → Slack channels"
-	case m.core.OfferNames():
+	case m.core.SlackConnected() && !m.core.Shown("slack names"):
 		offerNames = m.matchSlackNames(namesProposedMsg{tip: true})
 	}
 	m.synced = true
