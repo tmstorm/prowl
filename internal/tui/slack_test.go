@@ -301,3 +301,19 @@ func TestSlackLoggedOut(t *testing.T) {
 		t.Fatalf("no logged-out Slack row:\n%s", a.screen())
 	}
 }
+
+// A wrong Slack client ID can be changed in the options, and one that isn't
+// a client ID is refused.
+func TestSlackClientIDOption(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, func(c *config.Config) { c.SlackClientID = "111.222" })
+	a.keys("space", ",", "G", "k", "k", "k", "k", "k", "k", "k", "k", "k")
+	a.want("slack_client_id", "111.222")
+	a.keys("enter", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "abc", "enter")
+	a.want(`"abc" isn't a client ID`)
+	a.keys("enter", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "backspace", "123.456", "enter")
+	a.want("saved")
+	b, _ := os.ReadFile(config.Path())
+	if !strings.Contains(string(b), `slack_client_id = "123.456"`) {
+		t.Fatalf("not saved:\n%s", b)
+	}
+}

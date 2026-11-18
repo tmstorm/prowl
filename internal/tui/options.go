@@ -226,6 +226,16 @@ var options = []option{
 	{section: "Editor", title: "Editor", key: "editor", empty: "$VISUAL, $EDITOR or vi", help: "For reviews and long text. Empty uses $VISUAL, then $EDITOR, then vi (notepad on Windows).", kind: optText,
 		get: func(c *config.Config) string { return c.Editor },
 		set: func(c *config.Config, v string) error { c.Editor = strings.TrimSpace(v); return nil }},
+	{section: "Slack", title: "Client ID", key: "slack_client_id", empty: "none: prowl slack shows how to make the app",
+		help: "Your team's prowl Slack app (Basic Information, App Credentials). Sign in through it from <leader>l.", kind: optText,
+		get: func(c *config.Config) string { return c.SlackClientID },
+		set: func(c *config.Config, v string) error {
+			if v = strings.TrimSpace(v); v != "" && !config.IsSlackClientID(v) {
+				return fmt.Errorf("%q isn't a client ID: it's two numbers joined by a dot", v)
+			}
+			c.SlackClientID = v
+			return nil
+		}},
 	{section: "Slack", title: "Channels", key: "slack_channels", help: "The channels and DMs whose PR links show in the inbox as shared.", kind: optEditor,
 		open: func(m *Model, p *optionsPopup, _ option) tea.Cmd { return m.openChannels(p) },
 		summary: func(c *config.Config) string {

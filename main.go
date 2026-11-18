@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -752,8 +751,6 @@ func uninstall(cfg config.Config, st *store.Store, args []string) error {
 	return nil
 }
 
-var clientID = regexp.MustCompile(`^\d+\.\d+$`)
-
 // withSlack has co read the PR links shared in Slack, when you're signed in.
 func withSlack(co *core.Core) *core.Core {
 	_ = co.LoadSlack()
@@ -789,7 +786,7 @@ func connectSlack(ctx context.Context, co *core.Core, args []string) error {
 		switch {
 		case strings.HasPrefix(answer, "xoxp-"):
 			token = answer
-		case !clientID.MatchString(answer):
+		case !config.IsSlackClientID(answer):
 			return fmt.Errorf("%q isn't a client ID: it's two numbers joined by a dot, under Basic Information, App Credentials", answer)
 		default:
 			if _, err := co.UpdateConfig(func(c *config.Config) error { c.SlackClientID = answer; return nil }); err != nil {
@@ -798,6 +795,7 @@ func connectSlack(ctx context.Context, co *core.Core, args []string) error {
 		}
 	}
 	who, err := co.SignInSlack(ctx, token, func(url string) error {
+		fmt.Printf("Signing in through the Slack app %s. If Slack says the app is wrong, change it under Slack, Client ID in prowl's options.\n", co.Config().SlackClientID)
 		fmt.Println("Opening Slack in your browser to sign in. If it doesn't open, go to:\n" + url)
 		_ = platform.Open(url)
 		return nil

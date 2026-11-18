@@ -50,7 +50,10 @@ func (co *Core) SignInSlack(ctx context.Context, token string, open func(url str
 		login, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		var err error
-		if t, err = slack.New(slack.Token{}).Login(login, co.Config().SlackClientID, open); err != nil {
+		clientID := co.Config().SlackClientID
+		if t, err = slack.New(slack.Token{}).Login(login, clientID, open); errors.Is(err, context.DeadlineExceeded) {
+			return "", fmt.Errorf("no sign-in came back from the Slack app %s in 5 minutes: %w", clientID, err)
+		} else if err != nil {
 			return "", err
 		}
 	}

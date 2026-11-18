@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -187,6 +188,12 @@ func (a *Agent) SetModel(name, model string) {
 	}
 	a.Models[name] = model
 }
+
+var slackClientID = regexp.MustCompile(`^\d+\.\d+$`)
+
+// IsSlackClientID is whether s looks like a Slack app's client ID: two
+// numbers joined by a dot, under Basic Information, App Credentials.
+func IsSlackClientID(s string) bool { return slackClientID.MatchString(s) }
 
 // DefaultTypeOrder puts fixes first and chores last. "other" stands for any
 // title that isn't a conventional commit and any type not in the list.
