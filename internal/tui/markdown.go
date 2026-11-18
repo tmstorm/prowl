@@ -16,8 +16,10 @@ var chromaThemes = map[string]string{
 }
 
 // md is a glamour renderer per width, and what each rendered, for one
-// theme: the PR pane renders at several widths at once, so one renderer
-// for the last width would start over on every block.
+// theme and terminal size: the PR pane renders at several widths at once,
+// so one renderer for the last width would start over on every block. A
+// resize starts over (md.r = nil), so a drag across sizes doesn't keep a
+// renderer for each.
 var md struct {
 	theme string
 	r     map[int]*glamour.TermRenderer
