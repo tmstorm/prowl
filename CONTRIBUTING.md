@@ -25,7 +25,7 @@ Every pull request gets a `ci` check, which `main` requires; the tests behind it
 - Match the surrounding code. No new file or package when the change fits in an existing one, and no file so big it is hard to read.
 - `internal/core` holds the behavior and has no terminal code. The TUI calls it; it never reaches past it.
 - Nothing specific to one user, team or organization goes in the code or the defaults. That belongs in the user's config.
-- The owl is prowl's mascot. Its drawings in `internal/tui/name.go`, their eyes and colors, and the logo in `docs/images/owl.svg` stay as they are. `TestOwlDrawing` and `TestOwlLogo` pin them; change them only when the maintainer asks.
+- The owl is prowl's mascot. Its drawings in `internal/tui/name.go`, their eyes and colors, and the logo in `docs/images/owl.svg` (with `owl.png`, the same logo for places that don't take SVG) stay as they are. `TestOwlDrawing` and `TestOwlLogo` pin them; change them only when the maintainer asks.
 
 ## Code
 
