@@ -2,6 +2,10 @@
 # release-please cuts a release. release-please writes the changelog.
 version: 2
 project_name: prowl
+before:
+  hooks:
+    # The man pages, from the docs built into this version.
+    - go run -ldflags "-X github.com/tmstorm/prowl/internal/core.Version={{ .Version }}" . man manpages
 builds:
   - env: [CGO_ENABLED=0]
     goos: [linux, darwin, windows]
@@ -13,6 +17,11 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
+      - manpages/*/*
 checksum:
   name_template: checksums.txt
 signs:
@@ -44,6 +53,8 @@ aurs:
     package: |-
       install -Dm755 ./prowl "${pkgdir}/usr/bin/prowl"
       install -Dm644 ./LICENSE "${pkgdir}/usr/share/licenses/prowl-bin/LICENSE"
+      install -Dm644 ./manpages/man1/prowl.1 "${pkgdir}/usr/share/man/man1/prowl.1"
+      install -Dm644 ./manpages/man5/prowl-config.5 "${pkgdir}/usr/share/man/man5/prowl-config.5"
 changelog:
   disable: true
 release:

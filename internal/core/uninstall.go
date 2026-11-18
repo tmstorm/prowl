@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 
+	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/platform"
@@ -18,6 +19,7 @@ type Footprint struct {
 	Service   bool     // prowl watch runs at login
 	Checkouts []string // your checkouts holding prowl's review worktrees or refs
 	Skills    []string // prowl-findings skills as this prowl writes them
+	Man       []string // the man pages the install script put in ManDir
 	Kept      []string // prowl-findings skills that differ, which stay
 	Binary    string   // the prowl binary, when prowl may remove it
 	Command   string   // what removes prowl when something else owns it
@@ -30,6 +32,9 @@ type Footprint struct {
 func FindFootprint(cfg config.Config, exe string, purge bool) Footprint {
 	f := Footprint{Service: platform.ServiceInstalled(), Checkouts: agent.Checkouts(cfg.ExpandedRepoRoots())}
 	f.Skills, f.Kept = skill.Found()
+	if dir := ManDir(); dir != "" {
+		f.Man = slices.DeleteFunc(docs.ManPaths(dir), func(p string) bool { return !exists(p) })
+	}
 	switch o := owner(exe); o {
 	case "":
 		f.Binary = exe
@@ -58,6 +63,11 @@ func Uninstall(f Footprint) error {
 	}
 	for _, dir := range f.Skills {
 		errs = append(errs, skill.Remove(dir))
+	}
+	for _, page := range f.Man {
+		if err := os.Remove(page); err != nil {
+			errs = append(errs, fmt.Errorf("remove %s: %w", page, err))
+		}
 	}
 	for _, dir := range f.Dirs {
 		if err := os.RemoveAll(dir); err != nil {

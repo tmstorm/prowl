@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/ghtest"
@@ -70,10 +71,14 @@ func TestUninstall(t *testing.T) {
 	}
 	exe := filepath.Join(t.TempDir(), "prowl")
 	_ = os.WriteFile(exe, []byte("prowl"), 0o755)
+	if err := docs.WriteMan(core.ManDir(), "0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	pages := docs.ManPaths(core.ManDir())
 
 	f := core.FindFootprint(co.Config(), exe, true)
 	if f.Service != (runtime.GOOS == "linux") || !slices.Equal(f.Checkouts, []string{repo}) ||
-		!slices.Equal(f.Skills, []string{skill.Dir("claude")}) || !slices.Equal(f.Kept, []string{edited}) || f.Binary != exe || f.Command != "" ||
+		!slices.Equal(f.Skills, []string{skill.Dir("claude")}) || !slices.Equal(f.Man, pages) || !slices.Equal(f.Kept, []string{edited}) || f.Binary != exe || f.Command != "" ||
 		!slices.Equal(f.Dirs, []string{config.Dir(), config.DataDir()}) || !slices.Equal(f.Images, []string{"golang:1.27", "node:22"}) {
 		t.Fatalf("footprint: %+v", f)
 	}
@@ -86,7 +91,7 @@ func TestUninstall(t *testing.T) {
 	if len(out) > 0 || strings.Count(string(list), "\n") != 1 {
 		t.Errorf("prowl's refs or worktree left in the checkout:\n%s%s", out, list)
 	}
-	for _, gone := range []string{skill.Dir("claude"), exe, config.Dir(), config.DataDir(), unit} {
+	for _, gone := range append([]string{skill.Dir("claude"), exe, config.Dir(), config.DataDir(), unit}, pages...) {
 		if _, err := os.Stat(gone); err == nil {
 			t.Errorf("%s is still there", gone)
 		}

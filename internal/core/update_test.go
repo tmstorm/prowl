@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/jedisct1/go-minisign"
 
+	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
@@ -199,6 +201,29 @@ func TestUpgrade(t *testing.T) {
 		if _, err := co.Upgrade(t.Context(), "/usr/bin/prowl"); err == nil || !strings.Contains(err.Error(), "yay -S prowl-bin") {
 			t.Errorf("a package's prowl is left to the package manager: %v", err)
 		}
+	}
+}
+
+// An update writes the man pages again with the new prowl, where the
+// install script put them, so they describe the version that runs.
+func TestUpgradeWritesMan(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no man pages")
+	}
+	running(t, "0.1.0")
+	fake := &ghtest.GitHub{}
+	co, _ := newCore(t, fake)
+	exe := installed(t)
+	if err := docs.WriteMan(core.ManDir(), "0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(t.TempDir(), "calls")
+	publish(t, fake, "v0.2.0", "#!/bin/sh\necho \"$@\" > "+calls+"\n", signer(t, 1, true), false)
+	if _, err := co.Upgrade(context.Background(), exe); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(calls); string(b) != "man "+core.ManDir()+"\n" {
+		t.Fatalf("the new prowl ran with %q", b)
 	}
 }
 

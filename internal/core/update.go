@@ -12,15 +12,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jedisct1/go-minisign"
 	"golang.org/x/mod/semver"
 
+	"github.com/tmstorm/prowl/docs"
+	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
@@ -246,7 +250,24 @@ func (co *Core) Upgrade(ctx context.Context, exe string) (string, error) {
 		return "", fmt.Errorf("update to %s: %w", r.Tag, err)
 	}
 	_ = co.st.SetInstalled(r.Tag)
+	if dir := ManDir(); dir != "" && slices.ContainsFunc(docs.ManPaths(dir), exists) {
+		_ = exec.CommandContext(ctx, exe, "man", dir).Run()
+	}
 	return r.Tag, nil
+}
+
+// ManDir is where the install script puts prowl's man pages, under the data
+// home that man finds beside ~/.local/bin, or "" on Windows, which has none.
+func ManDir() string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(config.DataDir()), "man")
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // AutoUpgrade checks for a release once a day and, with auto_update on and
