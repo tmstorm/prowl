@@ -692,15 +692,19 @@ func TestHelpCommand(t *testing.T) {
 }
 
 // K opens the docs at what the cursor is on: a PR's bucket, the PR pane's
-// tab or check, an option. esc goes back to where K was pressed.
+// AI summary hint or tab, an option. esc goes back to where K was pressed.
 func TestDocsUnderCursor(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	a.resize(160, 16)
 	a.keys("K")
 	a.want("prowl docs · The inbox", "▌ needs review")
 	a.keys("esc", "l", "K")
+	a.want("prowl docs · AI reviews", "▌AI summary")
+	a.keys("esc")
+	a.search("Reviewers")
+	a.keys("K")
 	a.want("prowl docs · Reviewing a PR", "▌Overview")
-	a.keys("esc", "space", ",", "K")
+	a.keys("esc", "h", "space", ",", "K")
 	a.want("prowl docs · Config", "▌  group_by")
 	a.keys("esc")
 	a.want("Options", "Group by")
