@@ -197,8 +197,9 @@ tar -xzf "$tmp/$archive" -C "$tmp" prowl
 mkdir -p "$dir"
 install -m 755 "$tmp/prowl" "$dir/prowl"
 ok "$("$dir/prowl" version | head -n 1) is in $dir"
-if "$dir/prowl" man "${XDG_DATA_HOME:-$HOME/.local/share}/man" 2>/dev/null; then
-	ok "man prowl and man prowl-config are installed"
+mandir=${XDG_DATA_HOME:-$HOME/.local/share}/man
+if "$dir/prowl" man "$mandir" 2>/dev/null; then
+	ok "the man pages are in $mandir"
 fi
 case ":$PATH:" in
 *":$dir:"*) ;;

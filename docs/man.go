@@ -74,7 +74,7 @@ func block(b *strings.Builder, n ast.Node, src []byte) {
 		switch n.Level {
 		case 1:
 		case 2:
-			fmt.Fprintf(b, ".SH %s\n", strings.ToUpper(inline(n, src)))
+			fmt.Fprintf(b, ".SH %s\n", roffText(strings.ToUpper(strings.ReplaceAll(string(n.Lines().Value(src)), "`", ""))))
 		default:
 			fmt.Fprintf(b, ".SS %s\n", inline(n, src))
 		}

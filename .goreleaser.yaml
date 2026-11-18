@@ -20,6 +20,7 @@ archives:
     files:
       - LICENSE*
       - README*
+      - CHANGELOG*
       - manpages/*/*
 checksum:
   name_template: checksums.txt
