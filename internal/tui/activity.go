@@ -23,8 +23,8 @@ type activity struct {
 	thread string
 }
 
-func glyphs(nerd bool) map[string]string {
-	if nerd {
+func glyphs() map[string]string {
+	if nerdIcons {
 		return map[string]string{"approve": "", "changes": "", "review": "", "comment": "",
 			"thread": "", "push": "", "force": "", "request": "", "ready": ""}
 	}
@@ -32,8 +32,8 @@ func glyphs(nerd bool) map[string]string {
 		"thread": "»", "push": "↑", "force": "↑", "request": "→", "ready": "○"}
 }
 
-func (d *detail) activities(nerd bool) []activity {
-	g := glyphs(nerd)
+func (d *detail) activities() []activity {
+	g := glyphs()
 	var out []activity
 	for _, r := range d.det.Reviews {
 		if r.State == "PENDING" {
@@ -163,7 +163,7 @@ func timeColumn(t time.Time, fresh bool) string {
 }
 
 func (d *detail) activityRows(w int) []brow {
-	acts := d.activities(nerdIcons)
+	acts := d.activities()
 	var rows []brow
 	newAbove, dividerDone := false, false
 	const authorW = 16
@@ -201,7 +201,7 @@ func (d *detail) activityRows(w int) []brow {
 		}
 		a.add(head)
 		if !folded {
-			for _, l := range renderMarkdown(ac.body, w-10, themeName) {
+			for _, l := range renderMarkdown(ac.body, w-10) {
 				a.add("          " + l)
 			}
 		}

@@ -110,7 +110,7 @@ func (p *docsPopup) lines(m *Model, page int) []string {
 	md := docLink.ReplaceAllStringFunc(p.pages[page].Markdown, func(l string) string {
 		return "[" + strings.ReplaceAll(docLink.FindStringSubmatch(l)[1], " ", "\u00a0") + "]"
 	})
-	return gutter(slices.Clone(renderMarkdown(md, p.width(m)-5, m.cfg.Theme)))
+	return gutter(slices.Clone(renderMarkdown(md, p.width(m)-5)))
 }
 
 // list is the page, or in a search its results, which start below the
@@ -162,11 +162,7 @@ func (p *docsPopup) yank(m *Model) {
 		m.fail(err.Error())
 		return
 	}
-	if len(out) == 1 {
-		m.info("copied 1 line")
-	} else {
-		m.info(fmt.Sprintf("copied %d lines", len(out)))
-	}
+	m.info("copied " + count(len(out), "line"))
 }
 
 func (p *docsPopup) forward(m *Model, msg tea.Msg) tea.Cmd {

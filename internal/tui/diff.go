@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -97,32 +96,22 @@ func parseHunk(h string) (int, int) {
 	return num(f[1]), num(f[2])
 }
 
-func renderDiffLine(l diffLine, width int, hasComment bool) string {
-	gutter := func(n int) string {
-		if n == 0 {
-			return "    "
-		}
-		return fmt.Sprintf("%4d", n)
-	}
-	mark := " "
-	if hasComment {
-		mark = sYellow.Render("◆")
-	}
+func renderDiffLine(l diffLine, width int) string {
 	text := strings.ReplaceAll(l.text, "\t", "    ")
 	var s string
 	switch l.kind {
 	case lkFile:
-		s = mark + sTitle.Render("━━ "+l.text+" "+strings.Repeat("━", max(width-len(l.text)-6, 0)))
+		s = sTitle.Render("━━ " + l.text + " " + strings.Repeat("━", max(width-len(l.text)-6, 0)))
 	case lkHunk:
-		s = mark + sBlue.Render(l.text)
+		s = sBlue.Render(l.text)
 	case lkMeta:
-		s = mark + sDim.Render(l.text)
+		s = sDim.Render(l.text)
 	case lkAdd:
-		s = mark + sDim.Render(gutter(0)+" "+gutter(l.newLine)) + " " + sGreen.Render("+"+text)
+		s = sDim.Render(lineNum(0)+" "+lineNum(l.newLine)) + " " + sGreen.Render("+"+text)
 	case lkDel:
-		s = mark + sDim.Render(gutter(l.oldLine)+" "+gutter(0)) + " " + sRed.Render("-"+text)
+		s = sDim.Render(lineNum(l.oldLine)+" "+lineNum(0)) + " " + sRed.Render("-"+text)
 	case lkCtx:
-		s = mark + sDim.Render(gutter(l.oldLine)+" "+gutter(l.newLine)) + "  " + text
+		s = sDim.Render(lineNum(l.oldLine)+" "+lineNum(l.newLine)) + "  " + text
 	}
-	return trunc(s, width)
+	return trunc(" "+s, width)
 }

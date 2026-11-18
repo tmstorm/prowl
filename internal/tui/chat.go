@@ -33,7 +33,6 @@ var agentTitle = "Claude"
 // pseudo-terminal. It keeps running while hidden.
 type chatSession struct {
 	key   string // chatKey: the PR and the agent
-	agent string
 	title string // agent name for the popup title
 	quit  string // what ends the session, e.g. /exit
 	item  inbox.Item
@@ -94,7 +93,7 @@ func (m *Model) openChat(it inbox.Item, reviewer string) tea.Cmd {
 		m.fail("start " + core.ReviewerTitle(reviewer) + ": " + err.Error())
 		return nil
 	}
-	cs.title, cs.quit, cs.agent = core.ReviewerTitle(reviewer), spec.Quit, reviewer
+	cs.title, cs.quit = core.ReviewerTitle(reviewer), spec.Quit
 	if m.chats == nil {
 		m.chats = map[string]*chatSession{}
 	}

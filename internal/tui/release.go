@@ -345,7 +345,7 @@ func noteLines(notes string, w int) []string {
 		}
 	}
 	if items == 0 {
-		return renderMarkdown(notesCommit.ReplaceAllString(notes, ""), w, themeName)
+		return renderMarkdown(notesCommit.ReplaceAllString(notes, ""), w)
 	}
 	for len(out) > 0 && out[len(out)-1] == "" {
 		out = out[:len(out)-1]

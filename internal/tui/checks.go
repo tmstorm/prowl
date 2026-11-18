@@ -90,7 +90,7 @@ func (d *detail) checksRows(a *rowAdder, w int, section func(string)) {
 		if c.Title != "" {
 			a.add("    " + sBold.Render(fit(c.Title, w-6)))
 		}
-		summary := renderMarkdown(c.Summary, w-6, themeName)
+		summary := renderMarkdown(c.Summary, w-6)
 		for i, l := range summary {
 			if i == summaryLines {
 				a.add("    " + sDim.Render(fmt.Sprintf("… %d more lines · o opens the check", len(summary)-summaryLines)))

@@ -388,7 +388,7 @@ func (m *Model) animInterval() time.Duration {
 
 // owlAsleep is true while the owl sleeps on an empty inbox.
 func (m *Model) owlAsleep() bool {
-	return m.cfg.Playful && !m.loading && len(m.rows) == 0 && m.popup == nil
+	return playful && !m.loading && len(m.rows) == 0 && m.popup == nil
 }
 
 func (m *Model) needsAnim() bool {
@@ -1832,7 +1832,7 @@ func (m *Model) searchLines() []string {
 	for i, r := range m.rows {
 		if !r.header {
 			it := m.items[r.item]
-			out[i] = it.PR.Repository.Name + " " + it.PR.Title + " " + it.PR.AuthorLogin() + " #" + itoa(it.PR.Number)
+			out[i] = it.PR.Repository.Name + " " + it.PR.Title + " " + it.PR.AuthorLogin() + " #" + strconv.Itoa(it.PR.Number)
 		}
 	}
 	return out
@@ -1903,7 +1903,7 @@ func (m *Model) askApprove(it inbox.Item) tea.Cmd {
 	d := m.core.Draft(it.PR.Key(), "APPROVE")
 	prompt := "approve " + prName(it.PR)
 	if len(d.Comments) > 0 {
-		prompt += " with " + itoa(len(d.Comments)) + " inline comment(s)"
+		prompt += " with " + count(len(d.Comments), "inline comment")
 	}
 	m.confirm = &confirm{prompt: prompt + "?", yes: func() tea.Cmd { return m.submit(it, d) }}
 	return nil
@@ -2158,5 +2158,3 @@ func openURL(u string) tea.Cmd {
 		return infoMsg("opened " + u)
 	}
 }
-
-func itoa(n int) string { return strconv.Itoa(n) }

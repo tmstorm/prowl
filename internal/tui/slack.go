@@ -262,7 +262,7 @@ func (p *namesPopup) save(m *Model) tea.Cmd {
 		return nil
 	}
 	m.dropTip("slack names")
-	m.info(fmt.Sprintf("saved %d Slack name%s", n, map[bool]string{true: "", false: "s"}[n == 1]))
+	m.info("saved " + count(n, "Slack name"))
 	return tea.Batch(m.configChanged(), p.done(m))
 }
 
@@ -458,7 +458,7 @@ func (p *channelsPopup) save(m *Model) tea.Cmd {
 		return nil
 	}
 	m.dropTip("slack channels")
-	note := fmt.Sprintf("watching %d Slack channel%s", len(ids), map[bool]string{true: "", false: "s"}[len(ids) == 1])
+	note := "watching " + count(len(ids), "Slack channel")
 	if p.dms {
 		note += " and your DMs"
 	}
@@ -478,7 +478,7 @@ func (p *channelsPopup) view(m *Model) string {
 		if n == 0 {
 			return sDim.Render("no PR links lately")
 		}
-		return sDim.Render(fmt.Sprintf("%d PR link%s in 14 days", n, map[bool]string{true: "", false: "s"}[n == 1]))
+		return sDim.Render(count(n, "PR link") + " in 14 days")
 	}
 	lines := []string{fit(" "+box(p.dms)+" "+fit(sBold.Render("Direct messages"), 28)+links(p.dmLinks), w-4)}
 	for _, i := range p.results {

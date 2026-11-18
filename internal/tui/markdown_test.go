@@ -14,7 +14,7 @@ import (
 func TestRenderMarkdownWidths(t *testing.T) {
 	src := strings.Repeat("word ", 40)
 	for _, w := range []int{30, 60, 30, 60} {
-		lines := tui.RenderMarkdown(src, w, "dracula")
+		lines := tui.RenderMarkdown(src, w)
 		widest := 0
 		for _, l := range lines {
 			widest = max(widest, lipgloss.Width(l))

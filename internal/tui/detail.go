@@ -558,7 +558,7 @@ func (d *detail) newMark(t time.Time, a *gh.Actor) string {
 
 // summaryRows is the AI summary at the top of the Overview, or a hint on how
 // to get one.
-func (d *detail) summaryRows(a *rowAdder, w int, theme string) {
+func (d *detail) summaryRows(a *rowAdder, w int) {
 	switch {
 	case d.summarizing:
 		a.add(" " + sSection.Render("AI summary") + sDim.Render(" · writing…"))
@@ -573,7 +573,7 @@ func (d *detail) summaryRows(a *rowAdder, w int, theme string) {
 		}
 		a.add(head)
 		if !folded {
-			for _, l := range renderMarkdown(d.summary.Text, w-4, theme) {
+			for _, l := range renderMarkdown(d.summary.Text, w-4) {
 				a.add("  " + l)
 			}
 		}
@@ -598,9 +598,8 @@ func (d *detail) buildOverview() []brow {
 	if d.det == nil {
 		return a.rows
 	}
-	theme := themeName
 	a.doc = "AI summary"
-	d.summaryRows(a, w, theme)
+	d.summaryRows(a, w)
 	a.doc = ""
 	if len(d.pending) > 0 {
 		a.doc = "Inline comments and suggestions"
@@ -611,7 +610,7 @@ func (d *detail) buildOverview() []brow {
 				loc = fmt.Sprintf("%s:%d-%d", p.Path, p.StartLine, p.Line)
 			}
 			a.add("  " + sYellow.Render("◆ "+loc))
-			for _, l := range renderMarkdown(p.Body, w-4, theme) {
+			for _, l := range renderMarkdown(p.Body, w-4) {
 				a.add("    " + l)
 			}
 		}
@@ -628,7 +627,7 @@ func (d *detail) buildOverview() []brow {
 	}
 	a.add(" " + foldGlyph(descFolded) + sSection.Render(title))
 	if !descFolded {
-		body := renderMarkdown(d.det.Body, w-2, theme)
+		body := renderMarkdown(d.det.Body, w-2)
 		if len(body) == 0 {
 			a.add(sDim.Render("  (no description)"))
 		}
@@ -771,7 +770,7 @@ func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
 			newest = m
 		}
 	}
-	head := ind + foldGlyph(f) + loc + state + sDim.Render(fmt.Sprintf(" · %d comment(s)", len(t.Comments.Nodes))) + newest
+	head := ind + foldGlyph(f) + loc + state + sDim.Render(" · "+count(len(t.Comments.Nodes), "comment")) + newest
 	if r, _ := d.draftReply(t.ID); r != nil && !r.Excluded {
 		head += sYellow.Render(" · ↩ draft reply")
 	}
@@ -796,12 +795,12 @@ func (d *detail) threadRows(t *gh.Thread, w int, withCode bool) []brow {
 			code = code[len(code)-4:]
 		}
 		for _, l := range code {
-			a.add(inner + renderDiffLine(l, cw, false))
+			a.add(inner + renderDiffLine(l, cw))
 		}
 	}
 	for _, c := range t.Comments.Nodes {
 		a.add(inner + sBold.Render(author(c.Author)) + sDim.Render(" "+agoText(c.CreatedAt)) + d.newMark(c.CreatedAt, c.Author))
-		for _, l := range renderMarkdown(c.Body, cw-2, themeName) {
+		for _, l := range renderMarkdown(c.Body, cw-2) {
 			a.add(inner + "  " + l)
 		}
 	}
@@ -1039,7 +1038,7 @@ func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
 		}
 		if run.Summary != "" {
 			a.add("")
-			for _, l := range renderMarkdown(run.Summary, d.w-4, themeName) {
+			for _, l := range renderMarkdown(run.Summary, d.w-4) {
 				a.add("  " + l)
 			}
 		}
@@ -1051,7 +1050,7 @@ func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
 				what, key = "Suggests making this PR a draft", leader+"D"
 			}
 			a.add("  " + sSection.Render(what) + sDim.Render(" · "+key+", or event: "+run.Action+" in "+leader+"p"))
-			for _, l := range renderMarkdown(run.ActionReason, d.w-6, themeName) {
+			for _, l := range renderMarkdown(run.ActionReason, d.w-6) {
 				a.add("    " + l)
 			}
 			a.doc = ""
@@ -1107,7 +1106,7 @@ func (d *detail) agentSection(run *store.Run, cur []*store.Run) []brow {
 				loc += sDim.Render(" · ") + sGreen.Render("also found by "+also)
 			}
 			addF("      "+loc, k)
-			for _, l := range renderMarkdown(f.Body, d.w-8, themeName) {
+			for _, l := range renderMarkdown(f.Body, d.w-8) {
 				if f.Excluded {
 					l = sDim.Render(ansi.Strip(l))
 				}
@@ -1535,11 +1534,7 @@ func (m *Model) yank(d *detail) {
 		m.fail(err.Error())
 		return
 	}
-	if n == 1 {
-		m.info("copied 1 line")
-	} else {
-		m.info(fmt.Sprintf("copied %d lines", n))
-	}
+	m.info("copied " + count(n, "line"))
 }
 
 // yankText is rows a through b of the open tab as text to paste, and how
@@ -1761,7 +1756,7 @@ func (d *detail) header(m *Model) []string {
 	}
 	status := []string{reason, statusBadge(d.item.ReviewStatus)}
 	if ci := pr.CIState(); ci != "" {
-		status = append(status, ciBadge(ci, m.cfg.NerdFont)+sDim.Render(" ci"))
+		status = append(status, ciBadge(ci)+sDim.Render(" ci"))
 	}
 	if d.item.UnresolvedCount > 0 {
 		status = append(status, sYellow.Render(fmt.Sprintf("%d unresolved", d.item.UnresolvedCount)))
@@ -1813,7 +1808,7 @@ func (d *detail) body(m *Model) []string {
 					l := lines[r.diff]
 					row = renderCode(l, d.highlighter().get(lines, r.diff), d.w, d.pendingIdx(l) >= 0, lineNum(l.oldLine)+" "+lineNum(l.newLine)+" ")
 				case r.diff >= 0:
-					row = renderDiffLine(lines[r.diff], d.w, false)
+					row = renderDiffLine(lines[r.diff], d.w)
 				default:
 					row = fit(r.text, d.w)
 				}
@@ -1941,7 +1936,7 @@ func (d *detail) reviewStatus(m *Model) string {
 		case "running":
 			p := spinner(m) + " " + sYellow.Render(name) + sDim.Render(" "+time.Since(r.StartedAt).Round(time.Second).String())
 			if running == 1 {
-				p += sDim.Render(" · " + trunc(Progress(r, time.Now(), m.cfg.Playful), max(d.w-50, 10)))
+				p += sDim.Render(" · " + trunc(Progress(r, time.Now(), playful), max(d.w-50, 10)))
 			}
 			parts = append(parts, p)
 		case "failed":
@@ -1985,16 +1980,16 @@ func (d *detail) replyRows(a *rowAdder, run *store.Run) {
 			head, body = author(last.Author)+", "+agoText(last.CreatedAt)+":", last.Body
 		}
 		add("      " + sPink.Render(head))
-		quote := renderMarkdown(body, d.w-10, themeName)
+		quote := renderMarkdown(body, d.w-10)
 		for i, l := range quote {
 			if i == quotedLines {
-				add("      " + sBorder.Render("┃ ") + sDim.Render(fmt.Sprintf("… %d more lines; the whole thread is in the Overview", len(quote)-quotedLines)))
+				add("      " + sBorder.Render("┃ ") + sDim.Render("… "+count(len(quote)-quotedLines, "more line")+"; the whole thread is in the Overview"))
 				break
 			}
 			add("      " + sBorder.Render("┃ ") + l)
 		}
 		add("      " + sSection.Render("your reply:"))
-		for _, l := range renderMarkdown(r.Body, d.w-8, themeName) {
+		for _, l := range renderMarkdown(r.Body, d.w-8) {
 			if r.Excluded {
 				l = sDim.Strikethrough(true).Render(ansi.Strip(l))
 			}
