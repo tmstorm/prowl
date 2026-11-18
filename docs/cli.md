@@ -1,6 +1,6 @@
 # The prowl command
 
-`prowl` with no command opens the TUI (see [The TUI](tui.md)). The commands below work without it, for scripts, status bars, hooks and the coding agent in your checkout. Each prints its errors as `prowl: <error>` on stderr and exits 1; `prowl review` also exits 2 on a must-fix finding.
+`prowl` with no command opens the TUI (see [The TUI](tui.md)). The commands below work without it, for scripts, status bars, hooks and the coding agent in your checkout. Each prints its errors as `prowl: <error>` on stderr and exits 1; `prowl review` also exits 2 on a must-fix finding. `-h` or `--help` after any command prints its section of this page.
 
 ## prowl watch
 
