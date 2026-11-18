@@ -420,7 +420,8 @@ func TestBackgroundNotifications(t *testing.T) {
 }
 
 // The first start of a new version offers its notes under prowl's own
-// divider, with the legend off too, until <leader>N opens them.
+// divider, with the legend off too, until <leader>N opens them. Only esc or
+// q closes them.
 func TestWhatsNewTip(t *testing.T) {
 	old := core.Version
 	core.Version = "0.2.0"
@@ -432,8 +433,10 @@ func TestWhatsNewTip(t *testing.T) {
 	a.wantNot("┄┄ legend")
 	a.keys("space", "N")
 	a.want("What's new in prowl v0.2.0", "reviews run faster")
-	a.keys("esc")
-	a.wantNot("you're on prowl v0.2.0", "┄┄ prowl")
+	a.keys("j", "x")
+	a.want("What's new in prowl v0.2.0")
+	a.keys("q")
+	a.wantNot("What's new in prowl v0.2.0", "you're on prowl v0.2.0", "┄┄ prowl")
 }
 
 // The options list the update settings under their own heading.

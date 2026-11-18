@@ -382,18 +382,43 @@ func mapOpt(section, title, label, header string, field func(c *config.Config) *
 }
 
 type optionsPopup struct {
-	cur     int   // index into visibleOptions
-	top     int   // first menu line shown
-	lineOpt []int // per drawn menu line: option index, or -1 for headings
+	nav           // over menu lines
+	lineOpt []int // per menu line: option index, or -1 for headings
 	editing bool
 	input   textinput.Model
 	err     string
+	errAt   int // the menu line err is about
 }
 
 func newOptions(m *Model) *optionsPopup {
 	ti := textinput.New()
 	ti.Prompt = ""
-	return &optionsPopup{input: ti}
+	p := &optionsPopup{input: ti}
+	p.skip = func(i int) bool { return p.lineOpt[i] < 0 }
+	p.scrolloff = 2
+	return p
+}
+
+// list lays the menu out: each section's heading, after a blank line but
+// the first, then its options. While you edit one the menu stays put.
+func (p *optionsPopup) list(m *Model) (*nav, int) {
+	p.lineOpt = p.lineOpt[:0]
+	sec := ""
+	for i, o := range visibleOptions(&m.cfg) {
+		if o.section != sec {
+			if sec != "" {
+				p.lineOpt = append(p.lineOpt, -1)
+			}
+			sec = o.section
+			p.lineOpt = append(p.lineOpt, -1)
+		}
+		p.lineOpt = append(p.lineOpt, i)
+	}
+	p.setLen(len(p.lineOpt), max(m.h-4-optionsChrome, 5))
+	if p.editing {
+		return &nav{}, 0
+	}
+	return &p.nav, 3
 }
 
 func (p *optionsPopup) mode() mode {
@@ -415,7 +440,7 @@ func (p *optionsPopup) forward(_ *Model, msg tea.Msg) tea.Cmd {
 // apply sets an option, saves the TOML file, and applies live settings.
 func (p *optionsPopup) apply(m *Model, o option, v string) tea.Cmd {
 	if err := saveOption(m, o, v); err != nil {
-		p.err = err.Error()
+		p.err, p.errAt = err.Error(), p.cur
 		return nil
 	}
 	p.err = ""
@@ -456,9 +481,7 @@ func saveOption(m *Model, o option, v string) error {
 }
 
 func (p *optionsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
-	vis := visibleOptions(&m.cfg)
-	p.cur = min(p.cur, len(vis)-1)
-	o := vis[p.cur]
+	o := visibleOptions(&m.cfg)[p.lineOpt[p.cur]]
 	key := k.String()
 	if p.editing {
 		switch key {
@@ -489,20 +512,10 @@ func (p *optionsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		return p.apply(m, o, choices[i])
 	}
 	switch key {
-	case "esc", "q":
+	case "esc", "q", "ctrl+c":
 		m.popup = nil
 	case "K":
 		return m.openDocs(optionTopic(o.label))
-	case "j", "down":
-		p.cur = min(p.cur+1, len(vis)-1)
-		p.err = ""
-	case "k", "up":
-		p.cur = max(p.cur-1, 0)
-		p.err = ""
-	case "gg", "g":
-		p.cur = 0
-	case "G":
-		p.cur = len(vis) - 1
 	case "h", "left":
 		switch o.kind {
 		case optChoice:
@@ -637,7 +650,8 @@ func (p *optionsPopup) view(m *Model) string {
 	w := min(popWidth(m), 84)
 	inner := w - 2
 	vis := visibleOptions(&m.cfg)
-	p.cur = min(p.cur, len(vis)-1)
+	p.list(m)
+	cur := p.lineOpt[p.cur]
 
 	nameW := 0
 	for _, o := range vis {
@@ -645,20 +659,18 @@ func (p *optionsPopup) view(m *Model) string {
 	}
 	nameW += 6
 	var lines []string
-	p.lineOpt = p.lineOpt[:0]
-	curLine, sec := 0, ""
-	for i, o := range vis {
-		if o.section != sec {
-			sec = o.section
-			if len(lines) > 0 {
-				lines = append(lines, "")
-				p.lineOpt = append(p.lineOpt, -1)
+	for i, oi := range p.lineOpt[p.top:min(p.top+p.h, p.n)] {
+		if oi < 0 {
+			line := ""
+			if next := p.lineOpt[p.top+i+1]; next >= 0 {
+				head := " " + sSection.Render(vis[next].section) + " "
+				line = head + sBorder.Render(strings.Repeat("─", max(inner-lipgloss.Width(head)-1, 0)))
 			}
-			head := " " + sSection.Render(sec) + " "
-			lines = append(lines, head+sBorder.Render(strings.Repeat("─", max(inner-lipgloss.Width(head)-1, 0))))
-			p.lineOpt = append(p.lineOpt, -1)
+			lines = append(lines, line)
+			continue
 		}
-		sel := i == p.cur
+		o := vis[oi]
+		sel := oi == cur
 		val := p.value(m, o, sel)
 		if sel && p.editing {
 			val = p.input.View()
@@ -666,24 +678,12 @@ func (p *optionsPopup) view(m *Model) string {
 		name := lipgloss.NewStyle().Foreground(lipgloss.Color(pal.Fg)).Render(o.title)
 		row := fit("   "+name, nameW) + val
 		if sel {
-			curLine = len(lines)
 			row = highlight(row, inner, sTitle)
 		}
 		lines = append(lines, fit(row, inner))
-		p.lineOpt = append(p.lineOpt, i)
 	}
 
-	h := max(m.h-4-optionsChrome, 5)
-	if curLine < p.top+1 {
-		p.top = max(curLine-2, 0)
-	}
-	if curLine >= p.top+h {
-		p.top = curLine - h + 1
-	}
-	p.top = min(p.top, max(len(lines)-h, 0))
-	shown := lines[p.top:min(p.top+h, len(lines))]
-
-	o := vis[p.cur]
+	o := vis[cur]
 	foot := []string{sBorder.Render(strings.Repeat("─", inner))}
 	help := wrap(strings.ReplaceAll(o.help, "<leader>", leader), inner-2)
 	for len(help) < 2 {
@@ -693,7 +693,7 @@ func (p *optionsPopup) view(m *Model) string {
 	if len(help) > 1 && help[1] != "" {
 		foot[len(foot)-1] += "\n " + sDim.Render(help[1])
 	}
-	if p.err != "" {
+	if p.err != "" && p.errAt == p.cur {
 		foot = append(foot, " "+sErr.Render(p.err))
 	}
 	keys := "j/k move · h/l change · enter edit · click to select, again to change · esc close"
@@ -702,30 +702,10 @@ func (p *optionsPopup) view(m *Model) string {
 	}
 	foot = append(foot, " "+sDim.Render(keys))
 	scroll := ""
-	if len(lines) > h {
-		scroll = sDim.Render(fmt.Sprintf("  %d/%d", p.cur+1, len(vis)))
+	if p.n > p.h {
+		scroll = sDim.Render(fmt.Sprintf("  %d/%d", cur+1, len(vis)))
 	}
-	return popBox("Options"+sDim.Render("  prowl "+core.BuildVersion())+scroll, strings.Join(shown, "\n")+"\n"+strings.Join(foot, "\n"), w, pal.Accent)
-}
-
-// click selects a setting, or changes it when it is already selected (as
-// enter does). y counts from the popup's top border.
-func (p *optionsPopup) click(m *Model, _, y int) tea.Cmd {
-	i := p.top + y - 3
-	if p.editing || i < 0 || i >= len(p.lineOpt) || p.lineOpt[i] < 0 {
-		return nil
-	}
-	if p.lineOpt[i] == p.cur {
-		return p.update(m, tea.KeyMsg{Type: tea.KeyEnter})
-	}
-	p.cur, p.err = p.lineOpt[i], ""
-	return nil
-}
-
-func (p *optionsPopup) wheel(m *Model, d int) {
-	if !p.editing {
-		p.cur = min(max(p.cur+d, 0), len(visibleOptions(&m.cfg))-1)
-	}
+	return popBox("Options"+sDim.Render("  prowl "+core.BuildVersion())+scroll, strings.Join(lines, "\n")+"\n"+strings.Join(foot, "\n"), w, pal.Accent)
 }
 
 // ---- reviewers: which agents review, in order (the first is the main one)
@@ -735,7 +715,7 @@ type reviewersPopup struct {
 	o     option
 	names []string // every agent, reviewers first in their order
 	on    map[string]bool
-	cur   int
+	nav
 }
 
 func newReviewersPopup(m *Model, back *optionsPopup, o option) *reviewersPopup {
@@ -766,10 +746,6 @@ func (p *reviewersPopup) chosen() []string {
 
 func (p *reviewersPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
-	case "j", "down":
-		p.cur = min(p.cur+1, len(p.names)-1)
-	case "k", "up":
-		p.cur = max(p.cur-1, 0)
 	case "enter", " ", "x":
 		n := p.names[p.cur]
 		if p.on[n] && len(p.chosen()) == 1 {
@@ -788,7 +764,7 @@ func (p *reviewersPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		p.names[p.cur], p.names[to] = p.names[to], p.names[p.cur]
 		p.cur = to
 		return p.back.apply(m, p.o, strings.Join(p.chosen(), ","))
-	case "esc", "q", "h":
+	case "esc", "q", "ctrl+c", "h":
 		m.popup = p.back
 	}
 	return nil
@@ -822,8 +798,10 @@ func (p *reviewersPopup) view(m *Model) string {
 	return popBox("Reviewers", strings.Join(rows, "\n")+"\n\n"+help, w, pal.Accent)
 }
 
-func (p *reviewersPopup) rows(*Model) (int, int, int) { return 3, 0, len(p.names) }
-func (p *reviewersPopup) cursor() *int                { return &p.cur }
+func (p *reviewersPopup) list(*Model) (*nav, int) {
+	p.setLen(len(p.names), len(p.names))
+	return &p.nav, 3
+}
 
 type serviceMsg struct {
 	on   bool

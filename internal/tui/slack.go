@@ -18,6 +18,7 @@ import (
 // nameRow is one GitHub login in the Slack names popup.
 type nameRow struct {
 	login  string
+	group  string     // Proposed, No match or Mapped, as it was when the popup opened
 	user   slack.User // the proposed, picked or mapped Slack user; zero for none
 	why    string     // why it was proposed, "" once mapped
 	mapped bool       // slack_names maps it to user already
@@ -29,13 +30,13 @@ type nameRow struct {
 // accept, logins nothing matched, and the ones mapped already.
 type namesPopup struct {
 	rows    []nameRow
-	cur     int
-	top     int // the first line shown, once the list is taller than the popup
+	nav           // over lines: each group's heading, then its rows
+	lineRow []int // per line: index into rows, or -1 for a heading
 	users   []slack.User
 	picking bool // choosing a Slack user for the current row
 	input   textinput.Model
 	results []slack.User
-	pick    int
+	pick    nav
 	back    *optionsPopup        // the options to return to, if they were open
 	then    func(*Model) tea.Cmd // what to do after saving, e.g. send a DM
 	focus   string               // the login to start on
@@ -96,41 +97,35 @@ func newNamesPopup(m *Model, msg namesProposedMsg) *namesPopup {
 	for _, nm := range msg.matches {
 		seen[nm.Login] = true
 		if nm.User.ID == "" {
-			open = append(open, nameRow{login: nm.Login})
+			open = append(open, nameRow{login: nm.Login, group: "No match"})
 			continue
 		}
-		proposed = append(proposed, nameRow{login: nm.Login, user: nm.User, why: nm.Why})
+		proposed = append(proposed, nameRow{login: nm.Login, group: "Proposed", user: nm.User, why: nm.Why})
 	}
 	for _, login := range slices.Sorted(maps.Keys(m.cfg.SlackNames)) {
 		id := m.cfg.SlackNames[login]
 		i := slices.IndexFunc(msg.users, func(u slack.User) bool { return u.ID == id })
 		if !seen[login] && i >= 0 {
-			mapped = append(mapped, nameRow{login: login, user: msg.users[i], mapped: true})
+			mapped = append(mapped, nameRow{login: login, group: "Mapped", user: msg.users[i], mapped: true})
 		}
 	}
 	p.rows = slices.Concat(proposed, open, mapped)
-	if i := slices.IndexFunc(p.rows, func(r nameRow) bool { return r.login == p.focus }); i >= 0 {
-		p.cur = i
+	for i, r := range p.rows {
+		if i == 0 || r.group != p.rows[i-1].group {
+			p.lineRow = append(p.lineRow, -1)
+		}
+		if r.login == p.focus {
+			p.cur = len(p.lineRow)
+		}
+		p.lineRow = append(p.lineRow, i)
 	}
+	p.skip = func(i int) bool { return p.lineRow[i] < 0 }
+	p.scrolloff = 1
 	p.input = textinput.New()
 	p.input.Prompt = sTitle.Render(" ") + " "
 	p.input.Placeholder = "Slack name"
 	p.input.Width = 40
 	return p
-}
-
-// window is the height lines of lines that keep line at in view, scrolling
-// only when it would leave it, so a popup keeps its size as you move. The
-// line above at, often its heading, stays in view too. top is the first
-// line shown, kept between calls.
-func window(lines []string, at, height int, top *int) []string {
-	if len(lines) <= height {
-		return lines
-	}
-	*top = min(*top, max(at-1, 0))
-	*top = max(*top, at-height+1)
-	*top = min(*top, len(lines)-height)
-	return lines[*top : *top+height]
 }
 
 func (p *namesPopup) mode() mode {
@@ -140,6 +135,27 @@ func (p *namesPopup) mode() mode {
 	return modeNormal
 }
 
+func (p *namesPopup) list(m *Model) (*nav, int) {
+	if p.picking {
+		p.pick.setLen(len(p.results), 12)
+		return &p.pick, 6
+	}
+	p.setLen(len(p.lineRow), max(m.h-12, 6))
+	return &p.nav, 3
+}
+
+// click picks the Slack user clicked, as the other pickers do, or checks or
+// unchecks the login clicked.
+func (p *namesPopup) click(m *Model, _, _, row int) tea.Cmd {
+	if p.picking {
+		return m.pick(&p.pick, row)
+	}
+	return m.check(&p.nav, row)
+}
+
+// row is the login under the cursor.
+func (p *namesPopup) row() *nameRow { return &p.rows[p.lineRow[p.cur]] }
+
 func (p *namesPopup) changed() bool {
 	return slices.ContainsFunc(p.rows, func(r nameRow) bool { return r.accept || r.clear })
 }
@@ -148,16 +164,12 @@ func (p *namesPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	if p.picking {
 		return p.updatePick(m, k)
 	}
-	if len(p.rows) == 0 && k.String() != "esc" && k.String() != "E" {
+	if len(p.rows) == 0 && slices.Contains([]string{" ", "e", "x"}, k.String()) {
 		return nil
 	}
 	switch k.String() {
-	case "j", "down":
-		p.cur = min(p.cur+1, len(p.rows)-1)
-	case "k", "up":
-		p.cur = max(p.cur-1, 0)
 	case " ":
-		r := &p.rows[p.cur]
+		r := p.row()
 		if r.user.ID != "" && !r.mapped {
 			r.accept, r.clear = !r.accept, false
 		}
@@ -173,7 +185,7 @@ func (p *namesPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		p.filter()
 		return p.input.Focus()
 	case "x":
-		r := &p.rows[p.cur]
+		r := p.row()
 		r.accept, r.clear = false, r.mapped || r.user.ID != ""
 	case "E":
 		p.close(m)
@@ -181,7 +193,7 @@ func (p *namesPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		return m.editOption(p.back, options[i])
 	case "enter":
 		return p.save(m)
-	case "esc", "q":
+	case "esc", "q", "ctrl+c":
 		p.close(m)
 		if p.changed() {
 			m.info("Slack names not saved")
@@ -196,15 +208,15 @@ func (p *namesPopup) updatePick(m *Model, k tea.KeyMsg) tea.Cmd {
 		p.picking = false
 		p.input.Blur()
 	case "down", "ctrl+n", "ctrl+j":
-		p.pick = min(p.pick+1, max(len(p.results)-1, 0))
+		p.pick.move(1)
 	case "up", "ctrl+p", "ctrl+k":
-		p.pick = max(p.pick-1, 0)
+		p.pick.move(-1)
 	case "enter":
 		p.picking = false
 		p.input.Blur()
-		if p.pick < len(p.results) {
-			r := &p.rows[p.cur]
-			r.user, r.why, r.accept, r.clear = p.results[p.pick], "picked", true, false
+		if p.pick.cur < len(p.results) {
+			r := p.row()
+			r.user, r.why, r.accept, r.clear = p.results[p.pick.cur], "picked", true, false
 		}
 	default:
 		return p.forward(m, k)
@@ -233,7 +245,7 @@ func (p *namesPopup) filter() {
 			p.results = append(p.results, u)
 		}
 	}
-	p.pick = 0
+	p.pick.cur = 0
 }
 
 // save writes the accepted and cleared rows to slack_names.
@@ -286,39 +298,32 @@ func (p *namesPopup) done(m *Model) tea.Cmd {
 
 func (p *namesPopup) view(m *Model) string {
 	w := min(popWidth(m), 96)
+	v, _ := p.list(m)
 	if p.picking {
 		var rows []string
-		for i := max(p.pick-11, 0); i < len(p.results) && len(rows) < 12; i++ {
+		for i := v.top; i < min(v.top+v.h, v.n); i++ {
 			u := p.results[i]
 			shown, more := cmp.Or(u.Display, u.RealName, u.Handle), " @"+u.Handle
 			if u.RealName != "" && u.RealName != shown {
 				more = " " + u.RealName + more
 			}
 			row := fit(" "+sBold.Render(shown)+sDim.Render(" "+more), w-4)
-			if i == p.pick {
+			if i == v.cur {
 				row = highlight(row, w-4, sTitle)
 			}
 			rows = append(rows, row)
 		}
-		body := sDim.Render(" Slack user for ") + sBold.Render(p.rows[p.cur].login) + "\n" + p.input.View() + "\n" +
+		body := sDim.Render(" Slack user for ") + sBold.Render(p.row().login) + "\n" + p.input.View() + "\n" +
 			sBorder.Render(strings.Repeat("─", w-4)) + "\n" + strings.Join(rows, "\n") + "\n\n" + sDim.Render(" enter pick · esc back")
 		return popBox("Slack names", body, w, pal.Accent)
 	}
 	var lines []string
-	heading, at := "", 0
-	for i := range p.rows {
-		r := p.rows[i]
-		h := "Mapped"
-		switch {
-		case r.why != "":
-			h = "Proposed"
-		case !r.mapped:
-			h = "No match"
+	for i := p.top; i < min(p.top+p.h, p.n); i++ {
+		if p.lineRow[i] < 0 {
+			lines = append(lines, sTitle.Render(" "+p.rows[p.lineRow[i+1]].group))
+			continue
 		}
-		if h != heading {
-			heading = h
-			lines = append(lines, sTitle.Render(" "+h))
-		}
+		r := p.rows[p.lineRow[i]]
 		box := sDim.Render("[ ]")
 		switch {
 		case r.clear:
@@ -346,11 +351,9 @@ func (p *namesPopup) view(m *Model) string {
 		row = fit(row, w-4)
 		if i == p.cur {
 			row = highlight(row, w-4, sTitle)
-			at = len(lines)
 		}
 		lines = append(lines, row)
 	}
-	lines = window(lines, at, max(m.h-12, 6), &p.top)
 	if len(p.rows) == 0 {
 		lines = append(lines, sDim.Render(" Everyone in your orgs and inbox has a Slack user."))
 	}
@@ -369,8 +372,7 @@ type channelsPopup struct {
 	dms     bool
 	input   textinput.Model
 	results []int // indexes into all; the DM row comes first and isn't one
-	cur     int   // 0 is the DM row
-	top     int
+	nav           // row 0 is the DM row
 	back    *optionsPopup
 }
 
@@ -420,7 +422,6 @@ func (p *channelsPopup) filter() {
 			p.results = append(p.results, i)
 		}
 	}
-	p.cur = min(p.cur, len(p.results))
 }
 
 func (p *channelsPopup) forward(_ *Model, msg tea.Msg) tea.Cmd {
@@ -436,9 +437,9 @@ func (p *channelsPopup) forward(_ *Model, msg tea.Msg) tea.Cmd {
 func (p *channelsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
 	case "down", "ctrl+n", "ctrl+j":
-		p.cur = min(p.cur+1, len(p.results))
+		p.move(1)
 	case "up", "ctrl+p", "ctrl+k":
-		p.cur = max(p.cur-1, 0)
+		p.move(-1)
 	case " ", "tab":
 		if p.cur == 0 {
 			p.dms = !p.dms
@@ -448,7 +449,7 @@ func (p *channelsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		}
 	case "enter":
 		return p.save(m)
-	case "esc":
+	case "esc", "ctrl+c":
 		m.popup = nil
 		if p.back != nil {
 			m.popup = p.back
@@ -458,6 +459,14 @@ func (p *channelsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	}
 	return nil
 }
+
+func (p *channelsPopup) list(m *Model) (*nav, int) {
+	p.setLen(len(p.results)+1, max(m.h-14, 6))
+	return &p.nav, 6
+}
+
+// click checks or unchecks the row clicked.
+func (p *channelsPopup) click(m *Model, _, _, row int) tea.Cmd { return m.check(&p.nav, row) }
 
 func (p *channelsPopup) save(m *Model) tea.Cmd {
 	m.popup = nil
@@ -514,10 +523,11 @@ func (p *channelsPopup) view(m *Model) string {
 		}
 		lines = append(lines, fit(row, w-4))
 	}
+	p.list(m)
 	lines[p.cur] = highlight(lines[p.cur], w-4, sTitle)
-	lines = window(lines, p.cur, max(m.h-14, 6), &p.top)
+	lines = lines[p.top:min(p.top+p.h, p.n)]
 	head := sDim.Render(" signed in as " + p.who)
-	help := sDim.Render(" type to filter · ↑↓ move · space check · enter save · esc cancel") + "\n" +
+	help := sDim.Render(" type to filter · ↑↓ move · space or click check · enter save · esc cancel") + "\n" +
 		sDim.Render(" PR links in checked channels, and sent to you in DMs, show in the inbox as shared.")
 	return popBox("Slack channels", head+"\n"+p.input.View()+"\n"+sBorder.Render(strings.Repeat("─", w-4))+"\n"+
 		strings.Join(lines, "\n")+"\n\n"+help, w, pal.Accent)

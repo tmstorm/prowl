@@ -107,6 +107,16 @@ func (v *nav) motion(key string) bool {
 	return true
 }
 
+// rowAt is the row drawn on line y of a popup whose rows start on line
+// first, or -1 when no row you can select is there.
+func (v *nav) rowAt(y, first int) int {
+	i := v.top + y - first
+	if y < first || i >= min(v.top+v.h, v.n) || !v.selectable(i) {
+		return -1
+	}
+	return i
+}
+
 func (v *nav) first()            { v.cur = 0; v.snap(1) }
 func (v *nav) last()             { v.cur = v.n - 1; v.snap(-1) }
 func (v *nav) gotoLine(line int) { v.cur = line - 1; v.snap(1) }

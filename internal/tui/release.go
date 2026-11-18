@@ -118,7 +118,7 @@ func (m *Model) upgraded(msg upgradeMsg) {
 type notesPopup struct {
 	title, url string
 	notes      string
-	top        int
+	nav
 }
 
 func (m *Model) whatsNew() {
@@ -136,35 +136,40 @@ func (m *Model) whatsNew() {
 
 func (p *notesPopup) mode() mode { return modeNormal }
 
+// width is one cell wider than the notes, for the cursor's gutter.
+func (p *notesPopup) width(m *Model) int { return min(popWidth(m), 84) + 1 }
+
 func (p *notesPopup) lines(m *Model) []string {
-	return noteLines(p.notes, min(popWidth(m), 84)-4)
+	return gutter(noteLines(p.notes, p.width(m)-5))
 }
 
-func (p *notesPopup) height(m *Model) int { return max(m.h-12, 5) }
+func (p *notesPopup) list(m *Model) (*nav, int) {
+	p.setLen(len(p.lines(m)), max(m.h-12, 5))
+	return &p.nav, 3
+}
 
 func (p *notesPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
-	case "j", "down":
-		p.top = min(p.top+1, max(len(p.lines(m))-p.height(m), 0))
-	case "k", "up":
-		p.top = max(p.top-1, 0)
 	case "o":
 		m.popup = nil
 		return openURL(p.url)
-	default:
+	case "esc", "q", "ctrl+c":
 		m.popup = nil
 	}
 	return nil
 }
 
 func (p *notesPopup) view(m *Model) string {
-	ls := p.lines(m)
-	shown := ls[min(p.top, len(ls)):min(p.top+p.height(m), len(ls))]
-	foot := "o opens the release on GitHub · any other key closes"
-	if len(ls) > p.height(m) {
-		foot = "j/k scroll · " + foot
+	w := p.width(m)
+	p.list(m)
+	shown := p.lines(m)[p.top:min(p.top+p.h, p.n)]
+	for i := range shown {
+		if p.top+i == p.cur {
+			shown[i] = highlight(shown[i], w-4, sTitle)
+		}
 	}
-	return popBox(p.title, strings.Join(shown, "\n")+"\n\n"+sDim.Render(foot), min(popWidth(m), 84), pal.Accent)
+	foot := "j/k move · o opens the release on GitHub · esc close"
+	return popBox(p.title, strings.Join(shown, "\n")+"\n\n"+sDim.Render(foot), w, pal.Accent)
 }
 
 // UpdateNote is a line the CLI prints about r, in pink and in cfg's theme.

@@ -1101,6 +1101,12 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	if m.popup != nil {
+		if p, ok := m.popup.(rowPopup); ok {
+			v, _ := p.list(m)
+			if m.popup.mode() != modeInsert && v.motion(popupMotion(key)) {
+				return nil
+			}
+		}
 		return m.popup.update(m, k)
 	}
 	switch m.mode {
@@ -1143,6 +1149,20 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 		return tea.Batch(cmd, m.schedulePreview())
 	}
 	return cmd
+}
+
+// popupMotion is the motion a key makes in a popup's list: g for gg, and
+// ctrl+n and ctrl+p as in the pickers.
+func popupMotion(key string) string {
+	switch key {
+	case "g":
+		return "gg"
+	case "ctrl+n":
+		return "j"
+	case "ctrl+p":
+		return "k"
+	}
+	return key
 }
 
 func (m *Model) normal(key string) tea.Cmd {

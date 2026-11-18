@@ -189,7 +189,7 @@ func (p *textPopup) view(m *Model) string {
 
 type snoozePopup struct {
 	item inbox.Item
-	cur  int
+	nav
 }
 
 var snoozeChoices = []struct {
@@ -202,11 +202,7 @@ func (p *snoozePopup) mode() mode          { return modeNormal }
 
 func (p *snoozePopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
-	case "j", "down", "ctrl+n":
-		p.cur = min(p.cur+1, len(snoozeChoices)-1)
-	case "k", "up", "ctrl+p":
-		p.cur = max(p.cur-1, 0)
-	case "esc", "q":
+	case "esc", "q", "ctrl+c":
 		m.popup = nil
 	case "1", "2", "3", "4":
 		p.cur = int(k.String()[0] - '1')
@@ -244,8 +240,8 @@ func (p *snoozePopup) view(m *Model) string {
 type finder struct {
 	input   textinput.Model
 	results []int  // indexes into m.items
-	cur     int    // with remote set, 0 is the "open from GitHub" row
 	remote  *prRef // a pasted link or ref to a PR not in the inbox
+	nav            // with remote set, row 0 is the "open from GitHub" row
 }
 
 // prRef names a PR: owner/name and number.
@@ -382,10 +378,10 @@ func (f *finder) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		m.popup = nil
 		return nil
 	case "down", "ctrl+n", "ctrl+j":
-		f.cur = min(f.cur+1, max(len(f.results)+f.offset()-1, 0))
+		f.move(1)
 		return nil
 	case "up", "ctrl+p", "ctrl+k":
-		f.cur = max(f.cur-1, 0)
+		f.move(-1)
 		return nil
 	case "enter":
 		m.popup = nil
@@ -416,29 +412,26 @@ func (f *finder) update(m *Model, k tea.KeyMsg) tea.Cmd {
 
 func (f *finder) view(m *Model) string {
 	w := popWidth(m)
-	h := min(m.h-10, 16)
+	f.list(m)
 	var rows []string
-	if f.remote != nil {
-		row := fit(" "+sTitle.Render("↗ open ")+sBold.Render(fmt.Sprintf("%s#%d", f.remote.repo, f.remote.n))+sDim.Render(" from GitHub (not in your inbox)"), w-4)
-		if f.cur == 0 {
-			row = highlight(row, w-4, sTitle)
+	for i := f.top; i < min(f.top+f.h, f.n); i++ {
+		var row string
+		if j := i - f.offset(); j >= 0 {
+			it := m.items[f.results[j]]
+			row = fmt.Sprintf(" %s %s %s %s",
+				fit(bucketStyle(it.Bucket).Render(it.Bucket.String()), 17),
+				sDim.Render(shortRepo(it.PR.Repository.Name)+prNumber(it.PR)),
+				it.PR.Title, sPink.Render(it.PR.AuthorLogin()))
+		} else {
+			row = " " + sTitle.Render("↗ open ") + sBold.Render(fmt.Sprintf("%s#%d", f.remote.repo, f.remote.n)) + sDim.Render(" from GitHub (not in your inbox)")
 		}
-		rows = append(rows, row)
-	}
-	start := max(f.cur-f.offset()-h+1, 0)
-	for i := start; i < len(f.results) && i < start+h-f.offset(); i++ {
-		it := m.items[f.results[i]]
-		row := fmt.Sprintf(" %s %s %s %s",
-			fit(bucketStyle(it.Bucket).Render(it.Bucket.String()), 17),
-			sDim.Render(shortRepo(it.PR.Repository.Name)+prNumber(it.PR)),
-			it.PR.Title, sPink.Render(it.PR.AuthorLogin()))
 		row = fit(row, w-4)
-		if i+f.offset() == f.cur {
+		if i == f.cur {
 			row = highlight(row, w-4, sTitle)
 		}
 		rows = append(rows, row)
 	}
-	for len(rows) < h {
+	for len(rows) < f.h {
 		rows = append(rows, "")
 	}
 	body := f.input.View() + "\n" + sBorder.Render(strings.Repeat("─", w-4)) + "\n" + strings.Join(rows, "\n") +
@@ -552,7 +545,7 @@ type repoPicker struct {
 	input   textinput.Model
 	all     []repoCount
 	results []repoCount
-	cur     int
+	nav
 }
 
 type repoCount struct {
@@ -638,10 +631,10 @@ func (p *repoPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		m.popup = nil
 		return nil
 	case "down", "ctrl+n", "ctrl+j":
-		p.cur = min(p.cur+1, max(len(p.results)-1, 0))
+		p.move(1)
 		return nil
 	case "up", "ctrl+p", "ctrl+k":
-		p.cur = max(p.cur-1, 0)
+		p.move(-1)
 		return nil
 	case "enter":
 		m.popup = nil
@@ -676,8 +669,8 @@ func (p *repoPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 func (p *repoPicker) view(m *Model) string {
 	w := min(popWidth(m), 60)
 	var rows []string
-	_, top, _ := p.rows(m)
-	for i := top; i < len(p.results) && i < top+16; i++ {
+	p.list(m)
+	for i := p.top; i < min(p.top+p.h, p.n); i++ {
 		c := p.results[i]
 		prs := fmt.Sprintf("%3d PRs", c.total)
 		switch c.total {
@@ -750,7 +743,7 @@ type agentPicker struct {
 	item  inbox.Item
 	names []string
 	errs  []error
-	cur   int
+	nav
 }
 
 func newAgentPicker(m *Model, it inbox.Item) *agentPicker {
@@ -765,16 +758,12 @@ func newAgentPicker(m *Model, it inbox.Item) *agentPicker {
 	return p
 }
 
-func (p *agentPicker) mode() mode { return modeInsert }
+func (p *agentPicker) mode() mode { return modeNormal }
 
 func (p *agentPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
 	case "esc", "ctrl+c", "q":
 		m.popup = nil
-	case "j", "down", "ctrl+n":
-		p.cur = min(p.cur+1, len(p.names)-1)
-	case "k", "up", "ctrl+p":
-		p.cur = max(p.cur-1, 0)
 	case "enter":
 		m.popup = nil
 		if err := p.errs[p.cur]; err != nil {
@@ -813,42 +802,40 @@ func (p *agentPicker) view(m *Model) string {
 
 // ---- mouse: where each list popup draws its rows (see rowPopup)
 
-func (p *snoozePopup) rows(*Model) (int, int, int) { return 3, 0, len(snoozeChoices) }
-func (p *snoozePopup) cursor() *int                { return &p.cur }
-
-func (f *finder) rows(m *Model) (int, int, int) {
-	if f.remote != nil {
-		return 5, 0, 1 + min(len(f.results), min(m.h-10, 16)-1)
-	}
-	h := min(m.h-10, 16)
-	return 5, max(f.cur-h+1, 0), len(f.results)
+func (p *snoozePopup) list(*Model) (*nav, int) {
+	p.setLen(len(snoozeChoices), len(snoozeChoices))
+	return &p.nav, 3
 }
-func (f *finder) cursor() *int { return &f.cur }
 
-func (p *repoPicker) rows(*Model) (int, int, int) { return 5, max(p.cur-15, 0), len(p.results) }
-func (p *repoPicker) cursor() *int                { return &p.cur }
+func (f *finder) list(m *Model) (*nav, int) {
+	f.setLen(len(f.results)+f.offset(), min(m.h-10, 16))
+	return &f.nav, 5
+}
 
-func (p *agentPicker) rows(*Model) (int, int, int) { return 3, 0, len(p.names) }
-func (p *agentPicker) cursor() *int                { return &p.cur }
+func (p *repoPicker) list(*Model) (*nav, int) {
+	p.setLen(len(p.results), 16)
+	return &p.nav, 5
+}
+
+func (p *agentPicker) list(*Model) (*nav, int) {
+	p.setLen(len(p.names), len(p.names))
+	return &p.nav, 3
+}
 
 // ---- profile picker: run a named review profile
 
 type profilePicker struct {
 	item     inbox.Item
 	profiles []config.Profile
-	cur      int
+	nav
 }
 
-func (p *profilePicker) mode() mode { return modeInsert }
+func (p *profilePicker) mode() mode { return modeNormal }
 
 func (p *profilePicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
 	case "esc", "ctrl+c", "q":
 		m.popup = nil
-	case "j", "down", "ctrl+n":
-		p.cur = min(p.cur+1, len(p.profiles)-1)
-	case "k", "up", "ctrl+p":
-		p.cur = max(p.cur-1, 0)
 	case "enter":
 		m.popup = nil
 		return m.startProfile(p.item, p.profiles[p.cur])
@@ -875,8 +862,10 @@ func (p *profilePicker) view(m *Model) string {
 	return popBox("Run a review profile on "+p.item.PR.Key(), strings.Join(rows, "\n")+"\n\n"+help, w, pal.Accent)
 }
 
-func (p *profilePicker) rows(*Model) (int, int, int) { return 3, 0, len(p.profiles) }
-func (p *profilePicker) cursor() *int                { return &p.cur }
+func (p *profilePicker) list(*Model) (*nav, int) {
+	p.setLen(len(p.profiles), len(p.profiles))
+	return &p.nav, 3
+}
 
 // reviewerPicker asks people and teams to review a PR: everyone who can
 // review it, filtered as you type, with the ones it's with already first.
@@ -885,8 +874,7 @@ type reviewerPicker struct {
 	all     []reviewerRow
 	input   textinput.Model
 	results []int // indexes into all
-	cur     int
-	top     int
+	nav
 }
 
 type reviewerRow struct {
@@ -982,7 +970,6 @@ func (p *reviewerPicker) filter() {
 			p.results = append(p.results, i)
 		}
 	}
-	p.cur = min(p.cur, max(len(p.results)-1, 0))
 }
 
 func (p *reviewerPicker) forward(_ *Model, msg tea.Msg) tea.Cmd {
@@ -998,9 +985,9 @@ func (p *reviewerPicker) forward(_ *Model, msg tea.Msg) tea.Cmd {
 func (p *reviewerPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
 	case "down", "ctrl+n", "ctrl+j":
-		p.cur = min(p.cur+1, max(len(p.results)-1, 0))
+		p.move(1)
 	case "up", "ctrl+p", "ctrl+k":
-		p.cur = max(p.cur-1, 0)
+		p.move(-1)
 	case " ", "tab":
 		if p.cur < len(p.results) {
 			r := &p.all[p.results[p.cur]]
@@ -1008,7 +995,7 @@ func (p *reviewerPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 		}
 	case "enter":
 		return p.ask(m)
-	case "esc":
+	case "esc", "ctrl+c":
 		m.popup = nil
 	default:
 		return p.forward(m, k)
@@ -1043,24 +1030,13 @@ func (p *reviewerPicker) ask(m *Model) tea.Cmd {
 	}
 }
 
-// height is how many rows the picker shows at once.
-func (p *reviewerPicker) height(m *Model) int { return max(m.h-14, 6) }
-
-// click checks or unchecks the row clicked; rows start below the title, a
-// blank line, the filter and a rule. A click outside the rows on screen does
-// nothing.
-func (p *reviewerPicker) click(m *Model, _, y int) tea.Cmd {
-	if i := p.top + y - 5; y >= 5 && i < min(p.top+p.height(m), len(p.results)) {
-		p.cur = i
-		r := &p.all[p.results[i]]
-		r.on = !r.on
-	}
-	return nil
+func (p *reviewerPicker) list(m *Model) (*nav, int) {
+	p.setLen(len(p.results), max(m.h-14, 6))
+	return &p.nav, 5
 }
 
-func (p *reviewerPicker) wheel(_ *Model, d int) {
-	p.cur = min(max(p.cur+d, 0), max(len(p.results)-1, 0))
-}
+// click checks or unchecks the row clicked.
+func (p *reviewerPicker) click(m *Model, _, _, row int) tea.Cmd { return m.check(&p.nav, row) }
 
 func (p *reviewerPicker) view(m *Model) string {
 	w := min(popWidth(m), 80)
@@ -1081,18 +1057,12 @@ func (p *reviewerPicker) view(m *Model) string {
 		}
 		lines = append(lines, fit(row, w-4))
 	}
+	p.list(m)
 	if len(lines) == 0 {
 		lines = append(lines, sDim.Render(" nobody matches: enter asks "+strings.TrimSpace(p.input.Value())))
 	} else {
 		lines[p.cur] = highlight(lines[p.cur], w-4, sTitle)
-	}
-	if height := p.height(m); len(lines) > height {
-		p.top = min(p.top, p.cur)
-		p.top = max(p.top, p.cur-height+1)
-		p.top = min(p.top, len(lines)-height)
-		lines = lines[p.top : p.top+height]
-	} else {
-		p.top = 0
+		lines = lines[p.top:min(p.top+p.h, p.n)]
 	}
 	help := sDim.Render(" type to filter · ↑↓ move · space or click check · enter ask · esc cancel")
 	return popBox("Ask for reviews on "+prName(p.item.PR), p.input.View()+"\n"+sBorder.Render(strings.Repeat("─", w-4))+"\n"+

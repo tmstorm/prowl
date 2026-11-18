@@ -86,21 +86,17 @@ func until(t time.Time) string {
 // ---- popup
 
 type accountsPopup struct {
-	cur     int
+	nav
 	loading bool
 }
 
-func (p *accountsPopup) mode() mode { return modeInsert }
+func (p *accountsPopup) mode() mode { return modeNormal }
 
 func (p *accountsPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	accts := m.core.Accounts()
 	switch k.String() {
 	case "esc", "q", "ctrl+c":
 		m.popup = nil
-	case "j", "down":
-		p.cur = min(p.cur+1, len(accts)-1)
-	case "k", "up":
-		p.cur = max(p.cur-1, 0)
 	case "r":
 		p.loading = true
 		return m.checkAuth()
@@ -166,5 +162,8 @@ func (p *accountsPopup) view(m *Model) string {
 	return popBox("Accounts", strings.Join(rows, "\n")+"\n\n"+note+"\n"+help, w, pal.Accent)
 }
 
-func (p *accountsPopup) rows(m *Model) (int, int, int) { return 3, 0, len(m.core.Accounts()) }
-func (p *accountsPopup) cursor() *int                  { return &p.cur }
+func (p *accountsPopup) list(m *Model) (*nav, int) {
+	n := len(m.core.Accounts())
+	p.setLen(n, n)
+	return &p.nav, 3
+}
