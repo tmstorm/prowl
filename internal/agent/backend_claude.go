@@ -13,7 +13,6 @@ import (
 type claudeBackend struct{}
 
 func (claudeBackend) Name() string     { return "claude" }
-func (claudeBackend) Title() string    { return "Claude" }
 func (claudeBackend) Resumes() bool    { return true }
 func (claudeBackend) ChatQuit() string { return "/exit" }
 

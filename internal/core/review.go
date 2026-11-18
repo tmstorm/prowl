@@ -385,7 +385,7 @@ func (co *Core) Chat(key, reviewer string) (Command, error) {
 	}
 	cmd := be.Chat(run.SessionID, wt, cfg.Agent.Model(be.Name()), agent.ToolServerCommand(cfg, be, repo, wt, l.Dir != "", true))
 	if cmd == nil {
-		return Command{}, fmt.Errorf("%s has no interactive session to chat in; ask it to revise instead", be.Title())
+		return Command{}, fmt.Errorf("%s has no interactive session to chat in; ask it to revise instead", agent.Title(be.Name()))
 	}
 	return commandOf(cmd, be.ChatQuit()), nil
 }

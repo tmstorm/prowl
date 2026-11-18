@@ -45,8 +45,7 @@ func (t Turn) setModel(s string) {
 
 // Backend is a coding agent prowl can run reviews with.
 type Backend interface {
-	Name() string  // config name: claude, codex, command
-	Title() string // shown in the UI: Claude, Codex, ...
+	Name() string // config name: claude, codex, command; Title(Name()) is for the UI
 	// Check reports why the agent can't run (not installed, not configured).
 	Check() error
 	// Review runs one turn and returns the structured review and the

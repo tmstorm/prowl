@@ -18,7 +18,6 @@ import (
 type codexBackend struct{}
 
 func (codexBackend) Name() string     { return "codex" }
-func (codexBackend) Title() string    { return "Codex" }
 func (codexBackend) Resumes() bool    { return true }
 func (codexBackend) ChatQuit() string { return "/quit" }
 
