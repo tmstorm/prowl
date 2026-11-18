@@ -525,6 +525,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
+		md.r = nil
 		m.layoutNavs()
 		m.resizeChats()
 		return m, nil
