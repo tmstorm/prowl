@@ -77,6 +77,7 @@ type Agent struct {
 	Models             map[string]string `toml:"models"`
 	SummaryModels      map[string]string `toml:"summary_models"`
 	RunImages          map[string]string `toml:"run_images"`
+	RunCacheGB         int               `toml:"run_cache_gb"`
 	Profiles           []Profile         `toml:"profiles"`
 }
 
@@ -240,7 +241,7 @@ func Default() Config {
 		GroupBy:          "status",
 		ChatMode:         "popup",
 		Bots:             []string{"github-actions"},
-		Agent:            Agent{Reviewers: []string{"claude"}, ShouldFix: true, Nits: true},
+		Agent:            Agent{Reviewers: []string{"claude"}, ShouldFix: true, Nits: true, RunCacheGB: 20},
 	}
 }
 
@@ -514,6 +515,7 @@ func (c Config) Save() error {
 	}
 	boolean("# Write an AI summary of each PR as it first needs you (<leader>ca writes one\n# on demand either way).\n", "auto_summary", c.Agent.AutoSummary, d.Agent.AutoSummary)
 	set("# How many of your recent edits to agent drafts go into the review prompt\n# as examples of how you write (`prowl edits` shows them). 0 is off.\n", "edit_examples", fmt.Sprint(c.Agent.EditExamples), fmt.Sprint(d.Agent.EditExamples))
+	set("# Most disk the run tool's caches may take, in GB (see [agent.run_images]).\n# Past it, prowl deletes the caches used longest ago. 0 is no limit.\n", "run_cache_gb", fmt.Sprint(c.Agent.RunCacheGB), fmt.Sprint(d.Agent.RunCacheGB))
 	w("# Model per agent. Missing: the agent's own default. Claude takes opus,\n# fable, sonnet, haiku or a model ID; Codex takes an OpenAI model name.\n[agent.models]\n")
 	mapLines(&b, c.Agent.Models, "# claude = \"opus\"\n")
 	w("\n# Model per agent for AI summaries. Missing: the agent's review model. A small,\n# fast model is plenty, e.g. claude = \"haiku\".\n[agent.summary_models]\n")

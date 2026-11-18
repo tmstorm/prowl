@@ -62,3 +62,35 @@ func TestTerminalCmd(t *testing.T) {
 		t.Fatalf("the command wrote %q", b)
 	}
 }
+
+// RemoveAll deletes a read-only tree, and a symlink in it to a file outside
+// keeps that file's mode.
+func TestRemoveAll(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cache")
+	mod := filepath.Join(dir, "go-mod", "x@v1")
+	if err := os.MkdirAll(mod, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), ".bashrc")
+	if err := os.WriteFile(outside, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(mod, "evil")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mod, "x.go"), nil, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(mod, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if err := platform.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Fatal("the tree is still there")
+	}
+	if fi, err := os.Stat(outside); err != nil || fi.Mode().Perm() != 0o644 {
+		t.Fatalf("the symlink's target changed: %v %v", fi.Mode(), err)
+	}
+}

@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -164,3 +166,17 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 $toast.ExpirationTime = [DateTimeOffset]::Now.AddSeconds([int]$env:PROWL_SECONDS)
 $m::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)
 `
+
+// RemoveAll deletes path like os.RemoveAll, making it writable first: Go makes
+// its module cache read-only, and os.RemoveAll can't delete what is inside a
+// read-only directory. Symlinks are left alone, since os.Chmod would change
+// what they point to, which a PR's tests can aim anywhere you can write.
+func RemoveAll(path string) error {
+	_ = filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type()&fs.ModeSymlink == 0 {
+			_ = os.Chmod(p, 0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(path)
+}

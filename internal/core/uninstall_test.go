@@ -76,6 +76,11 @@ func TestUninstall(t *testing.T) {
 	}
 	pages := docs.ManPaths(core.ManDir())
 
+	modules := filepath.Join(config.DataDir(), "cache", "acme", "api", "pr", "go-mod", "x@v1")
+	_ = os.MkdirAll(modules, 0o755)
+	_ = os.WriteFile(filepath.Join(modules, "x.go"), []byte("package x"), 0o444)
+	_ = os.Chmod(modules, 0o555)
+
 	f := core.FindFootprint(co.Config(), exe, true)
 	if f.Service != (runtime.GOOS == "linux") || !slices.Equal(f.Checkouts, []string{repo}) ||
 		!slices.Equal(f.Skills, []string{skill.Dir("claude")}) || !slices.Equal(f.Man, pages) || !slices.Equal(f.Kept, []string{edited}) || f.Binary != exe || f.Command != "" ||

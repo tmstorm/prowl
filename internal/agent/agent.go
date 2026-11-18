@@ -951,7 +951,8 @@ func RemoveReview(cfg config.Config, repo string, number int) {
 // reviewed says prowl has no review of: left from before closed PRs lost
 // their refs, or by a discarded review. reviewed is asked as it goes, so a
 // review starting meanwhile keeps its own. A checkout whose origin isn't on
-// GitHub is left alone. It also removes run tool containers past their timeout.
+// GitHub is left alone. It also removes run tool containers past their
+// timeout, and keeps the run tool's caches under run_cache_gb.
 func PruneOrphans(cfg config.Config, reviewed func(repo string, number int) bool) {
 	root := filepath.Join(config.DataDir(), "worktrees")
 	owners, _ := os.ReadDir(root)
@@ -979,6 +980,7 @@ func PruneOrphans(cfg config.Config, reviewed func(repo string, number int) bool
 		_ = git(dir, "worktree", "prune")
 	}
 	pruneRunContainers()
+	pruneRunCaches(cfg)
 }
 
 // removeWorktrees removes every agent's worktree for a PR (best effort).

@@ -70,7 +70,7 @@ func Uninstall(f Footprint) error {
 		}
 	}
 	for _, dir := range f.Dirs {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := platform.RemoveAll(dir); err != nil {
 			errs = append(errs, fmt.Errorf("remove %s: %w", dir, err))
 		}
 	}
