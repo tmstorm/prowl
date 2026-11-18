@@ -123,6 +123,36 @@ const (
 // Reason, whose wording can change.
 type Why = inbox.Why
 
+// The reasons a PR is in its bucket.
+const (
+	WhyReviewRequested        = inbox.ReviewRequested
+	WhyTeamReviewRequested    = inbox.TeamReviewRequested
+	WhyAskedAgain             = inbox.AskedAgain
+	WhyReRequested            = inbox.ReRequested
+	WhyReviewDismissed        = inbox.ReviewDismissed
+	WhyChangeRequestDismissed = inbox.ChangeRequestDismissed
+	WhyAuthorPushed           = inbox.AuthorPushed
+	WhyAuthorReplied          = inbox.AuthorReplied
+	WhyCommented              = inbox.Commented
+	WhyRepliedInThread        = inbox.RepliedInThread
+	WhyApprovalStands         = inbox.ApprovalStands
+	WhyPushedSinceApproval    = inbox.PushedSinceApproval
+	WhyYouRequestedChanges    = inbox.YouRequestedChanges
+	WhyYouCommented           = inbox.YouCommented
+	WhyYouApproved            = inbox.YouApproved
+	WhyDraft                  = inbox.Draft
+	WhyNobodyAsked            = inbox.NobodyAsked
+	WhyWithOthers             = inbox.WithOthers
+	WhyMentioned              = inbox.Mentioned
+	WhyNewFeedback            = inbox.NewFeedback
+	WhyReadyToMerge           = inbox.ReadyToMerge
+	WhyChangesRequested       = inbox.ChangesRequested
+	WhyAwaitingReviewers      = inbox.AwaitingReviewers
+	WhySharedInChannel        = inbox.SharedInChannel
+	WhySentToYou              = inbox.SentToYou
+	WhyLocalReview            = inbox.LocalReview
+)
+
 // PR is a pull request in the inbox, or a local branch reviewed before it
 // has one, with where it sits in the inbox and why.
 type PR struct {
@@ -495,7 +525,7 @@ func heads(items []inbox.Item) map[string]string {
 // are more than a few (the first sync ever, or catching up after a while).
 func Notify(changes []PR, timeout time.Duration) {
 	changes = slices.DeleteFunc(slices.Clone(changes), func(it PR) bool {
-		return it.Bucket == Mine && it.SlackReactions == "" && it.Why != inbox.NewFeedback && it.Why != inbox.ReadyToMerge
+		return it.Bucket == Mine && it.SlackReactions == "" && it.Why != WhyNewFeedback && it.Why != WhyReadyToMerge
 	})
 	if len(changes) > 3 {
 		need := 0

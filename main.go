@@ -422,9 +422,12 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-	co := core.New(cfg, nil, st)
+	reviews, notes, err := core.ReviewsOf(st, key)
+	if err != nil {
+		return err
+	}
 	var cur []*core.Review
-	for _, r := range core.Current(co.Runs()[key]) {
+	for _, r := range core.Current(reviews) {
 		if only != "" && r.Agent != only && r.Reviewer() != only {
 			continue
 		}
@@ -440,12 +443,9 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 		}
 		return fmt.Errorf("no finished review for %s yet; open it in prowl and run an AI review", key)
 	}
-	md := core.FindingsMarkdown(cur, co.Notes(key), key, head, all)
+	md := core.FindingsMarkdown(cur, notes, key, head, all)
 	if asPrompt {
-		md = core.HandoffPrompt(md)
-	}
-	if asPrompt {
-		fmt.Print(md)
+		fmt.Print(core.HandoffPrompt(md))
 		return nil
 	}
 	printMarkdown(md)

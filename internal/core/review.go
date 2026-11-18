@@ -333,14 +333,33 @@ func (co *Core) Notes(key string) map[string][]Note {
 	co.mu.Lock()
 	runs := Current(co.runs[key])
 	co.mu.Unlock()
+	return notesOf(co.st, key, runs)
+}
+
+func notesOf(st *store.Store, key string, reviews []*Review) map[string][]Note {
 	out := map[string][]Note{}
-	for _, r := range runs {
-		log, _ := co.st.ReviewLog(key, r.Reviewer())
+	for _, r := range reviews {
+		log, _ := st.ReviewLog(key, r.Reviewer())
 		for _, e := range log {
 			out[r.Reviewer()] = append(out[r.Reviewer()], Note(e))
 		}
 	}
 	return out
+}
+
+// ReviewsOf is the reviews of one PR or local branch, newest first, and the
+// notes of the current ones, read from st without loading the rest of core:
+// prowl findings needs only these.
+func ReviewsOf(st *store.Store, key string) ([]*Review, map[string][]Note, error) {
+	runs, err := st.Runs(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]*Review, 0, len(runs))
+	for _, r := range runs {
+		out = append(out, reviewOf(r))
+	}
+	return out, notesOf(st, key, Current(out)), nil
 }
 
 // Review starts a review of a PR in the background by reviewer: an agent

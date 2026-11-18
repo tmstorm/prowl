@@ -1245,3 +1245,42 @@ func TestDismissedChangeRequest(t *testing.T) {
 		t.Fatalf("dismissed change request: %v %q", it.Bucket, it.Reason)
 	}
 }
+
+// Each PR carries why it's in its bucket as a code, beside the wording.
+func TestWhy(t *testing.T) {
+	mine := ghtest.PR("api", 2, "feat: mine", "me")
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me"), mine}}
+	co, _ := newCore(t, fake)
+	in := refresh(t, co)
+	why := map[string]core.Why{}
+	for _, p := range in.Items {
+		why[p.Key] = p.Why
+	}
+	if why["o/api#1"] != core.WhyReviewRequested || why["o/api#2"] != core.WhyAwaitingReviewers {
+		t.Fatalf("why = %v", why)
+	}
+}
+
+// ReviewsOf reads one PR's reviews newest first; Current keeps each
+// reviewer's newest, and Latest finds one reviewer's.
+func TestReviewsOf(t *testing.T) {
+	_, st := newCore(t, &ghtest.GitHub{})
+	a, _ := st.StartRun("o/r#1", "h1", "claude", "", 0)
+	_ = st.FinishRun(a, "s1", "first", "", nil)
+	b, _ := st.StartRun("o/r#1", "h2", "codex", "", 0)
+	c, _ := st.StartRun("o/r#1", "h2", "claude", "", 0)
+	_ = st.AddReviewLog("o/r#1", "codex", "you", "hi")
+	reviews, notes, err := core.ReviewsOf(st, "o/r#1")
+	if err != nil || len(reviews) != 3 || reviews[0].ID != c {
+		t.Fatalf("reviews = %d, %v", len(reviews), err)
+	}
+	if cur := core.Current(reviews); len(cur) != 2 || cur[0].ID != c || cur[1].ID != b {
+		t.Fatalf("current = %+v", cur)
+	}
+	if core.Latest(reviews, "claude").ID != c {
+		t.Fatal("the latest claude review should be the newest")
+	}
+	if len(notes["codex"]) != 1 || len(notes["claude"]) != 0 {
+		t.Fatalf("notes = %v", notes)
+	}
+}
