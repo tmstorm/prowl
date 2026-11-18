@@ -104,7 +104,7 @@ With nothing, lists these docs. With a topic, prints what it leads to: a page (`
 prowl man DIR
 ```
 
-Writes the man pages for this version under DIR: `DIR/man1/prowl.1`, this page, and `DIR/man5/prowl-config.5`, the [config](config.md). The install script writes them to `~/.local/share/man`, where `man prowl` finds them, and `prowl update` writes them again with each new version. Packages install them under `/usr/share/man`.
+Writes the man pages for this version under DIR: `DIR/man1/prowl.1`, this page, and `DIR/man5/prowl-config.5`, the [config](config.md). The install script writes them to `~/.local/share/man`, where `man prowl` finds them, and `prowl update` writes them with each new version, also for an install from before prowl had them. Packages install them under `/usr/share/man`.
 
 ## prowl schema
 
