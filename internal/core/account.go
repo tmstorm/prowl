@@ -98,7 +98,7 @@ func (co *Core) Login(key string) (Command, error) {
 	}
 	cmd := be.Login()
 	if cmd == nil {
-		return Command{}, fmt.Errorf("prowl can't log %s in", be.Title())
+		return Command{}, fmt.Errorf("prowl can't log %s in", agent.Title(be.Name()))
 	}
 	return commandOf(cmd, ""), nil
 }
@@ -155,7 +155,7 @@ func accountList(cfg config.Config) []Account {
 		if err != nil || be.Login() == nil {
 			continue
 		}
-		out = append(out, Account{Key: n, Title: be.Title(), Missing: be.Check()})
+		out = append(out, Account{Key: n, Title: agent.Title(be.Name()), Missing: be.Check()})
 	}
 	return append(out, Account{Key: "slack", Title: "Slack"})
 }

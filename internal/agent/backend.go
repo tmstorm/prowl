@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,8 +38,7 @@ func (t Turn) setModel(s string) {
 
 // Backend is a coding agent prowl can run reviews with.
 type Backend interface {
-	Name() string  // config name: claude, codex, command
-	Title() string // shown in the UI: Claude, Codex, ...
+	Name() string // config name: claude, codex, command; Title(Name()) is for the UI
 	// Check reports why the agent can't run (not installed, not configured).
 	Check() error
 	// Review runs one turn and returns the structured review and the
@@ -95,6 +95,27 @@ func Title(name string) string {
 		return "Command"
 	}
 	return "Agent"
+}
+
+// stream runs bin with args in t's checkout, t's prompt on stdin, and hands
+// each line it prints to each, as the agents print one JSON event a line.
+// It returns why bin failed to start or exited badly.
+func stream(t Turn, bin string, args []string, each func(line []byte)) error {
+	cmd := exec.Command(bin, args...)
+	cmd.Dir, cmd.Env, cmd.Stdin, cmd.Stderr = t.Dir, CleanEnv(), strings.NewReader(t.Prompt), os.Stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", bin, err)
+	}
+	sc := bufio.NewScanner(out)
+	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
+	for sc.Scan() {
+		each(sc.Bytes())
+	}
+	return cmd.Wait()
 }
 
 func needBinary(bin, url string) error {

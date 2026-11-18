@@ -477,16 +477,16 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 	}
 	fail := func(err error) error {
 		if a := be.Auth(); a.Known && !a.LoggedIn {
-			err = fmt.Errorf("%s isn't logged in; press %sl in prowl to log in", be.Title(), cfg.LeaderLabel())
+			err = fmt.Errorf("%s isn't logged in; press %sl in prowl to log in", Title(be.Name()), cfg.LeaderLabel())
 		}
 		if j.Refine != "" && prev != nil {
 			_ = st.EndRevise(id)
 			_ = st.AddReviewLog(key, store.Reviewer(be.Name(), j.Profile), "note", "the revise failed, so the review is as it was: "+err.Error())
-			notify(be.Title()+" revise failed", key+": "+err.Error())
+			notify(Title(be.Name())+" revise failed", key+": "+err.Error())
 			return err
 		}
 		_ = st.FailRun(id, err.Error())
-		notify(be.Title()+" review failed", key+": "+err.Error())
+		notify(Title(be.Name())+" review failed", key+": "+err.Error())
 		return err
 	}
 
@@ -739,7 +739,7 @@ func finish(st *store.Store, be Backend, id int64, key, sessionID string, res *r
 	if err := st.SaveAction(id, action, res.PRReason); err != nil {
 		return fmt.Errorf("finish: %w", err)
 	}
-	notify(be.Title()+" review ready", readyText(key, &store.Run{Findings: res.Findings, Replies: replies, Points: res.Points, Action: action}))
+	notify(Title(be.Name())+" review ready", readyText(key, &store.Run{Findings: res.Findings, Replies: replies, Points: res.Points, Action: action}))
 	return nil
 }
 

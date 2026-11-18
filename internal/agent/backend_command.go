@@ -22,7 +22,6 @@ import (
 type commandBackend struct{ command, login, status string }
 
 func (commandBackend) Name() string                              { return "command" }
-func (commandBackend) Title() string                             { return "Command" }
 func (commandBackend) Resumes() bool                             { return false }
 func (commandBackend) ChatQuit() string                          { return "" }
 func (commandBackend) Models() []string                          { return []string{""} }
