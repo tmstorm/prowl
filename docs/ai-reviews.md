@@ -114,6 +114,57 @@ prompt = "Look only for security problems: injection, auth, secrets, unsafe inpu
 reviewers = ["codex"]
 ```
 
+## Extensions
+
+An extension is a program prowl runs during every review of the repos you enable it for. Its output goes to the reviewer and into the findings, so a team can add a check, such as licenses or benchmarks, without changing prowl. It runs code, so it's opt-in per repo:
+
+```toml
+[[agent.extensions]]
+name = "licenses"
+command = "acme-license-check"
+repos = ["*"]          # or ["acme/web", "acme/api"]
+timeout = "2m"         # default 10m
+```
+
+prowl runs each enabled extension in the PR's worktree once it is checked out, before the reviewer starts, all of them at once. An extension runs once per PR head, however many reviewers review it: the first review to need it runs it, and the others wait for its result and say whose review is running it. A revise uses what the review got. An extension that fails or runs past its timeout doesn't stop the review, and the review's notes say which one and why. `needs_base = true` also checks out the PR's base, for an extension that compares the two.
+
+### The protocol
+
+prowl writes JSON to the extension's stdin and reads JSON from its stdout:
+
+```json
+{"repo": "acme/web", "head_dir": "/path/to/worktree", "head": "<sha>", "base": "<merge base sha>",
+ "changed_files": ["src/a.ts"], "run_image": "node:24"}
+```
+
+```json
+{"prompt": "markdown for a section of the review prompt",
+ "findings": [{"severity": "should-fix", "title": "Parse is 30% slower", "body": "...", "rule": "", "path": "", "line": 0}],
+ "summary": "one line for the review's notes"}
+```
+
+`base_dir` is there with `needs_base`, and `run_image` when the repo has one under `[agent.run_images]`. `severity` is `must-fix`, `should-fix` or `nit`. A finding with a `path` goes into the review as it is. One without a path goes to the reviewer, which must attach it to the line in the diff that causes it and may not lower its severity: one the reviewer drops comes back as a finding about the whole PR, and one it lowers gets its severity back. What the extension writes to stderr shows in the review's notes when it fails.
+
+### Re-reviews
+
+On a re-review the input also has `since`, `changed_since` and `previous`, from the extension's own last run on the PR: the head it ran on, the files changed since, and its findings then. With nothing changed since, the extension doesn't run again and its last result stands. Otherwise its previous findings in files that didn't change are kept, and in the files that did, its new output decides: a previous finding it doesn't report again is fixed. A finding with no path covers the whole PR, so it stays only when reported again. An extension can use these fields to check only what changed; one that ignores them still works.
+
+### On demand
+
+An extension can run when you ask instead of during reviews, for a step with side effects such as starting a job:
+
+```toml
+[[agent.extensions]]
+name = "factory"
+command = "acme-factory"
+repos = ["acme/api"]
+on_demand = true
+key = "f"              # its letter in the list of extensions
+confirm = true         # ask before running it
+```
+
+It gets the same input as during a review and runs in the background, so it keeps going if you quit prowl, and a notification says when it's done. One extension runs on a PR at a time. Its findings with a path join the PR's newest AI review from the main reviewer as drafts, and the rest stay in its result, with its summary and prompt section. One that fails partway keeps what it printed beside the exit code and the end of its stderr, and prowl never runs it again by itself. An extension listed with `on_demand = true` doesn't run during reviews; list it twice to have both.
+
 ## Running tests
 
 By default a review only reads. To let it run the tests, give the repo a container image under `[agent.run_images]` (or Run images in the options):

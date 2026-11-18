@@ -114,8 +114,11 @@ In the comment box, `ctrl+s` saves the comment, `ctrl+e` opens it in your editor
 | `<leader>ch` | copy a fix-these-findings prompt |
 | `<leader>cd` | discard the review |
 | `<leader>p` | post the AI review, in your editor |
+| `<leader>e` | the PR's on-demand extensions |
 
 Revise, chat, update and discard act on the agent whose section the cursor is in, or the main agent. See [AI reviews](ai-reviews.md).
+
+`<leader>e` lists the extensions you can run on the PR, with how each last went. An extension's `key` runs it (`<leader>ef`), as does `enter` on its line, and `v` shows its last result. One with `confirm = true` asks first. See [Extensions](ai-reviews.md#extensions).
 
 ## The review tab
 
