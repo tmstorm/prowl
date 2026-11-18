@@ -3,9 +3,10 @@
 The PRs after built-in docs (`builtin-docs.md`), in order. Each is one PR, split into commits.
 
 1. Extensions
-2. Findings for the author
-3. Performance review, the first extension
-4. Before 1.0: the VS Code extension, a stable core, then packages
+2. Performance review, the first extension
+3. Findings for the author
+4. Re-reviews that check the fixes
+5. Before 1.0: the VS Code extension, a stable core, then packages
 
 ## 1. Extensions
 
@@ -17,6 +18,8 @@ A review step anyone can add without changing prowl: a command prowl runs during
 - prowl's own extensions implement the same Go interface as an external one, behind it the exec adapter. Performance review is built in this way, so the interface carries a real extension from the first release.
 - An extension that fails or runs out of time doesn't stop the review. The review summary says which one and why.
 - Opt-in per repo, like everything that runs code.
+- prowl stores each extension's output on the run, with the head it ran on. A revise reuses it instead of running the extension again, and the next review starts from it.
+- A re-review checks what changed since the extension's own last run, not the whole PR again (see [Re-reviews](#re-reviews)).
 
 ### Config
 
@@ -38,7 +41,9 @@ prowl runs each enabled extension after it has the checkouts and before it build
 
 ```json
 {"repo": "acme/web", "head_dir": "...", "base_dir": "...", "head": "<sha>", "base": "<sha>",
- "since": "<sha of the last review, or empty>", "changed_files": ["src/a.ts"], "run_image": "node:24"}
+ "changed_files": ["src/a.ts"], "run_image": "node:24",
+ "since": "<head of this extension's last run on the PR, or empty>", "changed_since": ["src/a.ts"],
+ "previous": [{"severity": "should-fix", "title": "...", "body": "...", "rule": "...", "path": "src/a.ts", "line": 12}]}
 ```
 
 Stdout:
@@ -49,7 +54,19 @@ Stdout:
  "summary": "one line for the review summary"}
 ```
 
-A finding with no path goes to the reviewer, who must attach it to the line in the diff that causes it and may not lower its severity. A finding with a path goes into the review as is. `base_dir` is a worktree at the merge base that prowl adds only when an extension asks for it with `"needs_base": true` in its config.
+A finding with a path goes into the review as is. `base_dir` is a worktree at the merge base that prowl adds only when an extension asks for it with `"needs_base": true` in its config.
+
+A finding with no path goes to the reviewer, who must attach it to the line in the diff that causes it and may not lower its severity. prowl gives each one an ID (`perf-1`) and the review schema an optional `extension_id`. After the verify turn prowl checks every ID: one the reviewer dropped goes back in as a PR-level finding, and one it lowered gets its severity back.
+
+### Re-reviews
+
+`since`, `changed_since` and `previous` come from the extension's own last run on the PR, the commit it actually checked, not from the reader's last review. On the first run they're empty.
+
+- `changed_since` empty: prowl doesn't run the extension. It reuses the last output, and the summary says "perf: unchanged since abc123".
+- A previous finding in a file outside `changed_since` is kept without asking the extension.
+- In the files in `changed_since`, the new output decides. A previous finding there that isn't reported again is fixed. A commit that claims to fix something in `foo.go` gets `foo.go` checked again and nothing more.
+- A previous finding with no path covers the whole PR, so the extension reports it again or it counts as fixed.
+- An extension that ignores these fields and checks everything still works: prowl drops its findings that repeat one it kept.
 
 ### On demand
 
@@ -61,65 +78,28 @@ name = "factory"
 command = "acme-factory"
 repos = ["acme/api"]
 on_demand = true
-key = "f"                         # optional: <leader>xf
+key = "f"                         # optional: <leader>ef
+confirm = true                    # ask before running it
 ```
 
-- prowl owns the keys. Every on-demand extension is listed by name under one leader group, `<leader>x`, and `key` only picks its letter inside that group, so an extension can't take a key prowl uses or will use. A `key` that two extensions share is a config error.
+- prowl owns the keys. Every on-demand extension is listed by name under one leader group, `<leader>e`, and `key` only picks its letter inside that group, so an extension can't take a key prowl uses or will use. A `key` that two extensions share is a config error.
 - Same protocol. prowl prepares the same checkouts and input as for a review. The output shows in a popup: `summary`, then `prompt` rendered as markdown, then the findings. Findings with a path join the PR's AI review as drafts you edit before posting. The rest stay in the popup.
+- An extension with side effects (starts a job, pushes, posts) sets `confirm = true`, and prowl asks in the statusline's CONFIRM prompt before running it. Without it, the key runs it at once.
+- One that fails partway shows what it got out (`summary`, findings), then its exit code and the end of its stderr. prowl never runs it again by itself: a second run of something that already pushed or posted does more harm than stopping.
 - `on_demand = true` takes the extension out of the automatic run. One that should do both is listed twice.
 - The action lives in `internal/core`, so the VS Code extension gets the same list as command-palette entries.
 
 ### Code
 
-- `internal/config`: `Extensions`, with a lookup per repo, `on_demand`, `key` and the duplicate-key check.
-- `internal/agent`: the `Extension` interface, the exec adapter, running them with their timeouts, the prompt sections, the locked-severity findings.
+- `internal/config`: `Extensions`, with a lookup per repo, `on_demand`, `key`, `confirm` and the duplicate-key check.
+- `internal/agent`: the `Extension` interface, the exec adapter, running them with their timeouts, the prompt sections, the locked-severity findings and the ID check after verify, the re-review fields and carrying findings forward.
+- `internal/store`: each extension's output and head on the run.
 - `internal/core`: running one extension on a PR on demand.
-- `internal/tui`: the `<leader>x` group, the output popup.
-- Docs: a section in `docs/ai-reviews.md` with the protocol, `docs/config.md`, the `<leader>x` keys in `docs/reviewing.md`.
-- Tests: an extension script's prompt and findings reach the review, a failing and a slow one leave the review going with a note in the summary, a finding with no path is attached by the reviewer at its severity, a repo the extension isn't enabled for is unchanged, an on-demand extension stays out of reviews and shows under `<leader>x` with its key, a shared key fails config loading.
+- `internal/tui`: the `<leader>e` group, the confirm, the output popup.
+- Docs: a section in `docs/ai-reviews.md` with the protocol, `docs/config.md`, the `<leader>e` keys in `docs/reviewing.md` and `docs/tui.md`.
+- Tests: an extension script's prompt and findings reach the review, a failing and a slow one leave the review going with a note in the summary, a finding with no path the reviewer drops or lowers comes back at its severity, a revise reuses the stored output, a re-review with nothing changed skips the extension, a previous finding outside `changed_since` is kept and one inside it that isn't reported is gone, a repo the extension isn't enabled for is unchanged, an on-demand extension stays out of reviews and shows under `<leader>e` with its key, one with `confirm` asks first, a shared key fails config loading.
 
-Open: an on-demand extension that acts on the PR (starts a job, pushes, posts) runs something with side effects on a keypress. Whether prowl asks before running it, and what it shows when it fails halfway, depends on what extensions like the forked one do. Settle it before this PR.
-
-## 2. Findings for the author
-
-When someone reviews your PR on GitHub, `prowl findings` in your checkout shows that review, so you or your agent can work through it like a local AI review. Today it only reads the local store and says "no finished review" on your own PR even after changes were requested.
-
-### Decisions
-
-- No new command or skill. `prowl findings` gets a GitHub source, and the `prowl-findings` skill learns the author side.
-- Read-only. The agent drafts thread replies and the author posts them.
-- prowl tags each finding it posts with a hidden HTML comment, so the author's prowl can tell AI findings from hand-written comments and sort by severity.
-
-### The marker
-
-`findingBody` (`internal/core/post.go`) appends `<!-- prowl:finding v=1 severity=must-fix rule="AGENTS.md: wrap errors" -->`, and each PR-level finding in the review body gets one at the end of its bullet. Your own pending comments get none. Reviews posted before the marker start with `**must-fix:** Title`, and the parser falls back to that.
-
-### `prowl findings` on your own PR
-
-When the current branch's PR (`resolvePR`) is yours, prowl fetches it with `FetchDetail` and prints, after any local AI review:
-
-- Each reviewer's latest verdict, changes requested first.
-- Their latest review bodies, PR-level findings split out.
-- Unresolved threads: path, line, hunk, who opened it, replies, whether it's outdated, thread ID.
-- Sorted: tagged must-fix, hand-written comments in a changes-requested review, tagged should-fix, other hand-written comments, nits. `suggestion` blocks as the patch they'd apply.
-
-Bots and resolved threads are left out; `--all` brings resolved threads back. `--json` prints `verdicts` and `items` (`source`, `kind`, `thread_id`, `path`, `line`, `severity`, `author`, `outdated`, `body`, `suggestion`). A PR someone else wrote keeps today's behaviour.
-
-### The skill
-
-`internal/skill/SKILL.md` adds the author-side triggers ("changes requested on my PR", "address the review comments"). A hand-written comment is a person asking, so the agent fixes it or drafts a reply saying why not, never drops it. Each thread gets a drafted reply listed with its thread ID. The no-posting rule stays.
-
-### Code
-
-- `internal/core/post.go`: the marker.
-- `internal/agent`: parsing it, the GitHub items beside `FindingsMarkdown`, the sort.
-- `main.go`: `findings` fetches the detail on your own PR, `--json`.
-- `internal/skill/SKILL.md`, `skill_test.go` if it pins the text. Docs: `docs/ai-reviews.md`, the `prowl findings` usage text.
-- Tests: marker round trip, the `**must-fix:**` fallback, sort order, `--json` fields, someone else's PR unchanged.
-
-Open: sorting and colouring tagged threads by severity in the TUI's PR view. Cheap once parsing exists, but UI scope beyond `findings`.
-
-## 3. Performance review
+## 2. Performance review
 
 The built-in `perf` extension. For a repo it's enabled on, prowl measures the repo's benchmarks on the base and the head and reports regressions as findings, and the reviewer looks for performance problems in the change and proposes fixes even where no benchmark covers the code. It measures and proposes, never applies.
 
@@ -174,7 +154,7 @@ A regression is significant (p < 0.05, benchstat's default; 10 runs a side needs
 
 ### The reviewer
 
-The extension's prompt section has the benchstat table and the regressions, which come back as findings with no path for the reviewer to attach. It also asks the reviewer to look in the changed code for work that grows faster than it needs to (a call per item in a loop, a quadratic search, allocation in a hot loop, unbounded goroutines or buffers, a missing index) and propose a fix. An unmeasured proposal is at most should-fix, has the rule `perf: unmeasured`, and includes a benchmark in the repo's style. Once the author adds it, the next review measures it. On a re-review only what changed since the last one is measured, as `testWhatChanged` does for tests.
+The extension's prompt section has the benchstat table and the regressions, which come back as findings with no path for the reviewer to attach. It also asks the reviewer to look in the changed code for work that grows faster than it needs to (a call per item in a loop, a quadratic search, allocation in a hot loop, unbounded goroutines or buffers, a missing index) and propose a fix. An unmeasured proposal is at most should-fix, has the rule `perf: unmeasured`, and includes a benchmark in the repo's style. Once the author adds it, the next review measures it. On a re-review prowl measures again only the benchmarks behind the previous regressions and those in the directories of `changed_since` (see [Re-reviews](#re-reviews)).
 
 ### Time
 
@@ -194,7 +174,56 @@ The extension's `timeout` (10 minutes) is a guess. prowl stores how long each me
 
 Open: a built-in `performance` profile with the same lens for a one-off review of a repo without `perf`. I'd leave it out; enabling is one line.
 
-## 4. Before 1.0
+## 3. Findings for the author
+
+When someone reviews your PR on GitHub, `prowl findings` in your checkout shows that review, so you or your agent can work through it like a local AI review. Today it only reads the local store and says "no finished review" on your own PR even after changes were requested.
+
+### Decisions
+
+- No new command or skill. `prowl findings` gets a GitHub source, and the `prowl-findings` skill learns the author side.
+- Read-only. The agent drafts thread replies and the author posts them.
+- prowl tags each finding it posts with a hidden HTML comment, so the author's prowl can tell AI findings from hand-written comments and sort by severity.
+
+### The marker
+
+`findingBody` (`internal/core/post.go`) appends `<!-- prowl:finding v=1 severity=must-fix rule="AGENTS.md: wrap errors" -->`, and each PR-level finding in the review body gets one at the end of its bullet. Your own pending comments get none. Reviews posted before the marker start with `**must-fix:** Title`, and the parser falls back to that.
+
+### `prowl findings` on your own PR
+
+When the current branch's PR (`resolvePR`) is yours, prowl fetches it with `FetchDetail` and prints, after any local AI review:
+
+- Each reviewer's latest verdict, changes requested first.
+- Their latest review bodies, PR-level findings split out.
+- Unresolved threads: path, line, hunk, who opened it, replies, whether it's outdated, thread ID.
+- Sorted: tagged must-fix, hand-written comments in a changes-requested review, tagged should-fix, other hand-written comments, nits. `suggestion` blocks as the patch they'd apply.
+
+Bots and resolved threads are left out; `--all` brings resolved threads back. `--json` prints `verdicts` and `items` (`source`, `kind`, `thread_id`, `path`, `line`, `severity`, `author`, `outdated`, `body`, `suggestion`). A PR someone else wrote keeps today's behaviour.
+
+### The skill
+
+`internal/skill/SKILL.md` adds the author-side triggers ("changes requested on my PR", "address the review comments"). A hand-written comment is a person asking, so the agent fixes it or drafts a reply saying why not, never drops it. Each thread gets a drafted reply listed with its thread ID. The no-posting rule stays.
+
+### Code
+
+- `internal/core/post.go`: the marker.
+- `internal/agent`: parsing it, the GitHub items beside `FindingsMarkdown`, the sort.
+- `main.go`: `findings` fetches the detail on your own PR, `--json`.
+- `internal/skill/SKILL.md`, `skill_test.go` if it pins the text. Docs: `docs/ai-reviews.md`, the `prowl findings` usage text.
+- Tests: marker round trip, the `**must-fix:**` fallback, sort order, `--json` fields, someone else's PR unchanged.
+
+Open: sorting and colouring tagged threads by severity in the TUI's PR view. Cheap once parsing exists, but UI scope beyond `findings`.
+
+## 4. Re-reviews that check the fixes
+
+On a re-review the agent is told to check what the reader asked for and review what changed (`reReviewSection` in `internal/agent/history.go`), but it still does a full review turn and a verify turn. When a commit claims to fix a finding, the work is checking that claim, as extensions do from item 1.
+
+- The agent gets the previous findings, posted and not, with the commits since, and returns a verdict on each: fixed, not fixed or partly fixed, with the evidence.
+- Then it reviews only the diff since the last review, at the same must-fix bar for code already reviewed as today.
+- The verdicts show in the PR pane beside each finding, and a fixed one drops out of the next post.
+
+Open: the schema change, and whether the verify turn is still needed when the review is only verdicts and a small diff.
+
+## 5. Before 1.0
 
 Last, once the features above have settled:
 
