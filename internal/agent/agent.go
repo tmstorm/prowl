@@ -145,9 +145,10 @@ const reviewSchema = `{
           "line": {"type": "integer", "description": "line number in the NEW version of the file, must be a line changed or shown in the diff; 0 when path is empty"},
           "title": {"type": "string", "description": "one-line summary"},
           "body": {"type": "string", "description": "the comment as posted on GitHub: at most three short sentences saying what is wrong, why it matters, and the fix"},
-          "rule": {"type": "string", "description": "if the finding enforces a repo guideline or skill, cite it, e.g. 'CONTRIBUTING.md: Tests'. Empty otherwise."}
+          "rule": {"type": "string", "description": "if the finding enforces a repo guideline or skill, cite it, e.g. 'CONTRIBUTING.md: Tests'. Empty otherwise."},
+          "extension_id": {"type": "string", "description": "for a finding listed under Extensions, its id, e.g. perf-1; empty otherwise"}
         },
-        "required": ["severity", "path", "line", "title", "body", "rule"],
+        "required": ["severity", "path", "line", "title", "body", "rule", "extension_id"],
         "additionalProperties": false
       }
     },
@@ -244,7 +245,7 @@ func findGuidelines(wt string, changed []string) []string {
 	return found
 }
 
-func prompt(j Job, cfg config.Config, be Backend, guidelines []string, h history, dismissed, examples string, canRun bool) string {
+func prompt(j Job, cfg config.Config, be Backend, guidelines []string, h history, dismissed, examples, extensions string, canRun bool) string {
 	reader := "the reviewer"
 	if j.Viewer != "" {
 		reader = j.Viewer
@@ -283,6 +284,7 @@ The PR head is checked out in the current directory. See the change with:
 	}
 	b.WriteString(dismissed)
 	b.WriteString(examples)
+	b.WriteString(extensions)
 	if len(guidelines) > 0 {
 		b.WriteString("## Repo guidelines (required)\n\n")
 		b.WriteString("This repo documents how work must be done. Before reviewing, read every file\n")
@@ -510,7 +512,8 @@ type jobRun struct {
 	threads map[string]store.ThreadReply
 	log     *slog.Logger
 	started time.Time
-	phase   string // what the run is doing, for a failure's log line
+	phase   string            // what the run is doing, for a failure's log line
+	exts    []reviewExtension // what the extensions found on this head
 }
 
 // kind is "revise" for a revise or sync, else "review", for log lines.
@@ -592,7 +595,10 @@ func (r *jobRun) fresh(ctx context.Context) string {
 		posts, _ := st.Posts(time.Time{})
 		examples = editExamples(posts, n)
 	}
-	return prompt(j, r.cfg, r.be, findGuidelines(wt, changed), hist, dismissedSection(runs, r.id), examples, r.tools != nil)
+	if j.Refine == "" {
+		r.runExtensions(ctx, changed)
+	}
+	return prompt(j, r.cfg, r.be, findGuidelines(wt, changed), hist, dismissedSection(runs, r.id), examples, extensionSection(r.exts), r.tools != nil)
 }
 
 // revise sends the job's instruction to the review's own session.
@@ -604,6 +610,7 @@ func (r *jobRun) revise(ctx context.Context) error {
 	if !j.Sync {
 		_ = r.st.AddNote(r.key, r.reviewer(), "you", j.Refine)
 	}
+	r.storedExtensions()
 	instruction := "Revise your review per this instruction from the reviewer, then return the complete updated review " +
 		"(all findings you still stand behind, not just the changes). Put one or two sentences to the reviewer " +
 		"about what you changed and why in `note`:\n\n" + j.Refine
@@ -750,7 +757,7 @@ const verifyPrompt = `Now verify your review before the reader sees it. For each
 1. Re-open the cited code at HEAD and confirm the claim is true. Run the command or read the file again; do not rely on memory.
 2. Check it is not already raised, answered or resolved in the review history. If a reviewer raised it and it is still open, keep it only if you add something new.
 3. Check it is inside this change, or, on a re-review, inside what changed since the reader's last review, unless it is must-fix.
-Drop anything you cannot confirm. Lower severity that is overstated, and drop findings the severity rules leave out.
+Drop anything you cannot confirm. Lower severity that is overstated, and drop findings the severity rules leave out. A finding with an ` + "`extension_id`" + ` is the exception: keep it at its severity or higher, and only move it to a better line.
 Check every point's verdict against the code at HEAD, and that a suggestion to close or draft the PR holds up; set it to none when it doesn't.
 Check every thread reply against its thread and the code: it is accurate and answers what was said. Fix a reply that is off rather than dropping it; empty its body only if sending it would be wrong.
 Then hold the summary, every body and every reply to the review instructions and the required skills, if any.
@@ -764,7 +771,7 @@ func (r *jobRun) finish(sessionID string, res *result, prevGuidance string, draf
 	for i := range replies {
 		replies[i].Body = gh.Clean(replies[i].Body)
 	}
-	res.Findings = allowed(res.Findings, r.cfg.Agent.Severities())
+	res.Findings = allowed(withExtensions(res.Findings, r.exts), r.cfg.Agent.Severities())
 	summary := res.Summary
 	if res.Verdict != "" {
 		summary = "**Verdict: " + strings.ReplaceAll(res.Verdict, "_", " ") + "**\n\n" + summary
