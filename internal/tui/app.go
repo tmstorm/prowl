@@ -291,7 +291,7 @@ func (m *Model) configChanged() tea.Cmd {
 // person looking can tell, and turns nerd_font on when it does.
 func (m *Model) askIcons() {
 	m.confirm = &confirm{
-		prompt: "Do you see three icons here: \uf09b  \ue725  \uf00c ? Yes turns on Nerd Font icons. [y/N]",
+		prompt: "Do you see three icons here: \uf09b  \ue725  \uf00c ? Yes turns on Nerd Font icons.",
 		yes: func() tea.Cmd {
 			if _, err := m.core.Update(func(c *config.Config) error { c.NerdFont = true; return nil }); err != nil {
 				m.fail(err.Error())
@@ -1526,8 +1526,7 @@ func (m *Model) leader(key string) tea.Cmd {
 		if onGitHub() {
 			if it.PR.IsDraft {
 				co, key := m.core, it.PR.Key()
-				m.mode = modeConfirm
-				m.confirm = &confirm{prompt: "mark " + prName(it.PR) + " ready for review? [y/N]", yes: func() tea.Cmd {
+				m.confirm = &confirm{prompt: "mark " + prName(it.PR) + " ready for review?", yes: func() tea.Cmd {
 					return func() tea.Msg { return threadDoneMsg{key, "marked ready for review", co.MarkReady(key)} }
 				}}
 				return nil
@@ -1638,8 +1637,7 @@ func (m *Model) agentAction(key string) tea.Cmd {
 			return nil
 		}
 		if target.Status == "running" {
-			m.mode = modeConfirm
-			m.confirm = &confirm{prompt: core.ReviewerTitle(target.Reviewer()) + " still shows as reviewing. Discard the run anyway? [y/N]", yes: discard}
+			m.confirm = &confirm{prompt: core.ReviewerTitle(target.Reviewer()) + " still shows as reviewing. Discard the run anyway?", yes: discard}
 			return nil
 		}
 		return discard()
@@ -1858,8 +1856,7 @@ func (m *Model) postSlack(it inbox.Item) tea.Cmd {
 	}
 	line := m.core.SlackLine(it, true)
 	co, key := m.core, it.PR.Key()
-	m.mode = modeConfirm
-	m.confirm = &confirm{prompt: "post in the " + where + " thread: " + ansi.Strip(line) + " [y/N]", yes: func() tea.Cmd {
+	m.confirm = &confirm{prompt: "post in the " + where + " thread: " + ansi.Strip(line), yes: func() tea.Cmd {
 		return func() tea.Msg {
 			where, err := co.PostInThread(key, line)
 			return slackPostedMsg{done: "posted in the " + where + " thread", err: err}
@@ -1886,8 +1883,7 @@ func (m *Model) dmAuthor(it inbox.Item) tea.Cmd {
 	}
 	line := m.core.SlackLine(it, false)
 	co := m.core
-	m.mode = modeConfirm
-	m.confirm = &confirm{prompt: "DM " + login + ": " + ansi.Strip(line) + " [y/N]", yes: func() tea.Cmd {
+	m.confirm = &confirm{prompt: "DM " + login + ": " + ansi.Strip(line), yes: func() tea.Cmd {
 		return func() tea.Msg {
 			return slackPostedMsg{done: "sent " + login + " a DM", err: co.DMAuthor(it)}
 		}
@@ -1906,8 +1902,7 @@ func (m *Model) askApprove(it inbox.Item) tea.Cmd {
 	if len(d.Comments) > 0 {
 		prompt += " with " + itoa(len(d.Comments)) + " inline comment(s)"
 	}
-	m.mode = modeConfirm
-	m.confirm = &confirm{prompt: prompt + "? [y/N]", yes: func() tea.Cmd { return m.submit(it, d) }}
+	m.confirm = &confirm{prompt: prompt + "?", yes: func() tea.Cmd { return m.submit(it, d) }}
 	return nil
 }
 
