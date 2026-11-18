@@ -198,7 +198,7 @@ mkdir -p "$dir"
 install -m 755 "$tmp/prowl" "$dir/prowl"
 ok "$("$dir/prowl" version | head -n 1) is in $dir"
 mandir=${XDG_DATA_HOME:-$HOME/.local/share}/man
-if "$dir/prowl" man "$mandir" 2>/dev/null; then
+if "$dir/prowl" man "$mandir" >/dev/null 2>&1; then
 	ok "the man pages are in $mandir"
 fi
 case ":$PATH:" in
