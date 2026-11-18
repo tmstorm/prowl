@@ -48,6 +48,12 @@ const SyncInstruction = "The reviewer just discussed this review with you in an 
 	"Return the complete review as it stands after that conversation: apply anything you agreed to add, drop, or reword. " +
 	"In `note`, say what changed in one or two sentences."
 
+// reviseReplies tells a revise or sync where a reply the reader asked for
+// goes: any thread with an id in the history, not only those waiting on them.
+const reviseReplies = "\n\nA reply to a review thread goes in `thread_replies` with the thread's id from the review history, " +
+	"whether or not the thread is waiting on the reader. Keep the replies you already drafted that still stand. " +
+	"Don't put a reply in `note` or the summary instead."
+
 // WorktreePath is where a reviewer's worktree for a PR lives. Each reviewer
 // (agent, or agent:profile) has its own, so reviews running at once don't
 // share a checkout.
@@ -169,11 +175,11 @@ const reviewSchema = `{
     },
     "thread_replies": {
       "type": "array",
-      "description": "one entry per thread waiting on the reader: the reply to send, or an empty body when there is nothing to say back",
+      "description": "one entry per thread waiting on the reader, plus any other thread the reader asked you to answer: the reply to send, or an empty body when there is nothing to say back",
       "items": {
         "type": "object",
         "properties": {
-          "thread_id": {"type": "string", "description": "the id of a thread listed as waiting on the reader"},
+          "thread_id": {"type": "string", "description": "the id of a thread listed in the review history"},
           "body": {"type": "string", "description": "the reply, written as the reader, ready to post; empty for no reply"}
         },
         "required": ["thread_id", "body"],
@@ -303,7 +309,7 @@ The PR head is checked out in the current directory. See the change with:
 		}
 		b.WriteString("\n")
 	}
-	if len(h.waiting) > 0 {
+	if h.waiting > 0 {
 		b.WriteString(replySection)
 	}
 	skills := cfg.Agent.Skills
@@ -510,7 +516,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 		})
 	}
 
-	var waiting map[string]store.ThreadReply
+	var threads map[string]store.ThreadReply
 	fresh := func() string {
 		runs, _ := st.Runs(key)
 		var hist history
@@ -521,7 +527,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 		} else {
 			_ = st.SetRunActivity(id, "reading review history")
 			hist = loadHistory(c, j, cfg.BotSet())
-			waiting = hist.waiting
+			threads = hist.threads
 			if hist.lastOid == "" && hist.reader != "" && hist.reader == j.Author {
 				hist.lastOid, hist.lastAt, hist.byAgent = lastRun(runs, store.Reviewer(j.Agent, j.Profile), id)
 			}
@@ -557,6 +563,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 			instruction = j.Refine
 			_ = st.AddReviewLog(key, store.Reviewer(be.Name(), j.Profile), "note", "synced the review from your chat")
 		}
+		instruction += reviseReplies
 		session := prev.SessionID
 		if !be.Resumes() {
 			instruction = fresh() + previousReview(prev) + instruction
@@ -570,10 +577,10 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 			_ = st.AddReviewLog(key, store.Reviewer(be.Name(), j.Profile), "agent", res.Note)
 		}
 		keepState(res.Findings, prev.Findings)
-		if waiting == nil && j.Dir == "" {
-			waiting = loadHistory(c, j, cfg.BotSet()).waiting
+		if threads == nil && j.Dir == "" {
+			threads = loadHistory(c, j, cfg.BotSet()).threads
 		}
-		return finish(st, be, id, key, sid, res, prev.Guidance, 0, cfg.Agent.Severities(), threadReplies(res, waiting, prev.Replies))
+		return finish(st, be, id, key, sid, res, prev.Guidance, 0, cfg.Agent.Severities(), threadReplies(res, threads, prev.Replies))
 	}
 
 	_ = st.ClearReviewLog(key, store.Reviewer(be.Name(), j.Profile))
@@ -594,7 +601,7 @@ func Run(cfg config.Config, st *store.Store, c *gh.Client, j Job) error {
 	if final.Note != "" {
 		_ = st.AddReviewLog(key, store.Reviewer(be.Name(), j.Profile), "agent", final.Note)
 	}
-	return finish(st, be, id, key, sid2, final, "", len(first.Findings), cfg.Agent.Severities(), threadReplies(final, waiting, nil))
+	return finish(st, be, id, key, sid2, final, "", len(first.Findings), cfg.Agent.Severities(), threadReplies(final, threads, nil))
 }
 
 // clean takes control characters out of everything the agent wrote: it
@@ -611,13 +618,13 @@ func (r *result) clean() {
 	}
 }
 
-// threadReplies keeps the agent's drafts for threads that are waiting on the
-// reader, with where each thread is and what it answers. A draft for any
-// other thread is dropped. A reply already sent stays marked sent.
-func threadReplies(res *result, waiting map[string]store.ThreadReply, prev []store.ThreadReply) []store.ThreadReply {
+// threadReplies keeps the agent's drafts for threads it may reply to, with
+// where each thread is and what it answers. A draft for any other thread is
+// dropped. A reply already sent stays marked sent.
+func threadReplies(res *result, threads map[string]store.ThreadReply, prev []store.ThreadReply) []store.ThreadReply {
 	var out []store.ThreadReply
 	for _, d := range res.ThreadReplies {
-		r, ok := waiting[d.ThreadID]
+		r, ok := threads[d.ThreadID]
 		if body := strings.TrimSpace(d.Body); ok && body != "" {
 			r.Body = body
 			r.Posted = slices.ContainsFunc(prev, func(p store.ThreadReply) bool { return p.ThreadID == r.ThreadID && p.Posted })

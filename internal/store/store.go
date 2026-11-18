@@ -270,8 +270,8 @@ type Point struct {
 	Why     string `json:"why"`
 }
 
-// ThreadReply is a reply an agent drafted to a review thread you are in,
-// for you to edit and send.
+// ThreadReply is a reply an agent drafted to a review thread, for you to
+// edit and send.
 type ThreadReply struct {
 	ThreadID string `json:"thread_id"`
 	Path     string `json:"path"`

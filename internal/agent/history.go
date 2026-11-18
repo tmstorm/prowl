@@ -24,9 +24,10 @@ type history struct {
 	base           string   // local review: the commit the branch left the default branch at
 	byAgent        bool     // lastOid is the reader's last AI review, not a review on GitHub
 	readerSince    []string // the reader's comments after their last review
-	// threads the reader is in where someone else spoke last, by thread ID:
-	// the ones the agent may draft a reply to
-	waiting map[string]store.ThreadReply
+	// threads the agent may draft a reply to, by ID: the ones waiting on the
+	// reader (in them, someone else spoke last) and every unresolved one
+	threads map[string]store.ThreadReply
+	waiting int
 }
 
 var htmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
@@ -141,7 +142,19 @@ func loadHistory(c *gh.Client, j Job, bots map[string]bool) history {
 		}
 	}
 
-	h.waiting = map[string]store.ThreadReply{}
+	h.threads = map[string]store.ThreadReply{}
+	reply := func(t gh.Thread) store.ThreadReply {
+		r := store.ThreadReply{ThreadID: t.ID, Path: t.Path, Line: t.Line}
+		if r.Line == 0 {
+			r.Line = t.OriginalLine
+		}
+		if n := len(t.Comments.Nodes); n > 0 {
+			last := t.Comments.Nodes[n-1]
+			r.To, r.Last = login(last.Author), clip(last.Body, 2000)
+		}
+		h.threads[t.ID] = r
+		return r
+	}
 	var wb strings.Builder
 	for _, t := range det.Threads {
 		cms := t.Comments.Nodes
@@ -152,12 +165,9 @@ func loadHistory(c *gh.Client, j Job, bots map[string]bool) history {
 		if login(last.Author) == h.reader || last.Author.IsBot(bots) {
 			continue
 		}
-		line := t.Line
-		if line == 0 {
-			line = t.OriginalLine
-		}
-		h.waiting[t.ID] = store.ThreadReply{ThreadID: t.ID, Path: t.Path, Line: line, To: login(last.Author), Last: clip(last.Body, 2000)}
-		fmt.Fprintf(&wb, "- id `%s` · %s:%d", t.ID, t.Path, line)
+		r := reply(t)
+		h.waiting++
+		fmt.Fprintf(&wb, "- id `%s` · %s:%d", t.ID, t.Path, r.Line)
 		if t.IsResolved {
 			wb.WriteString(" (resolved)")
 		}
@@ -173,7 +183,7 @@ func loadHistory(c *gh.Client, j Job, bots map[string]bool) history {
 	open, resolved := 0, 0
 	var ob strings.Builder
 	for _, t := range det.Threads {
-		if _, ok := h.waiting[t.ID]; ok {
+		if _, ok := h.threads[t.ID]; ok {
 			if !t.IsResolved {
 				open++
 			} else {
@@ -186,11 +196,8 @@ func loadHistory(c *gh.Client, j Job, bots map[string]bool) history {
 			continue
 		}
 		open++
-		line := t.Line
-		if line == 0 {
-			line = t.OriginalLine
-		}
-		fmt.Fprintf(&ob, "- %s:%d", t.Path, line)
+		r := reply(t)
+		fmt.Fprintf(&ob, "- id `%s` · %s:%d", t.ID, t.Path, r.Line)
 		if t.IsOutdated {
 			ob.WriteString(" (outdated)")
 		}
