@@ -224,6 +224,9 @@ func Uninstalling(cfg config.Config, f core.Footprint, ask bool) string {
 	for _, dir := range f.Skills {
 		items = append(items, "the prowl-findings skill in "+short(dir))
 	}
+	for _, page := range f.Man {
+		items = append(items, "the man page "+short(page))
+	}
 	for _, dir := range f.Dirs {
 		items = append(items, short(dir))
 	}

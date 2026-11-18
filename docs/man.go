@@ -23,10 +23,19 @@ var manPages = []struct {
 	{"config", "prowl-config", "5", "prowl's settings", "~/.config/prowl/config.toml", "prowl(1)"},
 }
 
+// ManPaths are where WriteMan puts the man pages under dir.
+func ManPaths(dir string) []string {
+	var out []string
+	for _, m := range manPages {
+		out = append(out, filepath.Join(dir, "man"+m.section, m.name+"."+m.section))
+	}
+	return out
+}
+
 // WriteMan writes the man pages under dir, as dir/man1/prowl.1 and
 // dir/man5/prowl-config.5, for prowl version.
 func WriteMan(dir, version string) error {
-	for _, m := range manPages {
+	for i, m := range manPages {
 		p, ok := Get(m.page)
 		if !ok {
 			return fmt.Errorf("man: no docs page %q", m.page)
@@ -36,7 +45,7 @@ func WriteMan(dir, version string) error {
 		fmt.Fprintf(&b, ".SH NAME\n%s \\- %s\n.SH SYNOPSIS\n%s\n.SH DESCRIPTION\n", roffText(m.name), roffText(m.summary), roffText(m.synopsis))
 		b.WriteString(roff(p.Markdown))
 		fmt.Fprintf(&b, ".SH SEE ALSO\n%s\n", roffText(m.seeAlso))
-		path := filepath.Join(dir, "man"+m.section, m.name+"."+m.section)
+		path := ManPaths(dir)[i]
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return fmt.Errorf("man: %w", err)
 		}

@@ -197,6 +197,9 @@ tar -xzf "$tmp/$archive" -C "$tmp" prowl
 mkdir -p "$dir"
 install -m 755 "$tmp/prowl" "$dir/prowl"
 ok "$("$dir/prowl" version | head -n 1) is in $dir"
+if "$dir/prowl" man "${XDG_DATA_HOME:-$HOME/.local/share}/man" 2>/dev/null; then
+	ok "man prowl and man prowl-config are installed"
+fi
 case ":$PATH:" in
 *":$dir:"*) ;;
 *) note "$dir is not on your PATH; add it to run prowl from anywhere" ;;

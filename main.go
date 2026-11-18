@@ -55,6 +55,7 @@ usage:
   prowl slack [--off]   sign in to Slack, or out
   prowl docs [TOPIC | PAGE SECTION]
                         read these docs
+  prowl man DIR         write the man pages under DIR
   prowl schema          the JSON Schema a command reviewer's review matches
   prowl version         print the version, and the newer release when one is out
   prowl update          install the newest release
@@ -99,6 +100,11 @@ func run(args []string) error {
 		return commandHelp(cmd)
 	case cmd == "docs":
 		return showDocs(args[1:])
+	case cmd == "man":
+		if len(rest) != 1 {
+			return errors.New("usage: prowl man DIR")
+		}
+		return docs.WriteMan(rest[0], core.BuildVersion())
 	}
 	cfg, err := config.Load()
 	if err != nil {

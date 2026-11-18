@@ -98,6 +98,14 @@ prowl docs [TOPIC | PAGE SECTION]
 
 With nothing, lists these docs. With a topic, prints what it leads to: a page (`prowl docs slack`), a section (`prowl docs snoozing`), a key or a setting (`prowl docs stale_after` prints its row with the table's header). A topic that isn't one lists the sections that mention it. `prowl docs PAGE SECTION` prints a section of a page by its heading or anchor. In a terminal the Markdown is rendered; piped, it's printed as it is.
 
+## prowl man
+
+```sh
+prowl man DIR
+```
+
+Writes the man pages for this version under DIR: `DIR/man1/prowl.1`, this page, and `DIR/man5/prowl-config.5`, the [config](config.md). The install script writes them to `~/.local/share/man`, where `man prowl` finds them, and `prowl update` writes them again with each new version. Packages install them under `/usr/share/man`.
+
 ## prowl schema
 
 ```sh
@@ -128,7 +136,7 @@ Installs the newest release over this prowl and prints what's new. A prowl from 
 prowl uninstall [--purge] [--yes]
 ```
 
-Lists what prowl put on this machine and asks before removing it: the background service, the review worktrees and `refs/prowl/*` refs it added to checkouts under `repo_roots`, the `prowl-findings` skill (only as this prowl writes it; a copy that differs stays, and it says so) and the `prowl` binary. If a step fails, the binary stays so you can run it again to finish. On Windows the binary goes once prowl exits, and its folder comes off your PATH when nothing else is in it.
+Lists what prowl put on this machine and asks before removing it: the background service, the review worktrees and `refs/prowl/*` refs it added to checkouts under `repo_roots`, the `prowl-findings` skill (only as this prowl writes it; a copy that differs stays, and it says so), the man pages the install script wrote, and the `prowl` binary. If a step fails, the binary stays so you can run it again to finish. On Windows the binary goes once prowl exits, and its folder comes off your PATH when nothing else is in it.
 
 - `--purge` also removes the config, the data (reviews, snoozes, caches) and the Slack token. Docker images for running tests stay; prowl prints the `docker rmi` that removes them.
 - `--yes` (`-y`) skips the question.
@@ -184,3 +192,4 @@ A `command` reviewer gets `PROWL_SCHEMA` (the path of a file with the JSON Schem
 | `~/.config/prowl/config.toml` | the config (see [Config](config.md)); `%APPDATA%\prowl\config.toml` on Windows |
 | `~/.local/share/prowl` | reviews, snoozes, review snapshots, drafts and the test caches; `%LOCALAPPDATA%\prowl` on Windows |
 | `~/.local/share/prowl/worktrees` | the throwaway checkouts reviews run in |
+| `~/.local/share/man` | the man pages, when the install script installed prowl |
