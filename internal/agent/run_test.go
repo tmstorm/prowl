@@ -378,26 +378,29 @@ git clone --quiet "$o" "${4%.cloning-*}"
 }
 
 // When an automated reviewer ran again, the agent reads only its latest
-// run: earlier ones are marked superseded and their points left out.
+// run: earlier ones are marked superseded and their points left out. An
+// account in the bots setting counts as one too.
 func TestSupersededBotRuns(t *testing.T) {
-	st, roots, bin, head := setupRun(t)
-	bot := &gh.Actor{Login: "axes", Typename: "Bot"}
-	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.PR("api", 7, "fix: a", "alice")}, Comments: map[int][]gh.Comment{7: {
-		{ID: "c1", Author: bot, CreatedAt: time.Now().Add(-2 * time.Hour), Body: "OLD RUN: nil map write in a.go"},
-		{ID: "c2", Author: bot, CreatedAt: time.Now().Add(-time.Hour), Body: "NEW RUN: no issues"},
-	}}}
-	c, err := fake.Client()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg := config.Default()
-	cfg.RepoRoots = []string{roots}
-	if err := agent.Run(cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude"}); err != nil {
-		t.Fatal(err)
-	}
-	prompt := read(filepath.Join(bin, "prompts"))
-	if strings.Contains(prompt, "OLD RUN") || !strings.Contains(prompt, "NEW RUN") || !strings.Contains(prompt, "superseded by its later comment") {
-		t.Errorf("the old bot run should be marked superseded and left out:\n%s", prompt)
+	for _, bot := range []*gh.Actor{{Login: "axes", Typename: "Bot"}, {Login: "ci-reviewer", Typename: "User"}} {
+		st, roots, bin, head := setupRun(t)
+		fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.PR("api", 7, "fix: a", "alice")}, Comments: map[int][]gh.Comment{7: {
+			{ID: "c1", Author: bot, CreatedAt: time.Now().Add(-2 * time.Hour), Body: "OLD RUN: nil map write in a.go"},
+			{ID: "c2", Author: bot, CreatedAt: time.Now().Add(-time.Hour), Body: "NEW RUN: no issues"},
+		}}}
+		c, err := fake.Client()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := config.Default()
+		cfg.RepoRoots = []string{roots}
+		cfg.Bots = []string{"ci-reviewer"}
+		if err := agent.Run(cfg, st, c, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Viewer: "me", Agent: "claude"}); err != nil {
+			t.Fatal(err)
+		}
+		prompt := read(filepath.Join(bin, "prompts"))
+		if strings.Contains(prompt, "OLD RUN") || !strings.Contains(prompt, "NEW RUN") || !strings.Contains(prompt, "superseded by its later comment") {
+			t.Errorf("%s's old run should be marked superseded and left out:\n%s", bot.Login, prompt)
+		}
 	}
 }
 

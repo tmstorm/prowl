@@ -172,10 +172,7 @@ func applyConfig(cfg config.Config) {
 	playful = cfg.Playful
 	agentTitle = agent.Title(cfg.Agent.Main())
 	reviewerOrder = cfg.Agent.Reviewers
-	botLogins = map[string]bool{}
-	for _, b := range cfg.Bots {
-		botLogins[b] = true
-	}
+	botLogins = cfg.BotSet()
 	repoTrim = cfg.RepoPrefix
 }
 

@@ -187,6 +187,15 @@ func (a Agent) Main() string {
 // Model is the configured model for the named agent ("" = its default).
 func (a Agent) Model(name string) string { return a.Models[name] }
 
+// BotSet is the bots setting as a set, for gh.Actor.IsBot.
+func (c Config) BotSet() map[string]bool {
+	out := map[string]bool{}
+	for _, b := range c.Bots {
+		out[b] = true
+	}
+	return out
+}
+
 // RunImage is the container image the agent's run tool uses for repo ("" = none).
 func (a Agent) RunImage(repo string) string {
 	if img := a.RunImages[repo]; img != "" {
