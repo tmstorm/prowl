@@ -652,7 +652,7 @@ func TestDocsViewer(t *testing.T) {
 	a.keys("d")
 	a.want("prowl docs · The inbox", "inbox · reviewing · ai-reviews")
 	a.keys("tab")
-	a.want("prowl docs · Reading and reviewing a PR")
+	a.want("prowl docs · Reviewing a PR")
 	a.keys("/", "review them; see")
 	a.want("inbox", "review them; see")
 	a.keys("enter")
@@ -685,7 +685,7 @@ func TestHelpCommand(t *testing.T) {
 	a.want("comment on the line", "edit a draft reply")
 	a.wantNot("nothing found")
 	a.keys("down", "enter")
-	a.want("prowl docs · AI reviews", "▌  c ", "edit a draft reply")
+	a.want("prowl docs · The TUI", "▌  c ", "edit a draft reply")
 	a.keys("esc", ":", "help nothing like it", "enter")
 	a.want("prowl docs", "nothing found")
 }
@@ -698,7 +698,7 @@ func TestDocsUnderCursor(t *testing.T) {
 	a.keys("K")
 	a.want("prowl docs · The inbox", "▌ needs review")
 	a.keys("esc", "l", "K")
-	a.want("prowl docs · Reading and reviewing a PR", "▌Overview")
+	a.want("prowl docs · Reviewing a PR", "▌Overview")
 	a.keys("esc", "space", ",", "K")
 	a.want("prowl docs · Config", "▌  group_by")
 	a.keys("esc")
@@ -726,7 +726,7 @@ func TestDocsCopy(t *testing.T) {
 	a.keys("v", "j", "esc")
 	a.want("prowl docs")
 	a.keys("k", "v", "j", "j", "y")
-	if got := a.copied(); !strings.HasPrefix(got, "Snoozing\n\n") || !strings.Contains(got, "snoozes a PR for 1 hour") {
+	if got := a.copied(); !strings.HasPrefix(got, "Snoozing\n\n") || !strings.Contains(got, "takes it out of the inbox") {
 		t.Fatalf("v j j y copied %q", got)
 	}
 	a.want("copied 3 lines", "prowl docs")
@@ -739,14 +739,14 @@ func TestDocsCopy(t *testing.T) {
 
 // Links in the docs show as [label] and follow from prose, from a table, and
 // within a page. Of two links with the same label, each goes to its own
-// target: reviewing.md links [Slack] to slack.md#keys in a table first. A
-// label in a table cell doesn't wrap: config.md's [Review profiles] sits
-// at the end of a long cell.
+// target: tui.md links [Reviewing a PR] to the page, then to its Posting a
+// review section. A label in a table cell doesn't wrap: config.md's [Review
+// profiles] sits at the end of a long cell.
 func TestDocsLinks(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}})
 	a.resize(160, 24)
-	a.keys("?", "d", "/", "runs it at login", "enter", "enter")
-	a.want("prowl docs · Running prowl", "at login and starts it now")
+	a.keys("?", "d", "/", "updates it instead. see [updating]", "enter", "enter")
+	a.want("prowl docs · The prowl command", "asks GitHub once a day")
 	a.keys("/", "see [watching a repo]", "enter")
 	a.want("prowl docs · Config", "see [Watching")
 	a.keys("enter")
@@ -755,6 +755,11 @@ func TestDocsLinks(t *testing.T) {
 	a.want("prowl docs · Slack", "Setting it up")
 	a.keys("/", "signed in to [slack]", "enter", "enter")
 	a.want("prowl docs · Slack", "Setting it up")
+	a.keys("/", "[reviewing a pr]", "enter", "enter")
+	a.want("prowl docs · Reviewing a PR", "A PR in prowl has three views")
+	a.keys("/", "[reviewing a pr]", "down", "enter", "enter")
+	a.want("prowl docs · Reviewing a PR", "Approving posts with no comment")
+	a.wantNot("A PR in prowl has three views")
 	a.keys("/", "[review profiles]", "enter", "enter")
 	a.want("prowl docs · AI reviews", "A profile is a named way to review")
 }

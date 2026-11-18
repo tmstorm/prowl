@@ -459,7 +459,7 @@ func TestSuggestAndAskForReview(t *testing.T) {
 	a.keys("esc")
 	a.want("pending comment saved")
 	a.keys("K")
-	a.want("prowl docs · Reading and reviewing a PR", "▌Inline comments and suggestions")
+	a.want("prowl docs · Reviewing a PR", "▌Inline comments and suggestions")
 	a.keys("esc")
 	a.keys("space", "A")
 	a.want("Ask for reviews on api#7")

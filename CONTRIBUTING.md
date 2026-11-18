@@ -75,6 +75,6 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org). rele
 - One change per pull request. Don't stack pull requests. Split the steps into commits instead.
 - The title uses the commit format. Pull requests are squashed, so the title becomes the commit and the changelog line.
 - The description says what changed and why, in prose a reviewer can follow without the diff.
-- Docs change with the code. A new key, setting or command updates the README or `docs/` in the same pull request. `?` in the app lists every key except the leader's, which go in the leader menu (`leaderKeys` in `internal/tui/app.go`).
+- Docs change with the code. A new key, setting or command updates the README or `docs/` in the same pull request. The pages describe what prowl does without keys, so they work for any frontend; keys go in `docs/tui.md` and commands in `docs/cli.md`. `?` in the app lists every key except the leader's, which go in the leader menu (`leaderKeys` in `internal/tui/app.go`).
 - Keep it reviewable in one sitting.
 - A change you can see in the interface re-records the README's GIF and screenshots: `vhs docs/demo/demo.tape`. They come from made-up data in `internal/ghtest/demo.go`, so they never show a real account.

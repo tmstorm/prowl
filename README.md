@@ -69,10 +69,11 @@ A few things worth doing next:
 
 - [Installing](docs/install.md): every install path and what prowl needs
 - [The inbox](docs/inbox.md): tabs and buckets, sorting, focusing, watching a repo, snoozing
-- [Reading and reviewing](docs/reviewing.md): keys, the diff, comments and suggestions, approving, asking for reviews
+- [Reviewing a PR](docs/reviewing.md): the overview, checks, threads, the diff, comments and suggestions, posting a review
 - [AI reviews](docs/ai-reviews.md): agents, models, profiles, severities, replies, closing or drafting, local reviews, hooks
 - [Slack](docs/slack.md): setting it up, shared PRs, reactions, posting and DMs
-- [Running prowl](docs/running.md): commands, background notifications, updates, uninstalling, logins
+- [The TUI](docs/tui.md): every key, the panes, the mouse
+- [The prowl command](docs/cli.md): every command, background notifications, updates, uninstalling, logins, environment
 - [Config](docs/config.md): every setting and its default
 
 `?` in prowl lists the keys, and `K` explains what the cursor is on. The same docs are built into prowl for the version you run: `:help` (or `?` then `d`) opens them in the app, `:help stale_after` opens them at a topic, and `prowl docs` prints them (`prowl docs stale_after` one topic).
