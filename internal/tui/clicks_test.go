@@ -53,7 +53,7 @@ func TestOptionsCoverAgentSettings(t *testing.T) {
 	})
 	a.resize(160, 80)
 	a.keys("space", ",")
-	a.want("Review profiles", "adversarial", "AI summary for new PRs", "Learn from my edits", "Claude summary model", "*: golang:1.27, acme/web: node:22")
+	a.want("Due after", "Review profiles", "adversarial", "AI summary for new PRs", "Learn from my edits", "Claude summary model", "*: golang:1.27, acme/web: node:22")
 }
 
 // The cursor's mark sits in the gutter, so it doesn't hide the first

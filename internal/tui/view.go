@@ -589,7 +589,7 @@ func (m *Model) needs() (int, *inbox.Item) {
 }
 
 // statusOwl is the statusline's owl: asleep when nothing needs you, awake
-// when something does, wide-eyed and red when something is overdue.
+// when something does, wide-eyed and red when something is due.
 func (m *Model) statusOwl() (face, color string) {
 	need, oldest := m.needs()
 	switch {
