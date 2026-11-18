@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.6.0](https://github.com/tmstorm/prowl/compare/v0.5.0...v0.6.0) (2026-11-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **tui:** three keys moved. `v` now starts a line selection in a PR, so press `V` to mark a file viewed. `yy` now copies the cursor's line of a PR, so press `ys` to copy the Slack line.
+
+### Features
+
+* build prowl's docs into the binary ([#43](https://github.com/tmstorm/prowl/issues/43)) ([bca08b6](https://github.com/tmstorm/prowl/commit/bca08b6edf453cb44a361678e56c040544ca7edc))
+* man pages for the prowl command and its config ([#77](https://github.com/tmstorm/prowl/issues/77)) ([7225556](https://github.com/tmstorm/prowl/commit/7225556fd97d7027124e6daf0c5fb768e65096da))
+* open the docs at a topic with :help, K and prowl docs TOPIC ([#51](https://github.com/tmstorm/prowl/issues/51)) ([f56ad54](https://github.com/tmstorm/prowl/commit/f56ad54a07d6dbea288843281b4d718176b764b5))
+* **tui:** move every menu and the docs viewer the same way ([#73](https://github.com/tmstorm/prowl/issues/73)) ([e5c10ec](https://github.com/tmstorm/prowl/commit/e5c10ec4ce22992eed3bf8a51bca9ce6941342af))
+* **tui:** select and copy lines in the docs viewer ([#55](https://github.com/tmstorm/prowl/issues/55)) ([fb7f866](https://github.com/tmstorm/prowl/commit/fb7f866d3e1c2534c7e94c40b86904e6316b6553))
+* **tui:** select and copy text from a PR ([c1acb95](https://github.com/tmstorm/prowl/commit/c1acb9552aa5bed7009dc2cd45289740c7d49713))
+
+
+### Bug Fixes
+
+* **agent:** count the bots setting as bots in a PR's history ([#60](https://github.com/tmstorm/prowl/issues/60)) ([fb76cb0](https://github.com/tmstorm/prowl/commit/fb76cb0edcc3de5cb551b8b9e5d34b133f6baf03))
+* **agent:** let a revise or chat draft a reply on any unresolved thread ([#71](https://github.com/tmstorm/prowl/issues/71)) ([c5b2192](https://github.com/tmstorm/prowl/commit/c5b2192cd5bc1dab9b6a49fcf91c6fb22fcadea4))
+* **agent:** test only what changed on a local re-review ([#45](https://github.com/tmstorm/prowl/issues/45)) ([9aefb5f](https://github.com/tmstorm/prowl/commit/9aefb5fb6bf7d89017a5003d83e7daedfab35888))
+* **cli:** print a command's help for -h instead of running it ([#61](https://github.com/tmstorm/prowl/issues/61)) ([c962e90](https://github.com/tmstorm/prowl/commit/c962e902915723137d221331c85bf11831870021))
+* **cli:** read every command's flags one way, and check logins in prowl watch as the TUI does ([4a47e96](https://github.com/tmstorm/prowl/commit/4a47e96d033703e9cb335e579f6089a3ca9e7306))
+* **config:** refuse an unknown group_by, chat_mode or theme ([4a47e96](https://github.com/tmstorm/prowl/commit/4a47e96d033703e9cb335e579f6089a3ca9e7306))
+* **gh:** post thread replies at once instead of in a pending review ([#59](https://github.com/tmstorm/prowl/issues/59)) ([28a4930](https://github.com/tmstorm/prowl/commit/28a4930ecc5134a32a4cf67c7f25c0239edd17a2))
+* **inbox:** keep a PR out of re-approve right after you approve it ([#52](https://github.com/tmstorm/prowl/issues/52)) ([ed5b1af](https://github.com/tmstorm/prowl/commit/ed5b1af90e4d7ee333445686aa10b1fb1bc4ef91))
+* **tui:** call stale_after's threshold due, not overdue ([#65](https://github.com/tmstorm/prowl/issues/65)) ([fc05dc4](https://github.com/tmstorm/prowl/commit/fc05dc4073387d6a1d47c31a4808d2ad7c0366ce))
+* **tui:** don't crash on &lt;leader&gt;O with no PR selected ([#44](https://github.com/tmstorm/prowl/issues/44)) ([a8327e3](https://github.com/tmstorm/prowl/commit/a8327e3723af6a35fee77501e4125c587ea14f76))
+* **tui:** don't offer the chat window choice on Windows ([#66](https://github.com/tmstorm/prowl/issues/66)) ([af1686f](https://github.com/tmstorm/prowl/commit/af1686ff177d4fcf2c84595f4b9e4511a314381a))
+* **tui:** draw the cursor mark in the gutter, not over the first character ([#50](https://github.com/tmstorm/prowl/issues/50)) ([1969771](https://github.com/tmstorm/prowl/commit/1969771bf6570e322759723d74d1871f5e6dbc9c))
+* **tui:** give editors and agent sessions the terminal, not a pipe ([#49](https://github.com/tmstorm/prowl/issues/49)) ([cb21b42](https://github.com/tmstorm/prowl/commit/cb21b42fe155add80050e44deb7985ccab4ea080))
+* **tui:** keep release news up when an onboarding tip comes or goes ([d40556d](https://github.com/tmstorm/prowl/commit/d40556d4f6c49322680a54ffef18be9e1f3ad522))
+* **tui:** say just now instead of now ago ([#62](https://github.com/tmstorm/prowl/issues/62)) ([3725812](https://github.com/tmstorm/prowl/commit/37258124d3152be7028eb37296bc5a2e4e61cac3))
+* **tui:** say the key list shows only a few leader keys ([#54](https://github.com/tmstorm/prowl/issues/54)) ([0013a5c](https://github.com/tmstorm/prowl/commit/0013a5cfd7e83f426aea60c7f21bcebb656d7260))
+* **tui:** scroll three lines on every wheel notch ([#47](https://github.com/tmstorm/prowl/issues/47)) ([2102312](https://github.com/tmstorm/prowl/commit/2102312c34dc754b6a1d2d1c78f3dd8ea0eab775))
+* **tui:** show &lt; and &gt; in release notes as written ([#79](https://github.com/tmstorm/prowl/issues/79)) ([5b29893](https://github.com/tmstorm/prowl/commit/5b29893efb60b5c4ff5b936f4f64b9d8521e61fa))
+* **tui:** show CONFIRM in the statusline for every yes-or-no question ([#63](https://github.com/tmstorm/prowl/issues/63)) ([04cb23d](https://github.com/tmstorm/prowl/commit/04cb23d1978568c8a758d3203c3bca5f4eb30d14))
+* **tui:** show the leader you use in the reviewers and Slack names hints ([#64](https://github.com/tmstorm/prowl/issues/64)) ([c8ada3a](https://github.com/tmstorm/prowl/commit/c8ada3a164da290531eb913b49d6341083041f7c))
+
+
+### Performance Improvements
+
+* **tui:** keep a markdown renderer per width ([#67](https://github.com/tmstorm/prowl/issues/67)) ([9c19c49](https://github.com/tmstorm/prowl/commit/9c19c4922ab43c9fe6f03ca0004326a391a24d5c))
+
 ## [0.5.0](https://github.com/tmstorm/prowl/compare/v0.4.0...v0.5.0) (2026-11-17)
 
 
