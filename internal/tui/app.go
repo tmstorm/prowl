@@ -1152,6 +1152,9 @@ func (m *Model) normal(key string) tea.Cmd {
 		m.mode = modeLeader
 		return nil
 	}
+	if v.motion(key) {
+		return nil
+	}
 	switch key {
 	case "0":
 		m.focus, m.fullPR = fList, false
@@ -1191,30 +1194,6 @@ func (m *Model) normal(key string) tea.Cmd {
 		m.searchInput.SetSuggestions(nil)
 		m.searchInput.Width = m.w - 4
 		return m.searchInput.Focus()
-	case "j", "down":
-		v.move(1)
-	case "k", "up":
-		v.move(-1)
-	case "gg", "home":
-		v.first()
-	case "G", "end":
-		v.last()
-	case "ctrl+d":
-		v.scrollBy(max(v.h/2, 1))
-	case "ctrl+u":
-		v.scrollBy(-max(v.h/2, 1))
-	case "ctrl+f", "pgdown":
-		v.scrollBy(max(v.h-2, 1))
-	case "ctrl+b", "pgup":
-		v.scrollBy(-max(v.h-2, 1))
-	case "ctrl+e":
-		v.scrollView(1)
-	case "ctrl+y":
-		v.scrollView(-1)
-	case "H", "M", "L":
-		v.screen(key[0])
-	case "zz", "zt", "zb":
-		v.align(key[1])
 	case "za", "zo", "zc", "zR", "zM":
 		if m.focus == fList {
 			m.listFold(key)

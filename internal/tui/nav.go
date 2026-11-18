@@ -74,6 +74,39 @@ func (v *nav) jump(i int) {
 	v.snap(dir)
 }
 
+// motion moves or scrolls for a vim motion key and says whether key was one.
+func (v *nav) motion(key string) bool {
+	switch key {
+	case "j", "down":
+		v.move(1)
+	case "k", "up":
+		v.move(-1)
+	case "gg", "home":
+		v.first()
+	case "G", "end":
+		v.last()
+	case "ctrl+d":
+		v.scrollBy(max(v.h/2, 1))
+	case "ctrl+u":
+		v.scrollBy(-max(v.h/2, 1))
+	case "ctrl+f", "pgdown":
+		v.scrollBy(max(v.h-2, 1))
+	case "ctrl+b", "pgup":
+		v.scrollBy(-max(v.h-2, 1))
+	case "ctrl+e":
+		v.scrollView(1)
+	case "ctrl+y":
+		v.scrollView(-1)
+	case "H", "M", "L":
+		v.screen(key[0])
+	case "zz", "zt", "zb":
+		v.align(key[1])
+	default:
+		return false
+	}
+	return true
+}
+
 func (v *nav) first()            { v.cur = 0; v.snap(1) }
 func (v *nav) last()             { v.cur = v.n - 1; v.snap(-1) }
 func (v *nav) gotoLine(line int) { v.cur = line - 1; v.snap(1) }
