@@ -16,14 +16,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/jedisct1/go-minisign"
 	"golang.org/x/mod/semver"
 
-	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/store"
 )
@@ -250,7 +248,7 @@ func (co *Core) Upgrade(ctx context.Context, exe string) (string, error) {
 		return "", fmt.Errorf("update to %s: %w", r.Tag, err)
 	}
 	_ = co.st.SetInstalled(r.Tag)
-	if dir := ManDir(); dir != "" && slices.ContainsFunc(docs.ManPaths(dir), exists) {
+	if dir := ManDir(); dir != "" {
 		_ = exec.CommandContext(ctx, exe, "man", dir).Run()
 	}
 	return r.Tag, nil

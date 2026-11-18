@@ -19,7 +19,6 @@ import (
 
 	"github.com/jedisct1/go-minisign"
 
-	"github.com/tmstorm/prowl/docs"
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
@@ -204,8 +203,9 @@ func TestUpgrade(t *testing.T) {
 	}
 }
 
-// An update writes the man pages again with the new prowl, where the
-// install script put them, so they describe the version that runs.
+// An update writes the man pages with the new prowl where the install
+// script puts them, so they describe the version that runs, including for
+// an install from before prowl had man pages.
 func TestUpgradeWritesMan(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows has no man pages")
@@ -214,9 +214,6 @@ func TestUpgradeWritesMan(t *testing.T) {
 	fake := &ghtest.GitHub{}
 	co, _ := newCore(t, fake)
 	exe := installed(t)
-	if err := docs.WriteMan(core.ManDir(), "0.1.0"); err != nil {
-		t.Fatal(err)
-	}
 	calls := filepath.Join(t.TempDir(), "calls")
 	publish(t, fake, "v0.2.0", "#!/bin/sh\necho \"$@\" > "+calls+"\n", signer(t, 1, true), false)
 	if _, err := co.Upgrade(context.Background(), exe); err != nil {
