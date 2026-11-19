@@ -805,7 +805,7 @@ func (r *jobRun) finish(sessionID string, res *result, prevGuidance string, draf
 	for i := range replies {
 		replies[i].Body = gh.Clean(replies[i].Body)
 	}
-	res.Findings = allowed(withExtensions(res.Findings, r.exts), r.cfg.Agent.Severities())
+	res.Findings = allowed(withExtensions(res.Findings, r.exts, r.log), r.cfg.Agent.Severities())
 	summary := res.Summary
 	if res.Verdict != "" {
 		summary = "**Verdict: " + strings.ReplaceAll(res.Verdict, "_", " ") + "**\n\n" + summary

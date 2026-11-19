@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/logs"
 	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/store"
 )
@@ -166,15 +168,26 @@ func (r *jobRun) runExtensions(ctx context.Context, changed []string) {
 // runExtension claims extension e on the head and runs it, or waits for the
 // review that holds it and uses its result.
 func (r *jobRun) runExtension(ctx context.Context, e config.Extension, in ExtensionInput, started time.Time) reviewExtension {
+	log := r.log.With("extension", e.Name)
+	holder := ""
 	for {
 		run, claimed, err := r.st.ClaimExtension(r.key, e.Name, in.Head, r.reviewer(), os.Getpid(), e.Limit()+extensionGrace, started)
 		switch {
 		case err != nil:
+			log.Warn("extension claim failed", "err", err)
 			return reviewExtension{name: e.Name, note: "failed: " + err.Error()}
 		case claimed:
-			return r.execute(ctx, e, run, in)
+			if holder != "" {
+				log.Info("extension taken over", "from", holder)
+			}
+			return r.execute(ctx, e, run, in, log)
 		case run.Status != "running":
+			log.Info("extension result reused", "from", run.Holder, "status", run.Status)
 			return fromExtensionRun(run)
+		}
+		if holder != run.Holder {
+			holder = run.Holder
+			log.Info("waiting for extension", "holder", holder)
 		}
 		_ = r.st.SetRunActivity(r.id, fmt.Sprintf("waiting for %s, running in the %s review", e.Name, run.Holder))
 		select {
@@ -189,13 +202,23 @@ func (r *jobRun) runExtension(ctx context.Context, e config.Extension, in Extens
 // a re-review it gets its own last run's findings and the files changed
 // since: those outside them are kept as they were, and nothing changed
 // means the last run stands.
-func (r *jobRun) execute(ctx context.Context, e config.Extension, run *store.ExtensionRun, in ExtensionInput) reviewExtension {
+func (r *jobRun) execute(ctx context.Context, e config.Extension, run *store.ExtensionRun, in ExtensionInput, log *slog.Logger) reviewExtension {
+	start := time.Now()
 	finish := func(out ExtensionOutput, errMsg string) reviewExtension {
 		b, _ := json.Marshal(out)
-		if errMsg != "" {
+		switch {
+		case errMsg != "":
 			b = nil
+			fmt.Fprintln(os.Stderr, errMsg)
+			log.Warn("extension failed", "took", since(start), "err", firstLine(errMsg))
+		case strings.HasPrefix(out.Summary, "unchanged since "):
+			log.Info("extension unchanged", "since", gh.Short(in.Since))
+		default:
+			log.Info("extension done", "took", since(start), "findings", len(out.Findings), "re_review", in.Since != "")
 		}
-		_, _ = r.st.FinishExtension(run, string(b), errMsg)
+		if ok, _ := r.st.FinishExtension(run, string(b), errMsg); !ok {
+			log.Warn("extension result dropped", "why", "another review took the run over after its deadline")
+		}
 		run.Status, run.Output, run.Error = "done", string(b), errMsg
 		if errMsg != "" {
 			run.Status = "failed"
@@ -323,15 +346,19 @@ func extensionSection(exts []reviewExtension) string {
 // withExtensions holds the review to what the extensions found: a finding
 // the reviewer dropped goes back in as the extension reported it, and one
 // it lowered gets its severity back.
-func withExtensions(fs []store.Finding, exts []reviewExtension) []store.Finding {
+func withExtensions(fs []store.Finding, exts []reviewExtension, log *slog.Logger) []store.Finding {
 	for _, x := range exts {
 		for _, ef := range x.findings {
 			i := slices.IndexFunc(fs, func(f store.Finding) bool { return f.ExtensionID == ef.ExtensionID })
 			if i < 0 {
+				if ef.Path == "" {
+					log.Info("extension finding put back", "id", ef.ExtensionID, "why", "the reviewer dropped it")
+				}
 				fs = append(fs, ef)
 				continue
 			}
 			if slices.Index(extensionSeverities, ef.Severity) < slices.Index(extensionSeverities, fs[i].Severity) {
+				log.Info("extension finding severity restored", "id", ef.ExtensionID, "from", fs[i].Severity, "to", ef.Severity)
 				fs[i].Severity = ef.Severity
 			}
 		}
@@ -363,11 +390,18 @@ func baseWorktree(wt, base string) (string, func(), error) {
 // reviewer, as drafts. A notification says how it went.
 func runExtensionJob(ctx context.Context, cfg config.Config, st *store.Store, j Job) error {
 	_ = st.SetExtensionJobPID(j.ExtensionJob, os.Getpid())
+	log := slog.With("job", j.ExtensionJob, "pr", j.Key(), "extension", j.Extension)
+	log.Info("extension job started", "head", gh.Short(j.Head))
+	start := time.Now()
 	out, added, err := onDemand(ctx, cfg, st, j)
 	b, _ := json.Marshal(out)
 	errMsg := ""
 	if err != nil {
 		errMsg = err.Error()
+		fmt.Fprintln(os.Stderr, errMsg)
+		log.Error("extension job failed", "took", since(start), "err", firstLine(errMsg), "output", logs.RunPath(fmt.Sprintf("ext-%d", j.ExtensionJob)))
+	} else {
+		log.Info("extension job done", "took", since(start), "findings", len(out.Findings), "added", added)
 	}
 	if ferr := st.FinishExtensionJob(j.ExtensionJob, string(b), errMsg, added); ferr != nil && err == nil {
 		err = ferr

@@ -1,15 +1,18 @@
 package agent_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -133,12 +136,21 @@ func TestExtensionsInReview(t *testing.T) {
 		{Name: "broken", Repos: []string{"*"}, Command: "echo boom >&2; exit 1"},
 		{Name: "web-only", Repos: []string{"o/web"}, Command: "echo should not run; exit 1"},
 	}
+	var logged bytes.Buffer
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
 	if err := agent.Run(t.Context(), cfg, st, nil, reviewJob(head)); err != nil {
 		t.Fatal(err)
 	}
 	run := latestRun(t, st, "claude")
 	if run == nil || run.Status != "done" {
 		t.Fatalf("run: %+v", run)
+	}
+	for _, want := range []string{`msg="extension done"`, "extension=perf", "findings=2", `msg="extension failed"`, "extension=broken",
+		`msg="extension finding put back" run=`, "id=perf-1"} {
+		if !strings.Contains(logged.String(), want) {
+			t.Errorf("the log is missing %q:\n%s", want, logged.String())
+		}
 	}
 	var got []string
 	for _, f := range run.Findings {
@@ -215,6 +227,9 @@ func TestExtensionWaitsForHolder(t *testing.T) {
 	if err != nil || !claimed {
 		t.Fatal(err)
 	}
+	var logged syncBuffer
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
 	done := make(chan error, 1)
 	go func() { done <- agent.Run(context.Background(), cfg, st, nil, reviewJob(head)) }()
 	deadline := time.Now().Add(10 * time.Second)
@@ -235,6 +250,10 @@ func TestExtensionWaitsForHolder(t *testing.T) {
 	}
 	if n := extensionRuns(perf); n != 0 {
 		t.Fatalf("perf ran %d times beside codex's run", n)
+	}
+	if !strings.Contains(logged.String(), `msg="waiting for extension"`) || !strings.Contains(logged.String(), "holder=codex") ||
+		!strings.Contains(logged.String(), `msg="extension result reused"`) {
+		t.Errorf("log: %s", logged.String())
 	}
 	notes, _ := st.Notes("o/api#7", "claude")
 	if !slices.ContainsFunc(notes, func(n store.Note) bool { return n.Text == "extensions: perf: from codex" }) {
@@ -336,9 +355,15 @@ func TestExtensionOnDemand(t *testing.T) {
 		jobs, _ := st.ExtensionJobs()
 		return jobs["o/api#7"][0]
 	}
+	var logged bytes.Buffer
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
 	job := runJob()
 	if job.Status != "done" || job.Added != 1 || !strings.Contains(job.Output, "job 12 started") {
 		t.Fatalf("job: %+v", job)
+	}
+	if !strings.Contains(logged.String(), `msg="extension job done"`) || !strings.Contains(logged.String(), "extension=factory") || !strings.Contains(logged.String(), "added=1") {
+		t.Errorf("log: %s", logged.String())
 	}
 	if again := runJob(); again.Status != "done" || again.Added != 0 {
 		t.Fatalf("a second run added its finding again: %+v", again)
@@ -407,4 +432,22 @@ func TestExtensionJobDeadline(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+}
+
+// syncBuffer is a buffer a log can write to from another goroutine.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
