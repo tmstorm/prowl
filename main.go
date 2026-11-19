@@ -718,10 +718,25 @@ func review(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Stor
 		noun = "finding"
 	}
 	fmt.Fprintf(os.Stderr, "done in %s · %d %s, %d must-fix\n", time.Since(start).Round(time.Second), total, noun, mustFix)
+	if tip := perfTip(cfg, co, key); tip != "" {
+		fmt.Fprintln(os.Stderr, tip)
+	}
 	if mustFix > 0 {
 		return exitCode(2)
 	}
 	return nil
+}
+
+// perfTip tells you once per repo, after a review of it, that prowl can
+// measure its benchmarks, unless perf already runs on it. Agents that use
+// only the CLI see it too.
+func perfTip(cfg config.Config, co *core.Core, key string) string {
+	repo, _, _ := strings.Cut(strings.TrimPrefix(key, "local:"), "@")
+	if slices.ContainsFunc(cfg.Agent.ExtensionsFor(repo, false), func(e config.Extension) bool { return e.Name == "perf" }) ||
+		!co.FirstTime("perf tip "+repo) {
+		return ""
+	}
+	return fmt.Sprintf("tip: prowl can measure %s's benchmarks on the base and the head of each review and report regressions; see prowl docs performance review", repo)
 }
 
 // showProgress keeps one line on stderr saying what prowl is doing, from
