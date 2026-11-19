@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +13,8 @@ import (
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
+	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/ghtest"
 	"github.com/tmstorm/prowl/internal/logs"
 	"github.com/tmstorm/prowl/internal/store"
 )
@@ -80,6 +85,54 @@ func TestFlags(t *testing.T) {
 	} {
 		if err := run(c.args); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("prowl %s: %v, want %q", strings.Join(c.args, " "), err, c.want)
+		}
+	}
+}
+
+// prowl list --json prints what needs you as one JSON array a status bar can
+// read, and an empty array, not null, when nothing does.
+func TestListJSON(t *testing.T) {
+	for _, v := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME"} {
+		t.Setenv(v, t.TempDir())
+	}
+	t.Setenv("PATH", t.TempDir())
+	for _, c := range []struct {
+		prs  []gh.PR
+		want string
+	}{
+		{nil, "[]\n"},
+		{[]gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: retry on timeout", "bob"), "me"), ghtest.PR("web", 2, "feat: dark mode", "carol")}, ""},
+	} {
+		client, err := (&ghtest.GitHub{PRs: c.prs}).Client()
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, err := store.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		err = list(context.Background(), config.Default(), client, st, []string{"--json"}, &out)
+		st.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.want != "" {
+			if out.String() != c.want {
+				t.Errorf("no PRs: got %q, want %q", out.String(), c.want)
+			}
+			continue
+		}
+		var prs []listedPR
+		if err := json.Unmarshal(out.Bytes(), &prs); err != nil {
+			t.Fatalf("not JSON: %v\n%s", err, out.String())
+		}
+		if len(prs) != 1 {
+			t.Fatalf("got %d PRs, want only the one requesting a review: %+v", len(prs), prs)
+		}
+		got := prs[0]
+		if got.PR != "o/api#1" || got.Bucket != "needs review" || got.Author != "bob" || got.URL != "https://github.com/o/api/pull/1" || got.Since.IsZero() {
+			t.Errorf("got %+v", got)
 		}
 	}
 }
