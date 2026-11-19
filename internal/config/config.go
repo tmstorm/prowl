@@ -507,13 +507,17 @@ func (c Config) EditorCmd() string {
 
 // Update changes settings without clobbering edits made to the file by
 // someone else (a hand edit, another prowl): it re-reads the file, applies
-// fn, and saves.
+// fn, and saves. A change that leaves a broken extension isn't saved, since
+// prowl wouldn't start with it.
 func Update(fn func(c *Config) error) (Config, error) {
 	c, err := Load()
 	if err != nil {
 		return c, err
 	}
 	if err := fn(&c); err != nil {
+		return c, err
+	}
+	if err := c.Agent.checkExtensions(); err != nil {
 		return c, err
 	}
 	return c, c.Save()
@@ -659,33 +663,45 @@ func (c Config) Save() error {
 	if len(c.Agent.Extensions) == 0 {
 		w("# [[agent.extensions]]\n# name = \"licenses\"\n# command = \"acme-license-check\"\n# repos = [\"*\"]\n# timeout = \"2m\"\n")
 	}
-	for _, e := range c.Agent.Extensions {
-		w("[[agent.extensions]]\nname = %q\n", e.Name)
-		if e.Command != "" {
-			w("command = %q\n", e.Command)
-		}
-		w("repos = %s\n", list(e.Repos))
-		if e.Timeout.Duration > 0 {
-			w("timeout = %q\n", e.Timeout.String())
-		}
-		for _, f := range []struct {
-			key string
-			on  bool
-		}{{"needs_base", e.NeedsBase}, {"on_demand", e.OnDemand}, {"confirm", e.Confirm}} {
-			if f.on {
-				w("%s = true\n", f.key)
-			}
-		}
-		if e.Key != "" {
-			w("key = %q\n", e.Key)
-		}
-	}
+	b.WriteString(ExtensionsTOML(c.Agent.Extensions, "agent.extensions"))
 
 	tmp := Path() + ".tmp"
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
 		return fmt.Errorf("save: %w", err)
 	}
 	return os.Rename(tmp, Path())
+}
+
+// ExtensionsTOML writes extensions as an array of TOML tables named table,
+// leaving out what is at its default.
+func ExtensionsTOML(exts []Extension, table string) string {
+	var b strings.Builder
+	for _, e := range exts {
+		fmt.Fprintf(&b, "[[%s]]\nname = %q\n", table, e.Name)
+		if e.Command != "" {
+			fmt.Fprintf(&b, "command = %q\n", e.Command)
+		}
+		q := make([]string, len(e.Repos))
+		for i, r := range e.Repos {
+			q[i] = strconv.Quote(r)
+		}
+		fmt.Fprintf(&b, "repos = [%s]\n", strings.Join(q, ", "))
+		if e.Timeout.Duration > 0 {
+			fmt.Fprintf(&b, "timeout = %q\n", e.Timeout.String())
+		}
+		for _, f := range []struct {
+			key string
+			on  bool
+		}{{"needs_base", e.NeedsBase}, {"on_demand", e.OnDemand}, {"confirm", e.Confirm}} {
+			if f.on {
+				fmt.Fprintf(&b, "%s = true\n", f.key)
+			}
+		}
+		if e.Key != "" {
+			fmt.Fprintf(&b, "key = %q\n", e.Key)
+		}
+	}
+	return b.String()
 }
 
 // mapLines writes a TOML table's entries sorted by key, or example when empty.

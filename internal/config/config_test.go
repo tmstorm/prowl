@@ -275,3 +275,23 @@ func TestExtensionsRefused(t *testing.T) {
 		}
 	}
 }
+
+// A change that would leave a broken extension is refused before it is
+// saved, so prowl still starts.
+func TestUpdateRefusesBrokenExtensions(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := config.Default().Save(); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(config.Path())
+	_, err := config.Update(func(c *config.Config) error {
+		c.Agent.Extensions = []config.Extension{{Name: "licenses", Repos: []string{"*"}}}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), `"licenses": set command`) {
+		t.Fatalf("got %v", err)
+	}
+	if after, _ := os.ReadFile(config.Path()); string(after) != string(before) {
+		t.Fatal("the broken extension was saved")
+	}
+}

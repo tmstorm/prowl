@@ -116,7 +116,7 @@ reviewers = ["codex"]
 
 ## Extensions
 
-An extension is a program prowl runs during every review of the repos you enable it for. Its output goes to the reviewer and into the findings, so a team can add a check, such as licenses or benchmarks, without changing prowl. It runs code, so it's opt-in per repo:
+An extension is a program prowl runs during every review of the repos you enable it for. Its output goes to the reviewer and into the findings, so a team can add a check, such as licenses or benchmarks, without changing prowl. It runs code, so it's opt-in per repo, in the config or under Extensions in the options:
 
 ```toml
 [[agent.extensions]]

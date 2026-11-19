@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"slices"
@@ -216,6 +217,45 @@ var options = []option{
 		show: func(*config.Config) bool { return floatingChat },
 		get:  func(c *config.Config) string { return c.ChatMode },
 		set:  func(c *config.Config, v string) error { c.ChatMode = v; return nil }},
+	{section: "Extensions", title: "Extensions", key: "extensions", help: "Programs that run during reviews of the repos listed, or on demand under <leader>e. perf is built in. Opens your editor.", kind: optEditor,
+		summary: func(c *config.Config) string {
+			var names []string
+			for _, e := range c.Agent.Extensions {
+				names = append(names, e.Name)
+			}
+			return cmp.Or(strings.Join(names, ", "), "none")
+		},
+		get: extensionsText,
+		set: func(c *config.Config, v string) error {
+			var in struct {
+				Extensions []config.Extension `toml:"extensions"`
+			}
+			md, err := toml.Decode(v, &in)
+			if err != nil {
+				return fmt.Errorf("extensions: %w", err)
+			}
+			if unknown := md.Undecoded(); len(unknown) > 0 {
+				keys := make([]string, len(unknown))
+				for i, k := range unknown {
+					keys[i] = k.String()
+				}
+				return fmt.Errorf("extensions: unknown %s; each extension starts with [[extensions]]", strings.Join(keys, ", "))
+			}
+			c.Agent.Extensions = in.Extensions
+			return nil
+		}},
+	{section: "Extensions", title: "Perf must-fix", key: "perf.must_fix", help: "A benchmark regression this many percent or more is must-fix. 0 never.", kind: optText,
+		get: func(c *config.Config) string { return strconv.Itoa(c.Agent.Perf.MustFix) },
+		set: func(c *config.Config, v string) error {
+			n, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(v), "%")))
+			if err != nil || n < 0 {
+				return fmt.Errorf("%q isn't a percent: use a whole number, 0 for never", v)
+			}
+			c.Agent.Perf.MustFix = n
+			return nil
+		}},
+	mapOpt("Extensions", "Bench commands", "perf.bench_commands", "# owner/name = the command that runs the repo's benchmarks, for perf. {dirs}\n# becomes the changed directories. \"*\" is the fallback. A Go repo without\n# one runs go test -bench on the changed packages.\n# \"acme/web\" = \"pnpm vitest bench --run {dirs}\"\n",
+		func(c *config.Config) *map[string]string { return &c.Agent.Perf.BenchCommands }),
 	{section: "GitHub", title: "Orgs", key: "orgs", empty: "all of GitHub", help: "Orgs to pull PRs from, comma separated. Empty: your PRs across all of GitHub.", kind: optText,
 		get: func(c *config.Config) string { return strings.Join(c.Orgs, ", ") },
 		set: func(c *config.Config, v string) error { c.Orgs = splitList(v); return nil }},
@@ -273,7 +313,7 @@ var options = []option{
 // docs write it, e.g. [agent.models] for models.claude.
 func optionTopic(key string) string {
 	table, _, _ := strings.Cut(key, ".")
-	for _, t := range []string{table, "[" + table + "]", "[agent." + table + "]", "[[agent." + table + "]]"} {
+	for _, t := range []string{table, "[" + table + "]", "[agent." + key + "]", "[agent." + table + "]", "[[agent." + table + "]]"} {
 		if tags := docs.Find(t); len(tags) > 0 && tags[0].Tag == t {
 			return t
 		}
@@ -319,6 +359,27 @@ func profilesText(c *config.Config) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// extensionsText is the file the Extensions option opens: what extensions
+// are and an example, then yours.
+func extensionsText(c *config.Config) string {
+	return `# Extensions: programs prowl runs during every review of the repos listed,
+# whose output goes to the reviewer and into the findings, or with
+# on_demand = true when you pick them under ` + leader + `e. perf is built in and
+# takes no command. Only name, repos and command (unless built in) are needed.
+#
+# [[extensions]]
+# name = "licenses"
+# command = "acme-license-check"
+# repos = ["*"]               # or ["acme/web"]
+# timeout = "2m"              # default 10m
+# needs_base = true           # also check out the PR's base
+# on_demand = true            # run when you pick it, not during reviews
+# key = "l"                   # its letter under ` + leader + `e
+# confirm = true              # ask before running it
+
+` + config.ExtensionsTOML(c.Agent.Extensions, "extensions")
 }
 
 func quoteList(xs []string) string {
