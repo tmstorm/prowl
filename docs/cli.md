@@ -26,7 +26,7 @@ On Linux, check it with `systemctl --user status prowl-watch` and follow its log
 ## prowl list
 
 ```sh
-prowl list
+prowl list [--json]
 ```
 
 Syncs once and prints the PRs that need you, one per line, for scripts and status bars. Snoozed PRs are left out. Each line is the bucket, the PR, its title, its author and why it needs you:
@@ -37,6 +37,8 @@ re-check       acme/web#7                   feat: dark mode (carol) — pushed s
 ```
 
 It prints nothing when nothing needs you.
+
+- `--json` prints them as one JSON array, `[]` when nothing needs you. Each PR has `bucket`, `pr` (`owner/repo#N`), `title`, `author`, `reason`, `url` and `since`, when it landed in your court.
 
 ## prowl review
 

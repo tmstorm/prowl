@@ -44,7 +44,7 @@ usage:
   prowl watch           send desktop notifications as PRs need you
   prowl service install | uninstall
                         run prowl watch at login
-  prowl list            print what needs you
+  prowl list [--json]   print what needs you
   prowl review [--detach] [--agent NAME[:PROFILE]]
                         review the branch checked out here; exits 2 on a must-fix
   prowl findings [PR] [--all] [--prompt] [--json] [--agent NAME[:PROFILE]]
@@ -235,26 +235,52 @@ func run(args []string) (err error) {
 	case "watch":
 		return watch(ctx, cfg, c, st)
 	case "list":
-		co := withSlack(core.New(cfg, c, st))
-		co.Quiet()
-		if _, err := co.Refresh(ctx); err != nil {
-			return err
-		}
-		in := co.Inbox()
-		for _, it := range in.Items {
-			if !it.Bucket.NeedsMe() {
-				continue
-			}
-			if _, ok := in.Snoozed[it.Key]; ok {
-				continue
-			}
-			fmt.Printf("%-14s %-28s %s (%s) — %s\n", it.Bucket, it.Key, it.Title, it.Author, it.Reason)
-		}
-		return nil
+		return list(ctx, cfg, c, st, args[1:], os.Stdout)
 	default:
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", cmd)
 	}
+}
+
+// listedPR is one line of prowl list, and one object of prowl list --json.
+type listedPR struct {
+	Bucket string    `json:"bucket"`
+	PR     string    `json:"pr"`
+	Title  string    `json:"title"`
+	Author string    `json:"author"`
+	Reason string    `json:"reason"`
+	URL    string    `json:"url"`
+	Since  time.Time `json:"since"`
+}
+
+// list prints the PRs that need you, snoozed ones left out, as lines or as a
+// JSON array for status bars.
+func list(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store, args []string, w io.Writer) error {
+	fs := flagSet("list")
+	asJSON := fs.Bool("json", false, "")
+	if err := parseNoArgs(fs, args); err != nil {
+		return err
+	}
+	co := withSlack(core.New(cfg, c, st))
+	co.Quiet()
+	if _, err := co.Refresh(ctx); err != nil {
+		return err
+	}
+	in := co.Inbox()
+	prs := []listedPR{}
+	for _, it := range in.Items {
+		if _, snoozed := in.Snoozed[it.Key]; !it.Bucket.NeedsMe() || snoozed {
+			continue
+		}
+		prs = append(prs, listedPR{it.Bucket.String(), it.Key, it.Title, it.Author, it.Reason, it.URL, it.Since})
+	}
+	if *asJSON {
+		return json.NewEncoder(w).Encode(prs)
+	}
+	for _, p := range prs {
+		fmt.Fprintf(w, "%-14s %-28s %s (%s) — %s\n", p.Bucket, p.PR, p.Title, p.Author, p.Reason)
+	}
+	return nil
 }
 
 func watch(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store) error {
