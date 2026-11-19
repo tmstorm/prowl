@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/tmstorm/prowl/internal/logs"
 )
 
 // -h on any command prints its section of the prowl command's docs instead
@@ -74,6 +77,45 @@ func TestFlags(t *testing.T) {
 	} {
 		if err := run(c.args); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("prowl %s: %v, want %q", strings.Join(c.args, " "), err, c.want)
+		}
+	}
+}
+
+// prowl logs prints the end of the log, the lines of the last --since, or
+// one run's lines with what its agent printed.
+func TestLogs(t *testing.T) {
+	home := t.TempDir()
+	for _, v := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "APPDATA", "LOCALAPPDATA"} {
+		t.Setenv(v, filepath.Join(home, v))
+	}
+	at := func(ago time.Duration) string { return time.Now().Add(-ago).Format("2006-01-02T15:04:05") }
+	log := "time=" + at(2*time.Hour) + ` level=INFO msg=synced proc=watch pid=1 prs=3` + "\n" +
+		"time=" + at(10*time.Minute) + ` level=ERROR msg="review failed" proc=agent-run pid=2 run=412 pr=o/api#7` + "\n" +
+		"time=" + at(5*time.Minute) + ` level=INFO msg="review done" proc=agent-run pid=3 run=4120 pr=o/api#8` + "\n"
+	if err := os.MkdirAll(filepath.Dir(logs.RunPath("412")), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(logs.Path(), []byte(log), 0o600)
+	_ = os.WriteFile(logs.RunPath("412"), []byte("claude: rate limited\n"), 0o600)
+	for _, c := range []struct {
+		args      []string
+		want, not []string
+	}{
+		{[]string{"logs"}, []string{"prs=3", "run=412 ", "run=4120"}, nil},
+		{[]string{"logs", "--since", "1h"}, []string{"run=412 ", "run=4120"}, []string{"prs=3"}},
+		{[]string{"logs", "--since", "1d"}, []string{"prs=3", "run=412 ", "run=4120"}, nil},
+		{[]string{"logs", "--run", "412"}, []string{`msg="review failed"`, "what run 412 printed", "claude: rate limited"}, []string{"prs=3", "run=4120"}},
+	} {
+		out := stdout(t, func() error { return run(c.args) })
+		for _, w := range c.want {
+			if !strings.Contains(out, w) {
+				t.Errorf("prowl %s is missing %q:\n%s", strings.Join(c.args, " "), w, out)
+			}
+		}
+		for _, n := range c.not {
+			if strings.Contains(out, n) {
+				t.Errorf("prowl %s printed %q:\n%s", strings.Join(c.args, " "), n, out)
+			}
 		}
 	}
 }

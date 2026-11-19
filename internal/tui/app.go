@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strconv"
@@ -496,7 +497,13 @@ func (m *Model) openFetched(msg prFetchedMsg) tea.Cmd {
 }
 
 func (m *Model) info(s string) { m.msg, m.msgErr, m.msgAt = oneLine(s), false, time.Now() }
-func (m *Model) fail(s string) { m.msg, m.msgErr, m.msgAt = oneLine(s), true, time.Now() }
+
+// fail shows an error on the bottom row, and logs it so it can be found
+// after it's gone.
+func (m *Model) fail(s string) {
+	m.msg, m.msgErr, m.msgAt = oneLine(s), true, time.Now()
+	slog.Warn("error shown", "err", m.msg)
+}
 
 // oneLine keeps a message to the bottom row: the lines of one with several,
 // such as errors.Join's, joined with "; " and without repeats.

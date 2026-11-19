@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/logs"
 	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/store"
 )
@@ -75,12 +77,6 @@ func (j Job) Key() string {
 	return gh.PRKey(j.Repo, j.Number)
 }
 
-func logDir() string { return filepath.Join(config.DataDir(), "logs") }
-
-func LogPath(key string) string {
-	return filepath.Join(logDir(), strings.NewReplacer("/", "_", "#", "_", ":", "_").Replace(key)+".log")
-}
-
 // Launch starts a detached `prowl agent-run` process for the job. The job
 // goes in a file, not the command line: a PR description can be longer than
 // a command line allows, and the process list shows command lines.
@@ -89,13 +85,6 @@ func Launch(st *store.Store, j Job) error {
 	if err != nil {
 		return fmt.Errorf("launch: %w", err)
 	}
-	_ = os.MkdirAll(logDir(), 0o700)
-	logf, err := os.Create(LogPath(j.Key() + "-" + store.Reviewer(j.Agent, j.Profile)))
-	if err != nil {
-		return fmt.Errorf("launch: %w", err)
-	}
-	defer logf.Close()
-
 	if j.Refine != "" && j.RunID != 0 {
 		err = st.RestartRun(j.RunID, 0)
 	} else {
@@ -104,6 +93,14 @@ func Launch(st *store.Store, j Job) error {
 	if err != nil {
 		return fmt.Errorf("launch: %w", err)
 	}
+	logPath := logs.RunPath(strconv.FormatInt(j.RunID, 10))
+	_ = os.MkdirAll(filepath.Dir(logPath), 0o700)
+	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		_ = st.FailRun(j.RunID, err.Error())
+		return fmt.Errorf("launch: %w", err)
+	}
+	defer logf.Close()
 	payload, _ := json.Marshal(j)
 	jobFile := filepath.Join(config.DataDir(), "jobs", fmt.Sprintf("%d.json", j.RunID))
 	if err := os.MkdirAll(filepath.Dir(jobFile), 0o700); err != nil {
@@ -472,6 +469,9 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, c *gh.Client, 
 		r.j.RunID = id
 	}
 	r.id = r.j.RunID
+	r.log = slog.With("run", r.id, "pr", r.key, "reviewer", store.Reviewer(r.j.Agent, r.j.Profile))
+	r.started = time.Now()
+	r.log.Info(r.kind()+" started", "head", gh.Short(r.j.Head))
 	_ = st.SetRunPID(r.id, os.Getpid())
 	be, err := For(cfg, r.j.Agent)
 	if err != nil {
@@ -482,9 +482,11 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, c *gh.Client, 
 	r.wt = r.j.Dir
 	if r.wt == "" {
 		_ = st.SetRunActivity(r.id, "preparing worktree")
+		r.phase = "preparing worktree"
 		if r.wt, err = prepareWorktree(cfg, r.j); err != nil {
 			return r.fail(err)
 		}
+		r.log.Info("worktree ready", "took", since(r.started))
 	}
 	r.tools = ToolServerCommand(cfg, be, r.j.Repo, r.wt, r.j.Dir != "", false)
 	if r.j.Refine != "" {
@@ -506,6 +508,17 @@ type jobRun struct {
 	wt      string   // the checkout the agent works in
 	tools   []string // the tool server command, nil for none
 	threads map[string]store.ThreadReply
+	log     *slog.Logger
+	started time.Time
+	phase   string // what the run is doing, for a failure's log line
+}
+
+// kind is "revise" for a revise or sync, else "review", for log lines.
+func (r *jobRun) kind() string {
+	if r.j.Refine != "" {
+		return "revise"
+	}
+	return "review"
 }
 
 func (r *jobRun) reviewer() string { return store.Reviewer(r.be.Name(), r.j.Profile) }
@@ -516,6 +529,8 @@ func (r *jobRun) notify(title, body string) {
 
 // fail ends the run with err, or for a revise keeps the review as it was.
 func (r *jobRun) fail(err error) error {
+	r.log.Error(r.kind()+" failed", "phase", r.phase, "took", since(r.started),
+		"err", err, "output", logs.RunPath(strconv.FormatInt(r.id, 10)))
 	if a := r.be.Auth(); a.Known && !a.LoggedIn {
 		err = fmt.Errorf("%s isn't logged in; log in again from prowl's accounts", Title(r.be.Name()))
 	}
@@ -532,6 +547,9 @@ func (r *jobRun) fail(err error) error {
 
 func (r *jobRun) turn(input, session, phase string) (*result, string, error) {
 	_ = r.st.SetRunActivity(r.id, phase)
+	r.phase = phase
+	start := time.Now()
+	defer func() { r.log.Info("turn done", "phase", phase, "took", since(start)) }()
 	return r.be.Review(Turn{
 		Dir: r.wt, Prompt: input, Session: session, Model: r.cfg.Agent.Model(r.be.Name()),
 		Schema:      Schema(r.cfg.Agent.Severities()),
@@ -778,7 +796,10 @@ func (r *jobRun) finish(sessionID string, res *result, prevGuidance string, draf
 	if err := st.SaveAction(id, action, res.PRReason); err != nil {
 		return fmt.Errorf("finish: %w", err)
 	}
-	r.notify(Title(r.be.Name())+" review ready", readyText(r.key, &store.Run{Findings: res.Findings, Replies: replies, Points: res.Points, Action: action}))
+	run := &store.Run{Findings: res.Findings, Replies: replies, Points: res.Points, Action: action}
+	r.log.Info(r.kind()+" done", "took", since(r.started),
+		"findings", len(res.Findings), "must_fix", run.MustFix(), "replies", len(replies), "points", len(res.Points))
+	r.notify(Title(r.be.Name())+" review ready", readyText(r.key, run))
 	return nil
 }
 
@@ -1078,10 +1099,15 @@ func git(dir string, args ...string) error {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		err = fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		slog.Debug("git failed", "dir", dir, "err", err)
+		return err
 	}
 	return nil
 }
+
+// since is how long ago t was, to a tenth of a second, for log lines.
+func since(t time.Time) time.Duration { return time.Since(t).Round(100 * time.Millisecond) }
 
 // gitOutput is what git prints in dir.
 func gitOutput(dir string, args ...string) ([]byte, error) {

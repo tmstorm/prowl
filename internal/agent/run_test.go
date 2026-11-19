@@ -1,6 +1,8 @@
 package agent_test
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -559,5 +561,40 @@ func TestRemoveReview(t *testing.T) {
 	}
 	if refs := strings.TrimSpace(git(t, clone, "for-each-ref", "--format=%(refname)", "refs/prowl/")); refs != "refs/prowl/pr-12-claude" {
 		t.Errorf("refs left: %q", refs)
+	}
+}
+
+// A review logs when it starts, each turn and how long it took, and how it
+// ended: its counts, or the phase it failed in and why, with where its
+// output is. Nothing from the PR's text reaches the log.
+func TestRunLogs(t *testing.T) {
+	st, roots, bin, head := setupRun(t)
+	var buf bytes.Buffer
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	job := agent.Job{Repo: "o/api", Number: 7, Title: "feat: secret title", Body: "a secret plan", Author: "alice", Base: "main", Head: head, Agent: "claude"}
+	if err := agent.Run(t.Context(), cfg, st, nil, job); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`msg="review started" run=`, `pr=o/api#7 reviewer=claude head=` + gh.Short(head),
+		`msg="turn done"`, "phase=reviewing", `phase="verifying findings"`, `msg="review done"`, "findings=1 must_fix=0"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("the log is missing %q:\n%s", want, buf.String())
+		}
+	}
+
+	buf.Reset()
+	_ = os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\ncat > /dev/null\necho 'rate limited' >&2\nexit 1\n"), 0o755)
+	if err := agent.Run(t.Context(), cfg, st, nil, job); err == nil {
+		t.Fatal("the review should fail")
+	}
+	if !strings.Contains(buf.String(), `msg="review failed"`) || !strings.Contains(buf.String(), "phase=reviewing") ||
+		!strings.Contains(buf.String(), "err=") || !strings.Contains(buf.String(), "output="+filepath.Join(config.DataDir(), "logs", "runs")) {
+		t.Errorf("the failure isn't logged with its phase, cause and output:\n%s", buf.String())
+	}
+	if strings.Contains(buf.String(), "secret") {
+		t.Errorf("the PR's text reached the log:\n%s", buf.String())
 	}
 }

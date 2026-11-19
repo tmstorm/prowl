@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -131,9 +132,11 @@ func (c *Client) renew(ctx context.Context, expired string, expiredErr error) er
 		if c.adoptSaved(expired) {
 			return nil
 		}
+		slog.Warn("couldn't renew the Slack token", "err", err)
 		return fmt.Errorf("renew the Slack token: %w; sign in again with `prowl slack`", err)
 	}
 	c.token = g.token(c.token.ClientID)
+	slog.Info("renewed the Slack token")
 	return SaveToken(c.token)
 }
 
@@ -158,10 +161,12 @@ func (c *Client) send(ctx context.Context, method, access string, params url.Val
 	if access != "" {
 		req.Header.Set("Authorization", "Bearer "+access)
 	}
+	start := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("slack %s: %w", method, err)
 	}
+	slog.Debug("slack", "method", method, "status", resp.StatusCode, "took", time.Since(start).Round(time.Millisecond))
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return fmt.Errorf("slack %s: rate limited, retry after %ss", method, resp.Header.Get("Retry-After"))

@@ -427,3 +427,25 @@ func TestFetchInboxCancel(t *testing.T) {
 		t.Fatalf("got %v, want context.Canceled", err)
 	}
 }
+
+// The client keeps how many requests GitHub said were left, for the sync's
+// log line.
+func TestRateLeft(t *testing.T) {
+	c, err := gh.NewWith(api.ClientOptions{Host: "github.com", AuthToken: "test", Transport: roundTrip(func(r *http.Request) *http.Response {
+		resp := reply(200, `{"data":{"viewer":{"login":"me"}}}`)
+		resp.Header.Set("X-RateLimit-Remaining", "4321")
+		return resp
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := c.RateLeft(); n != -1 {
+		t.Fatalf("before any request: %d", n)
+	}
+	if _, err := c.Viewer(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if n := c.RateLeft(); n != 4321 {
+		t.Fatalf("rate left: %d", n)
+	}
+}

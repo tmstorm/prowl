@@ -184,7 +184,7 @@ func (co *Core) pruneLocals() {
 	locals, _ := co.st.Locals()
 	for _, l := range locals {
 		if gone(l) {
-			_ = co.st.DeleteLocal(l.Key)
+			logErr("forget local review "+l.Key, co.st.DeleteLocal(l.Key))
 		}
 	}
 }

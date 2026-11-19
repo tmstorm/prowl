@@ -98,7 +98,8 @@ func (co *Core) Run(ctx context.Context) {
 		exe := Executable()
 		for {
 			if co.notifies() {
-				_, _ = co.AutoUpgrade(ctx, exe)
+				_, err := co.AutoUpgrade(ctx, exe)
+				logErr("update", err)
 			}
 			co.emit(Event{Kind: ReleaseChanged})
 			select {

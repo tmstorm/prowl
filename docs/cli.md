@@ -90,6 +90,14 @@ prowl slack [--off]
 
 Signs you in to Slack, so PRs shared there show in your inbox. The first time, it asks for your team's Slack app's client ID (or prints the manifest to create the app), then opens Slack in your browser. `--off` signs out and deletes the token. See [Slack](slack.md#setting-it-up).
 
+## prowl logs
+
+```sh
+prowl logs [--since 1h] [--run ID] [--path]
+```
+
+Prints the end of prowl's log, which every prowl process appends to: the TUI, `prowl watch` and the reviews running in the background. Each line says when, how bad, which process and what happened, such as a sync with how many PRs and how long it took, a review's phases, or an error with its cause. `--since 1h` prints the lines of the last hour (`2d` for two days), `--run 412` the lines of one review with what its agent printed, and `--path` the folder the log and the reviews' output are in. The log holds IDs, counts, durations and errors, never a token, a PR's text, a prompt or a review, so you can paste it into an issue. `PROWL_DEBUG=1` adds every GitHub and Slack call with its timing.
+
 ## prowl docs
 
 ```sh
@@ -182,6 +190,7 @@ A `command` agent can join in with `login_command` (what logging in runs) and `s
 | `CLAUDE_CONFIG_DIR`, `CODEX_HOME` | where Claude Code's and Codex's own settings and skills are |
 | `PROWL_INSTALL_DIR` | where the install script puts `prowl` (`~/.local/bin` by default) |
 | `PROWL_YES` | `1` answers yes to the install script's questions |
+| `PROWL_DEBUG` | `1` adds every GitHub and Slack call to the log (see [prowl logs](#prowl-logs)) |
 
 A `command` reviewer gets `PROWL_SCHEMA` (the path of a file with the JSON Schema its review must match) and `PROWL_MODEL` (its model from `[agent.models]`) in its environment.
 
@@ -192,4 +201,5 @@ A `command` reviewer gets `PROWL_SCHEMA` (the path of a file with the JSON Schem
 | `~/.config/prowl/config.toml` | the config (see [Config](config.md)); `%APPDATA%\prowl\config.toml` on Windows |
 | `~/.local/share/prowl` | reviews, snoozes, review snapshots, drafts and the test caches; `%LOCALAPPDATA%\prowl` on Windows |
 | `~/.local/share/prowl/worktrees` | the throwaway checkouts reviews run in |
+| `~/.local/share/prowl/logs` | `prowl.log`, the log, and `runs/`, what each review's agent printed, kept 30 days |
 | `~/.local/share/man` | the man pages, when the install script installed prowl |

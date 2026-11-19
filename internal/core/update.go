@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -206,7 +207,7 @@ func (co *Core) Upgrade(ctx context.Context, exe string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_ = co.st.SetRelease(store.Release{Checked: time.Now(), Tag: r.Tag, Notes: r.Notes, URL: r.URL})
+	logErr("save the release", co.st.SetRelease(store.Release{Checked: time.Now(), Tag: r.Tag, Notes: r.Notes, URL: r.URL}))
 	last, _ := co.st.Release()
 	have := running
 	if semver.IsValid(last.Installed) && semver.Compare(last.Installed, have) > 0 {
@@ -247,7 +248,8 @@ func (co *Core) Upgrade(ctx context.Context, exe string) (string, error) {
 	if err := replace(exe, b); err != nil {
 		return "", fmt.Errorf("update to %s: %w", r.Tag, err)
 	}
-	_ = co.st.SetInstalled(r.Tag)
+	logErr("record the install", co.st.SetInstalled(r.Tag))
+	slog.Info("updated", "from", running, "to", r.Tag, "exe", exe)
 	if dir := ManDir(); dir != "" {
 		_ = exec.CommandContext(ctx, exe, "man", dir).Run()
 	}
@@ -292,7 +294,7 @@ func (co *Core) AutoUpgrade(ctx context.Context, exe string) (string, error) {
 	v, err := co.Upgrade(ctx, exe)
 	switch {
 	case errors.Is(err, errUnverified):
-		_ = co.st.SetAttempted(r.Latest)
+		logErr("record the install attempt", co.st.SetAttempted(r.Latest))
 	case err != nil:
 		co.mu.Lock()
 		co.updateRetry = time.Now().Add(retryEvery)
