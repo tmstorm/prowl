@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // Alive reports whether a process exists.
@@ -19,6 +20,15 @@ func Alive(pid int) bool {
 // Detach makes cmd outlive the parent (own session, no controlling terminal).
 func Detach(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+}
+
+// KillGroup starts cmd in a process group of its own, and makes cancelling
+// its context kill the whole group. Killing only the shell would leave its
+// children holding the output pipes open, so Wait would never return.
+func KillGroup(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
 }
 
 // Restart replaces this process with a fresh run of exe, same arguments and

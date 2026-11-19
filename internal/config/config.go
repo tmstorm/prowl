@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 )
@@ -80,6 +81,83 @@ type Agent struct {
 	RunImages          map[string]string `toml:"run_images"`
 	RunCacheGB         int               `toml:"run_cache_gb"`
 	Profiles           []Profile         `toml:"profiles"`
+	Extensions         []Extension       `toml:"extensions"`
+}
+
+// Extension is a program prowl runs during reviews of the repos it is
+// enabled for, or on demand under <leader>e.
+type Extension struct {
+	Name      string   `toml:"name"`
+	Command   string   `toml:"command"`
+	Repos     []string `toml:"repos"`
+	Timeout   Duration `toml:"timeout"`
+	NeedsBase bool     `toml:"needs_base"`
+	OnDemand  bool     `toml:"on_demand"`
+	Key       string   `toml:"key"`
+	Confirm   bool     `toml:"confirm"`
+}
+
+// DefaultExtensionTimeout is how long an extension runs without a timeout set.
+const DefaultExtensionTimeout = 10 * time.Minute
+
+// Limit is how long the extension may run.
+func (e Extension) Limit() time.Duration {
+	if e.Timeout.Duration <= 0 {
+		return DefaultExtensionTimeout
+	}
+	return e.Timeout.Duration
+}
+
+// For is whether the extension is enabled for repo ("*" is every repo).
+func (e Extension) For(repo string) bool {
+	return slices.Contains(e.Repos, repo) || slices.Contains(e.Repos, "*")
+}
+
+// ExtensionsFor are the extensions enabled for repo: the ones that run on
+// every review, or with onDemand the ones under <leader>e.
+func (a Agent) ExtensionsFor(repo string, onDemand bool) []Extension {
+	var out []Extension
+	for _, e := range a.Extensions {
+		if e.OnDemand == onDemand && e.For(repo) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// extensionListKeys are the letters the list of on-demand extensions keeps
+// for itself, so none can be an extension's key.
+const extensionListKeys = "jkgGHMLqv"
+
+func (a Agent) checkExtensions() error {
+	names := map[string]bool{}
+	keys := map[string]string{}
+	for _, e := range a.Extensions {
+		switch {
+		case e.Name == "":
+			return fmt.Errorf("[[agent.extensions]]: every extension needs a name")
+		case strings.TrimSpace(e.Command) == "":
+			return fmt.Errorf("extension %q: set command", e.Name)
+		case len(e.Repos) == 0:
+			return fmt.Errorf("extension %q: set repos, e.g. [\"acme/web\"] or [\"*\"]", e.Name)
+		case e.Key != "" && !e.OnDemand:
+			return fmt.Errorf("extension %q: key is only for on_demand extensions", e.Name)
+		case e.Key != "" && (len(e.Key) != 1 || !unicode.IsLetter(rune(e.Key[0]))):
+			return fmt.Errorf("extension %q: key = %q: use one letter", e.Name, e.Key)
+		case e.Key != "" && strings.Contains(extensionListKeys, e.Key):
+			return fmt.Errorf("extension %q: key = %q: the list of extensions uses %s to move, show a result and close; pick another letter", e.Name, e.Key, extensionListKeys)
+		}
+		k := fmt.Sprint(e.Name, e.OnDemand)
+		if names[k] {
+			return fmt.Errorf("extension %q is listed twice", e.Name)
+		}
+		names[k] = true
+		if other, ok := keys[e.Key]; ok && e.Key != "" {
+			return fmt.Errorf("extensions %q and %q both use key %q", other, e.Name, e.Key)
+		}
+		keys[e.Key] = e.Name
+	}
+	return nil
 }
 
 // Profile is a named way to review: extra instructions, and optionally its
@@ -355,6 +433,9 @@ func Load() (Config, error) {
 			return cfg, fmt.Errorf("%s = %q: use %s or %s", e.key, e.val, strings.Join(q[:len(q)-1], ", "), q[len(q)-1])
 		}
 	}
+	if err := cfg.Agent.checkExtensions(); err != nil {
+		return cfg, err
+	}
 	if len(cfg.Agent.Reviewers) == 0 {
 		cfg.Agent.Reviewers = Default().Agent.Reviewers
 	}
@@ -540,6 +621,27 @@ func (c Config) Save() error {
 		}
 		if len(p.Skills) > 0 {
 			w("skills = %s\n", list(p.Skills))
+		}
+	}
+	w("\n# Extensions: programs prowl runs during reviews of the repos listed, whose\n# output goes to the reviewer and into the findings, or with on_demand = true\n# when you pick them under <leader>e.\n")
+	if len(c.Agent.Extensions) == 0 {
+		w("# [[agent.extensions]]\n# name = \"licenses\"\n# command = \"acme-license-check\"\n# repos = [\"*\"]\n# timeout = \"2m\"\n")
+	}
+	for _, e := range c.Agent.Extensions {
+		w("[[agent.extensions]]\nname = %q\ncommand = %q\nrepos = %s\n", e.Name, e.Command, list(e.Repos))
+		if e.Timeout.Duration > 0 {
+			w("timeout = %q\n", e.Timeout.String())
+		}
+		for _, f := range []struct {
+			key string
+			on  bool
+		}{{"needs_base", e.NeedsBase}, {"on_demand", e.OnDemand}, {"confirm", e.Confirm}} {
+			if f.on {
+				w("%s = true\n", f.key)
+			}
+		}
+		if e.Key != "" {
+			w("key = %q\n", e.Key)
 		}
 	}
 

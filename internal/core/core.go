@@ -44,6 +44,7 @@ type Core struct {
 	peek        map[string]bool  // repos (owner/name) whose open PRs are fetched this session
 	opened      map[string]prRef // PRs opened by link this session, kept through syncs
 	runs        map[string][]*Review
+	extJobs     map[string][]ExtensionJob   // each PR's newest job of each on-demand extension
 	pending     map[string][]DraftComment   // your inline comments, by PR, until the next review
 	drafted     map[string]store.Review     // agent drafts on their way out, as prowl wrote them
 	unsent      map[string]Draft            // reviews that failed to post, by PR, until reopened

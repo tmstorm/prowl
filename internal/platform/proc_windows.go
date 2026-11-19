@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf16"
 )
 
@@ -30,6 +31,11 @@ func Alive(pid int) bool {
 func Detach(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 }
+
+// KillGroup makes Wait give up on cmd's output pipes 5 seconds after its
+// context is cancelled and cmd is killed, since its children may hold them
+// open. Windows has no process groups to kill them with.
+func KillGroup(cmd *exec.Cmd) { cmd.WaitDelay = 5 * time.Second }
 
 // Restart starts a fresh run of exe with the same arguments; the caller
 // exits after it returns nil.

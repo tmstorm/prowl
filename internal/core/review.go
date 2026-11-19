@@ -30,7 +30,7 @@ type EventKind int
 const (
 	Syncing        EventKind = iota // a background sync started
 	InboxChanged                    // a background sync finished
-	RunsChanged                     // an agent review started, progressed or finished
+	RunsChanged                     // an agent review or on-demand extension started, progressed or finished
 	SummaryChanged                  // an auto summary was written, or failed
 	AuthChanged                     // the periodic login check finished
 	ConfigChanged                   // the config file was edited outside prowl
@@ -290,7 +290,8 @@ func Current(reviews []*Review) []*Review {
 	return out
 }
 
-// loadRuns reloads every review run and reports whether any changed.
+// loadRuns reloads every review run and on-demand extension job, and
+// reports whether any changed.
 func (co *Core) loadRuns() bool {
 	stored, err := co.st.AllRuns()
 	if err != nil {
@@ -302,12 +303,22 @@ func (co *Core) loadRuns() bool {
 			all[key] = append(all[key], reviewOf(r))
 		}
 	}
-	co.mu.Lock()
-	defer co.mu.Unlock()
-	if reflect.DeepEqual(all, co.runs) {
+	storedJobs, err := co.st.ExtensionJobs()
+	if err != nil {
 		return false
 	}
-	co.runs = all
+	jobs := make(map[string][]ExtensionJob, len(storedJobs))
+	for key, js := range storedJobs {
+		for _, j := range js {
+			jobs[key] = append(jobs[key], extensionJobOf(j))
+		}
+	}
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	if reflect.DeepEqual(all, co.runs) && reflect.DeepEqual(jobs, co.extJobs) {
+		return false
+	}
+	co.runs, co.extJobs = all, jobs
 	return true
 }
 
@@ -391,6 +402,29 @@ func (co *Core) launch(key, reviewer, refine string, sync bool) (string, error) 
 	return store.Reviewer(job.Agent, job.Profile), nil
 }
 
+// prJob is a job on the PR key: the PR as GitHub has it, or for a local
+// review, the branch in your checkout.
+func (co *Core) prJob(key string) (agent.Job, error) {
+	co.mu.Lock()
+	it, ok := co.item(key)
+	viewer := co.inbox.Viewer
+	co.mu.Unlock()
+	if !ok {
+		return agent.Job{}, errors.New("not in the inbox")
+	}
+	pr := it.PR
+	job := agent.Job{Repo: pr.Repository.NameWithOwner, Number: pr.Number, Title: pr.Title,
+		Author: pr.Author.Name(), Base: pr.BaseRefName, Head: pr.HeadRefOid, Body: pr.Body, Viewer: viewer}
+	if pr.Local() {
+		l, err := co.local(key)
+		if err != nil {
+			return agent.Job{}, err
+		}
+		job.Dir, job.Branch, job.Head = l.Dir, l.Branch, git(l.Dir, "rev-parse", "HEAD")
+	}
+	return job, nil
+}
+
 // job is the agent job that reviews key with reviewer, revising its current
 // run when refine is set.
 func (co *Core) job(key, reviewer, refine string, sync bool) (agent.Job, error) {
@@ -409,34 +443,27 @@ func (co *Core) job(key, reviewer, refine string, sync bool) (agent.Job, error) 
 	reviewer = store.Reviewer(be.Name(), profile)
 	title := ReviewerTitle(reviewer)
 	co.mu.Lock()
-	it, ok := co.item(key)
-	viewer := co.inbox.Viewer
 	cur := Latest(co.runs[key], reviewer)
 	co.mu.Unlock()
-	if !ok {
-		return agent.Job{}, fmt.Errorf("review %s: not in the inbox", key)
-	}
 	if cur != nil && cur.Status == ReviewRunning {
 		return agent.Job{}, fmt.Errorf("%s is already reviewing %s", title, key)
 	}
 	if err := co.loggedIn(be.Name()); err != nil {
 		return agent.Job{}, err
 	}
-	pr := it.PR
-	job := agent.Job{
-		Repo: pr.Repository.NameWithOwner, Number: pr.Number, Title: pr.Title,
-		Author: pr.Author.Name(), Base: pr.BaseRefName, Head: pr.HeadRefOid,
-		Body: pr.Body, Refine: refine, Viewer: viewer, Sync: sync, Agent: be.Name(), Profile: profile,
+	job, err := co.prJob(key)
+	if err != nil {
+		return agent.Job{}, fmt.Errorf("review %s: %w", key, err)
 	}
-	if pr.Local() {
+	job.Refine, job.Sync, job.Agent, job.Profile = refine, sync, be.Name(), profile
+	if job.Dir != "" && refine == "" {
 		l, err := co.local(key)
 		if err != nil {
 			return agent.Job{}, err
 		}
-		if err := unchanged(l); refine == "" && err != nil {
+		if err := unchanged(l); err != nil {
 			return agent.Job{}, err
 		}
-		job.Dir, job.Branch, job.Head = l.Dir, l.Branch, git(l.Dir, "rev-parse", "HEAD")
 	}
 	if refine != "" {
 		if cur == nil {

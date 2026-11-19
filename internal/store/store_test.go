@@ -2,9 +2,14 @@ package store_test
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -152,5 +157,186 @@ INSERT INTO pr_state VALUES ('o/r#1', 2, 're-requested', 'abc', 'fix: one', 'htt
 			t.Fatal(err)
 		}
 		st.Close()
+	}
+}
+
+// Of many processes claiming one extension run at once, one wins and the
+// rest see its run: on a head nobody claimed, and on one whose holder exited.
+func TestClaimExtensionOnce(t *testing.T) {
+	exited := exec.Command("true")
+	if err := exited.Run(); err != nil {
+		t.Skip("needs true")
+	}
+	for _, stale := range []bool{false, true} {
+		dir := t.TempDir()
+		if stale {
+			st, err := store.Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, _ = st.ClaimExtension("o/r#1", "perf", "h1", "gone", exited.Process.Pid, time.Hour, time.Time{})
+			st.Close()
+		}
+		const n = 16
+		won := make(chan bool, n)
+		var wg sync.WaitGroup
+		for i := range n {
+			st, err := store.Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			wg.Go(func() {
+				run, claimed, err := st.ClaimExtension("o/r#1", "perf", "h1", fmt.Sprint("reviewer", i), os.Getpid(), time.Minute, time.Now())
+				if err != nil || run == nil || run.Status != "running" {
+					t.Errorf("claim %d: %+v %v", i, run, err)
+				}
+				won <- claimed
+			})
+		}
+		wg.Wait()
+		close(won)
+		wins := 0
+		for w := range won {
+			if w {
+				wins++
+			}
+		}
+		if wins != 1 {
+			t.Fatalf("stale=%v: %d claims won", stale, wins)
+		}
+	}
+}
+
+// A run whose holder exited, or ran past its deadline, goes to the next
+// claim, and the old holder's result no longer counts.
+func TestClaimExtensionTakesOver(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	exited := exec.Command("true")
+	if err := exited.Run(); err != nil {
+		t.Skip("needs true")
+	}
+	for _, tc := range []struct {
+		name  string
+		pid   int
+		limit time.Duration
+	}{
+		{"exited", exited.Process.Pid, time.Hour},
+		{"past deadline", os.Getpid(), -time.Second},
+	} {
+		head := tc.name
+		old, claimed, err := st.ClaimExtension("o/r#1", "perf", head, "claude", tc.pid, tc.limit, time.Time{})
+		if err != nil || !claimed {
+			t.Fatalf("%s: first claim %v %v", tc.name, claimed, err)
+		}
+		next, claimed, err := st.ClaimExtension("o/r#1", "perf", head, "codex", os.Getpid(), time.Hour, time.Time{})
+		if err != nil || !claimed || next.Holder != "codex" {
+			t.Fatalf("%s: takeover %+v %v %v", tc.name, next, claimed, err)
+		}
+		if ok, err := st.FinishExtension(old, `{"summary":"late"}`, ""); ok || err != nil {
+			t.Fatalf("%s: the old holder finished: %v %v", tc.name, ok, err)
+		}
+		if ok, _ := st.FinishExtension(next, `{"summary":"ok"}`, ""); !ok {
+			t.Fatalf("%s: the new holder couldn't finish", tc.name)
+		}
+		if r, _ := st.ExtensionRun("o/r#1", "perf", head); r.Status != "done" || r.Output != `{"summary":"ok"}` {
+			t.Fatalf("%s: %+v", tc.name, r)
+		}
+	}
+}
+
+// A finished run is reused. A failed one is claimed again only by a review
+// that started after it failed, not by a revise or a review that started
+// beside the one that failed. A re-review starts from the newest finished run
+// at another head.
+func TestClaimExtensionReuse(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	claim := func(head string, retryBefore time.Time) (*store.ExtensionRun, bool) {
+		t.Helper()
+		r, claimed, err := st.ClaimExtension("o/r#1", "perf", head, "claude", os.Getpid(), time.Hour, retryBefore)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r, claimed
+	}
+	later := time.Now().Add(time.Hour)
+	r, _ := claim("h1", time.Time{})
+	_, _ = st.FinishExtension(r, `{"summary":"h1"}`, "")
+	if r, claimed := claim("h1", later); claimed || r.Status != "done" {
+		t.Fatalf("a done run was claimed again: %+v", r)
+	}
+	r, _ = claim("h2", time.Time{})
+	_, _ = st.FinishExtension(r, "", "exit status 1")
+	if r, claimed := claim("h2", time.Time{}); claimed || r.Status != "failed" || r.Error != "exit status 1" {
+		t.Fatalf("a revise claimed a failed run: %+v", r)
+	}
+	if r, claimed := claim("h2", r.StartedAt); claimed {
+		t.Fatalf("a review that started beside the failed one retried it: %+v", r)
+	}
+	if _, claimed := claim("h2", later); !claimed {
+		t.Fatal("a new review couldn't retry a failed run")
+	}
+	if last, _ := st.LastExtensionRun("o/r#1", "perf", "h3"); last == nil || last.HeadOid != "h1" {
+		t.Fatalf("last run: %+v", last)
+	}
+	_ = st.DeleteReviews("o/r#1")
+	if r, _ := st.ExtensionRun("o/r#1", "perf", "h1"); r != nil {
+		t.Fatal("extension runs outlived the PR")
+	}
+}
+
+// One job of an on-demand extension runs on a PR at a time. One whose
+// process exited no longer blocks the next, and only the newest finished job
+// is kept. Findings added to a review run join the ones it has.
+func TestExtensionJobs(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	first, err := st.StartExtensionJob("o/r#1", "factory", "h1", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = st.SetExtensionJobPID(first, os.Getpid())
+	if _, err := st.StartExtensionJob("o/r#1", "factory", "h1", time.Hour); !errors.Is(err, store.ErrExtensionRunning) {
+		t.Fatalf("a second job started beside the first: %v", err)
+	}
+	if _, err := st.StartExtensionJob("o/r#1", "lint", "h1", time.Hour); err != nil {
+		t.Fatalf("another extension was blocked: %v", err)
+	}
+	exited := exec.Command("true")
+	if err := exited.Run(); err != nil {
+		t.Skip("needs true")
+	}
+	_ = st.SetExtensionJobPID(first, exited.Process.Pid)
+	second, err := st.StartExtensionJob("o/r#1", "factory", "h2", time.Hour)
+	if err != nil {
+		t.Fatalf("a job whose process exited still blocks: %v", err)
+	}
+	_ = st.FinishExtensionJob(second, `{"summary":"ok"}`, "", 1)
+	if keys, _ := st.ReviewedPRs(); !slices.Contains(keys, "o/r#1") {
+		t.Fatalf("a PR with only extension jobs isn't kept: %v", keys)
+	}
+	jobs, _ := st.ExtensionJobs()
+	if len(jobs["o/r#1"]) != 2 || jobs["o/r#1"][0].ID != second || jobs["o/r#1"][0].Status != "done" || jobs["o/r#1"][0].Added != 1 {
+		t.Fatalf("jobs: %+v", jobs["o/r#1"])
+	}
+
+	run, _ := st.StartRun("o/r#1", "h2", "claude", "", 0)
+	_ = st.FinishRun(run, "s", "", "", []store.Finding{{Title: "mine", Path: "a.go", Line: 1}})
+	if err := st.AddFindings(run, []store.Finding{{Title: "from factory", Path: "b.go", Line: 2, ExtensionID: "factory-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := st.Run(run); len(r.Findings) != 2 || r.Findings[1].ExtensionID != "factory-1" {
+		t.Fatalf("findings: %+v", r.Findings)
 	}
 }

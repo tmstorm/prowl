@@ -89,6 +89,36 @@ CREATE TABLE IF NOT EXISTS review_runs (
   model TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS review_runs_key ON review_runs(key, agent, id);
+CREATE TABLE IF NOT EXISTS extension_runs (
+  key TEXT NOT NULL,       -- the PR
+  name TEXT NOT NULL,      -- the extension
+  head_oid TEXT NOT NULL,
+  status TEXT NOT NULL,    -- running | done | failed
+  claim TEXT NOT NULL,     -- who holds it while running: pid and claim time
+  holder TEXT NOT NULL,    -- the reviewer whose review runs it, e.g. codex
+  pid INTEGER NOT NULL,
+  deadline INTEGER NOT NULL, -- unix seconds; a holder past it has failed
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER NOT NULL DEFAULT 0,
+  output TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (key, name, head_oid)
+);
+CREATE TABLE IF NOT EXISTS extension_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT NOT NULL,       -- the PR
+  name TEXT NOT NULL,      -- the on-demand extension
+  head_oid TEXT NOT NULL,
+  status TEXT NOT NULL,    -- running | done | failed
+  pid INTEGER NOT NULL DEFAULT 0,
+  deadline INTEGER NOT NULL, -- unix seconds; a job running past it has failed
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER NOT NULL DEFAULT 0,
+  output TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  added INTEGER NOT NULL DEFAULT 0 -- findings it added to the AI review
+);
+CREATE INDEX IF NOT EXISTS extension_jobs_key ON extension_jobs(key, name, id);
 CREATE TABLE IF NOT EXISTS tips (
   name TEXT PRIMARY KEY    -- a one-time tip prowl has shown
 );
@@ -299,6 +329,8 @@ type Finding struct {
 	Body     string `json:"body"`
 	Excluded bool   `json:"excluded,omitempty"`
 	Posted   bool   `json:"posted,omitempty"` // went out in a GitHub review
+	// ExtensionID is the extension finding this is, e.g. perf-1.
+	ExtensionID string `json:"extension_id,omitempty"`
 }
 
 // Point is something a reviewer, a bot or a check raised on the PR, as an
@@ -487,9 +519,11 @@ func (s *Store) DeleteRun(id int64) error {
 	return wrap("delete run", err)
 }
 
-// ReviewedPRs are the PRs that have review runs or notes.
+// ReviewedPRs are the PRs that have review runs, notes, a summary or
+// on-demand extension jobs.
 func (s *Store) ReviewedPRs() ([]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT key FROM review_runs UNION SELECT DISTINCT key FROM review_notes UNION SELECT key FROM summaries`)
+	rows, err := s.db.Query(`SELECT DISTINCT key FROM review_runs UNION SELECT DISTINCT key FROM review_notes UNION SELECT key FROM summaries
+		UNION SELECT DISTINCT key FROM extension_jobs`)
 	if err != nil {
 		return nil, fmt.Errorf("reviewed PRs: %w", err)
 	}
@@ -517,7 +551,264 @@ func (s *Store) DeleteReviews(key string) error {
 	if _, err := s.db.Exec(`DELETE FROM summaries WHERE key=?`, key); err != nil {
 		return fmt.Errorf("delete summary of %s: %w", key, err)
 	}
+	if _, err := s.db.Exec(`DELETE FROM extension_runs WHERE key=?`, key); err != nil {
+		return fmt.Errorf("delete extension runs of %s: %w", key, err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM extension_jobs WHERE key=?`, key); err != nil {
+		return fmt.Errorf("delete extension jobs of %s: %w", key, err)
+	}
 	return nil
+}
+
+// ExtensionJob is an on-demand extension's run on a PR, started from a
+// frontend and run by a detached prowl. Output is the extension's JSON, as
+// much as it printed when it failed.
+type ExtensionJob struct {
+	ID                         int64
+	Key, Name, HeadOid, Status string
+	PID                        int
+	Deadline                   time.Time
+	StartedAt, FinishedAt      time.Time
+	Output, Error              string
+	Added                      int
+}
+
+// ErrExtensionRunning refuses to start an extension already running on a PR.
+var ErrExtensionRunning = errors.New("already running on this PR")
+
+// StartExtensionJob records that extension name starts on the PR, unless it
+// is already running there: one job of an extension per PR runs at a time,
+// however many frontends ask. A job whose process exited, or that ran past
+// its deadline, no longer counts as running. Only the newest finished job
+// of each extension is kept.
+func (s *Store) StartExtensionJob(key, name, head string, limit time.Duration) (int64, error) {
+	jobs, err := s.extensionJobs(`WHERE key=? AND name=? AND status='running'`, key, name)
+	if err != nil {
+		return 0, err
+	}
+	for _, j := range jobs {
+		if j.Status == "failed" {
+			_, _ = s.db.Exec(`UPDATE extension_jobs SET status='failed', error=?, finished_at=? WHERE id=? AND status='running'`, j.Error, time.Now().Unix(), j.ID)
+		}
+	}
+	now := time.Now()
+	res, err := s.db.Exec(`INSERT INTO extension_jobs (key, name, head_oid, status, deadline, started_at)
+		SELECT ?, ?, ?, 'running', ?, ? WHERE NOT EXISTS
+		(SELECT 1 FROM extension_jobs WHERE key=? AND name=? AND status='running' AND deadline>=?)`,
+		key, name, head, now.Add(limit).Unix(), now.Unix(), key, name, now.Unix())
+	if err != nil {
+		return 0, fmt.Errorf("start %s: %w", name, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return 0, fmt.Errorf("%s: %w", name, ErrExtensionRunning)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("start %s: %w", name, err)
+	}
+	_, err = s.db.Exec(`DELETE FROM extension_jobs WHERE key=? AND name=? AND id<? AND status<>'running'`, key, name, id)
+	return id, wrap("start "+name, err)
+}
+
+// ExtendExtensionJob moves a running job's deadline to limit from now, for
+// when the extension itself starts after the job's setup.
+func (s *Store) ExtendExtensionJob(id int64, limit time.Duration) error {
+	_, err := s.db.Exec(`UPDATE extension_jobs SET deadline=? WHERE id=? AND status='running'`, time.Now().Add(limit).Unix(), id)
+	return wrap("extend extension job", err)
+}
+
+func (s *Store) SetExtensionJobPID(id int64, pid int) error {
+	_, err := s.db.Exec(`UPDATE extension_jobs SET pid=? WHERE id=?`, pid, id)
+	return wrap("set extension pid", err)
+}
+
+// FinishExtensionJob records how the job ended: what the extension printed,
+// errMsg when it failed, and how many findings it added to the AI review.
+func (s *Store) FinishExtensionJob(id int64, output, errMsg string, added int) error {
+	status := "done"
+	if errMsg != "" {
+		status = "failed"
+	}
+	_, err := s.db.Exec(`UPDATE extension_jobs SET status=?, output=?, error=?, added=?, finished_at=? WHERE id=?`,
+		status, output, errMsg, added, time.Now().Unix(), id)
+	return wrap("finish extension", err)
+}
+
+// ExtensionJobs are each PR's newest job of each on-demand extension, by PR key.
+func (s *Store) ExtensionJobs() (map[string][]*ExtensionJob, error) {
+	jobs, err := s.extensionJobs(`WHERE id IN (SELECT max(id) FROM extension_jobs GROUP BY key, name) ORDER BY key, name`)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]*ExtensionJob{}
+	for _, j := range jobs {
+		out[j.Key] = append(out[j.Key], j)
+	}
+	return out, nil
+}
+
+// extensionJobs reads jobs. One still running whose process exited, or that
+// ran past its deadline, reads as failed.
+func (s *Store) extensionJobs(where string, args ...any) ([]*ExtensionJob, error) {
+	rows, err := s.db.Query(`SELECT id, key, name, head_oid, status, pid, deadline, started_at, finished_at, output, error, added
+		FROM extension_jobs `+where, args...)
+	if err != nil {
+		return nil, wrap("extension jobs", err)
+	}
+	defer rows.Close()
+	var out []*ExtensionJob
+	for rows.Next() {
+		var j ExtensionJob
+		var deadline, started, finished int64
+		if err := rows.Scan(&j.ID, &j.Key, &j.Name, &j.HeadOid, &j.Status, &j.PID, &deadline, &started, &finished, &j.Output, &j.Error, &j.Added); err != nil {
+			return nil, wrap("extension jobs", err)
+		}
+		j.Deadline, j.StartedAt = time.Unix(deadline, 0), time.Unix(started, 0)
+		if finished > 0 {
+			j.FinishedAt = time.Unix(finished, 0)
+		}
+		switch {
+		case j.Status == "running" && j.PID > 0 && !platform.Alive(j.PID):
+			j.Status, j.Error = "failed", "its process exited unexpectedly"
+		case j.Status == "running" && time.Now().After(j.Deadline):
+			j.Status, j.Error = "failed", "it ran past its timeout"
+		}
+		out = append(out, &j)
+	}
+	return out, wrap("extension jobs", rows.Err())
+}
+
+// AddFindings adds findings to a review run, one statement each, so a
+// finding is never half written.
+func (s *Store) AddFindings(id int64, fs []Finding) error {
+	for _, f := range fs {
+		b, err := json.Marshal(f)
+		if err != nil {
+			return fmt.Errorf("add findings: %w", err)
+		}
+		if _, err := s.db.Exec(`UPDATE review_runs SET findings=json_insert(findings, '$[#]', json(?)) WHERE id=?`, string(b), id); err != nil {
+			return fmt.Errorf("add findings: %w", err)
+		}
+	}
+	return nil
+}
+
+// ExtensionRun is one extension's run on one head of a PR, shared by every
+// review of that head. Output is the extension's JSON.
+type ExtensionRun struct {
+	Key, Name, HeadOid, Status string
+	Claim                      string
+	Holder                     string
+	PID                        int
+	Deadline                   time.Time
+	StartedAt, FinishedAt      time.Time
+	Output, Error              string
+}
+
+// Stale is whether a running extension's holder has gone: its process
+// exited, or it ran past its deadline.
+func (r *ExtensionRun) Stale() bool {
+	return r.Status == "running" && (!platform.Alive(r.PID) || time.Now().After(r.Deadline))
+}
+
+// ClaimExtension makes pid, the review process of holder, the one that runs
+// extension name on head, until limit from now. Only one claim wins: it
+// takes a head nobody has claimed, a run whose holder is stale, or a run
+// that failed before retryBefore: a new review retries a failure from an
+// earlier review, not one from a review that started beside it. Each of those is one conditional statement, so two
+// processes claiming at once can't both succeed. It returns the run, which
+// is the caller's to run when claimed, or else the current one to wait for
+// or to reuse.
+func (s *Store) ClaimExtension(key, name, head, holder string, pid int, limit time.Duration, retryBefore time.Time) (run *ExtensionRun, claimed bool, err error) {
+	now := time.Now()
+	claim := fmt.Sprintf("%d-%d", pid, now.UnixNano())
+	deadline := now.Add(limit).Unix()
+	res, err := s.db.Exec(`INSERT INTO extension_runs (key, name, head_oid, status, claim, holder, pid, deadline, started_at)
+		VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, key, name, head, claim, holder, pid, deadline, now.Unix())
+	if err != nil {
+		return nil, false, fmt.Errorf("claim extension %s: %w", name, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		cur, err := s.ExtensionRun(key, name, head)
+		if err != nil || cur == nil {
+			return cur, false, err
+		}
+		if !cur.Stale() && !(cur.Status == "failed" && cur.FinishedAt.Before(retryBefore)) {
+			return cur, false, nil
+		}
+		res, err = s.db.Exec(`UPDATE extension_runs SET status='running', claim=?, holder=?, pid=?, deadline=?, started_at=?, finished_at=0, output='', error=''
+			WHERE key=? AND name=? AND head_oid=? AND claim=? AND status=?`,
+			claim, holder, pid, deadline, now.Unix(), key, name, head, cur.Claim, cur.Status)
+		if err != nil {
+			return nil, false, fmt.Errorf("claim extension %s: %w", name, err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			cur, err = s.ExtensionRun(key, name, head)
+			return cur, false, err
+		}
+	}
+	return &ExtensionRun{Key: key, Name: name, HeadOid: head, Status: "running", Claim: claim, Holder: holder, PID: pid,
+		Deadline: time.Unix(deadline, 0), StartedAt: time.Unix(now.Unix(), 0)}, true, nil
+}
+
+// FinishExtension records how the claim's run ended: its output, or with
+// errMsg a failure. It returns false when the claim was lost, to a review
+// that took over after the deadline, which then owns the result.
+func (s *Store) FinishExtension(run *ExtensionRun, output, errMsg string) (bool, error) {
+	status := "done"
+	if errMsg != "" {
+		status = "failed"
+	}
+	res, err := s.db.Exec(`UPDATE extension_runs SET status=?, output=?, error=?, finished_at=?
+		WHERE key=? AND name=? AND head_oid=? AND claim=? AND status='running'`,
+		status, output, errMsg, time.Now().Unix(), run.Key, run.Name, run.HeadOid, run.Claim)
+	if err != nil {
+		return false, fmt.Errorf("finish extension %s: %w", run.Name, err)
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// ExtensionRun is extension name's run on head, or nil.
+func (s *Store) ExtensionRun(key, name, head string) (*ExtensionRun, error) {
+	runs, err := s.extensionRuns(`WHERE key=? AND name=? AND head_oid=?`, key, name, head)
+	if err != nil || len(runs) == 0 {
+		return nil, err
+	}
+	return runs[0], nil
+}
+
+// LastExtensionRun is extension name's newest finished run on the PR at a
+// head other than head, the one a re-review starts from, or nil.
+func (s *Store) LastExtensionRun(key, name, head string) (*ExtensionRun, error) {
+	runs, err := s.extensionRuns(`WHERE key=? AND name=? AND head_oid<>? AND status='done' ORDER BY finished_at DESC, rowid DESC LIMIT 1`, key, name, head)
+	if err != nil || len(runs) == 0 {
+		return nil, err
+	}
+	return runs[0], nil
+}
+
+func (s *Store) extensionRuns(where string, args ...any) ([]*ExtensionRun, error) {
+	rows, err := s.db.Query(`SELECT key, name, head_oid, status, claim, holder, pid, deadline, started_at, finished_at, output, error
+		FROM extension_runs `+where, args...)
+	if err != nil {
+		return nil, wrap("extension runs", err)
+	}
+	defer rows.Close()
+	var out []*ExtensionRun
+	for rows.Next() {
+		var r ExtensionRun
+		var deadline, started, finished int64
+		if err := rows.Scan(&r.Key, &r.Name, &r.HeadOid, &r.Status, &r.Claim, &r.Holder, &r.PID, &deadline, &started, &finished, &r.Output, &r.Error); err != nil {
+			return nil, wrap("extension runs", err)
+		}
+		r.Deadline, r.StartedAt = time.Unix(deadline, 0), time.Unix(started, 0)
+		if finished > 0 {
+			r.FinishedAt = time.Unix(finished, 0)
+		}
+		out = append(out, &r)
+	}
+	return out, wrap("extension runs", rows.Err())
 }
 
 // ---- notes between you and a review agent (local only, never posted)

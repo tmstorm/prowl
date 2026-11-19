@@ -153,6 +153,9 @@ func (p *notesPopup) list(m *Model) (*nav, int) {
 func (p *notesPopup) update(m *Model, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {
 	case "o":
+		if p.url == "" {
+			return nil
+		}
 		m.popup = nil
 		return openURL(p.url)
 	case "esc", "q", "ctrl+c":
@@ -171,6 +174,9 @@ func (p *notesPopup) view(m *Model) string {
 		}
 	}
 	foot := "j/k move · o opens the release on GitHub · esc close"
+	if p.url == "" {
+		foot = "j/k move · esc close"
+	}
 	return popBox(p.title, strings.Join(shown, "\n")+"\n\n"+sDim.Render(foot), w, pal.Accent)
 }
 

@@ -24,6 +24,9 @@ type Draft struct {
 	Replies  []DraftReply   // drafted thread replies sent after the review, each in its thread
 	Commit   string         // the commit the comments' lines are on; "" is the PR's head
 	Reopened bool           // Body is the review you wrote for this event that failed to post
+	// taken are the findings an agent draft was made from, so posting it
+	// marks only those posted, not one added to the run while you edited.
+	taken map[string]bool
 }
 
 // ReviewEvent is what a Draft does: GitHub's review events, or prowl's own.
@@ -130,10 +133,13 @@ func (co *Core) AgentDraft(key string) (Draft, error) {
 	if len(done) == 0 {
 		return Draft{}, fmt.Errorf("no finished AI review to post")
 	}
-	d := Draft{Event: EventComment}
+	d := Draft{Event: EventComment, taken: map[string]bool{}}
 	summary := done[0]
 	for _, r := range done {
 		d.Runs = append(d.Runs, r.ID)
+		for _, f := range r.Findings {
+			d.taken[findingKey(f.Path, f.Line, f.Title)] = true
+		}
 		if r.Agent == cfg.Agent.Main() {
 			summary = r
 		}
@@ -274,8 +280,8 @@ func (co *Core) submit(ctx context.Context, key string, d Draft) (Submitted, err
 		logErr("record the post", co.st.AddPost(key, out.URL, drafted, reviewText(d.Body, d.Comments)))
 		for _, id := range d.Runs {
 			if r, _ := co.st.Run(id); r != nil {
-				for i := range r.Findings {
-					if !r.Findings[i].Excluded {
+				for i, f := range r.Findings {
+					if !f.Excluded && d.taken[findingKey(f.Path, f.Line, f.Title)] {
 						r.Findings[i].Posted = true
 					}
 				}
@@ -380,8 +386,12 @@ func (co *Core) SetReplyExcluded(runID int64, threadID string, excluded bool) er
 	return nil
 }
 
-// reviewText is a review's body and inline comments, as the posts table
-// keeps them.
+// findingKey names a finding within a review, for telling which findings
+// a draft held.
+func findingKey(path string, line int, title string) string {
+	return fmt.Sprintf("%s:%d %s", path, line, title)
+}
+
 func ghComments(comments []DraftComment) []gh.DraftComment {
 	var out []gh.DraftComment
 	for _, c := range comments {
@@ -390,6 +400,8 @@ func ghComments(comments []DraftComment) []gh.DraftComment {
 	return out
 }
 
+// reviewText is a review's body and inline comments, as the posts table
+// keeps them.
 func reviewText(body string, comments []DraftComment) store.Review {
 	r := store.Review{Body: body}
 	for _, c := range comments {

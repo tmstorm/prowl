@@ -638,3 +638,28 @@ func TestOpenedJustNow(t *testing.T) {
 	a.want("opened just now")
 	a.wantNot("now ago")
 }
+
+// <leader>e lists the PR's on-demand extensions with how each last went.
+// v shows a result; an extension that asks first runs only after a yes.
+func TestExtensionsPicker(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 7, "fix: crash")}}, func(c *config.Config) {
+		c.Agent.Extensions = []config.Extension{
+			{Name: "factory", Command: "acme-factory", Repos: []string{"*"}, OnDemand: true, Key: "f", Confirm: true},
+			{Name: "notes", Command: "acme-notes", Repos: []string{"*"}, OnDemand: true},
+		}
+	})
+	id, err := a.st.StartExtensionJob("o/api#7", "factory", "abc", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = a.st.FinishExtensionJob(id, `{"summary":"job 12 started","findings":[{"severity":"nit","title":"Slow job","body":"Cache the deps.","path":"ci.yml","line":3}]}`, "", 1)
+	a = reopen(a)
+	a.keys("space", "e")
+	a.want("Extensions for", "f  factory", "done just now · job 12 started", "asks first", "notes", "never run here")
+	a.keys("v")
+	a.want("factory on", "job 12 started", "Slow job: Cache the deps.", "ci.yml:3", "1 finding joined the AI review as drafts.")
+	a.keys("esc", "space", "e", "f")
+	a.want("run factory on", "It can change things outside prowl.", "CONFIRM")
+	a.keys("n")
+	a.want("cancelled")
+}

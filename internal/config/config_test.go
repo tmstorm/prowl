@@ -4,6 +4,7 @@ import (
 	"github.com/tmstorm/prowl/internal/config"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -189,6 +190,83 @@ func TestEnums(t *testing.T) {
 		_, err := config.Load()
 		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
 			t.Errorf("%s: got %v, want %q", line, err, want)
+		}
+	}
+}
+
+// Extensions round-trip through Save, and each is found only for its repos
+// and in its mode.
+func TestExtensions(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	c := config.Default()
+	c.Agent.Extensions = []config.Extension{
+		{Name: "licenses", Command: "acme-license-check", Repos: []string{"*"}, Timeout: config.Duration{2 * time.Minute}},
+		{Name: "factory", Command: "acme-factory --pr", Repos: []string{"acme/api"}, OnDemand: true, Key: "f", Confirm: true, NeedsBase: true},
+	}
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Load()
+	if err != nil {
+		b, _ := os.ReadFile(config.Path())
+		t.Fatalf("%v\n%s", err, b)
+	}
+	if len(got.Agent.Extensions) != 2 || !reflect.DeepEqual(got.Agent.Extensions[1], c.Agent.Extensions[1]) {
+		t.Fatalf("round trip: %+v", got.Agent.Extensions)
+	}
+	if l := got.Agent.Extensions[0].Limit(); l != 2*time.Minute {
+		t.Fatalf("timeout: %v", l)
+	}
+	if l := got.Agent.Extensions[1].Limit(); l != config.DefaultExtensionTimeout {
+		t.Fatalf("default timeout: %v", l)
+	}
+	names := func(es []config.Extension) string {
+		var n []string
+		for _, e := range es {
+			n = append(n, e.Name)
+		}
+		return strings.Join(n, ",")
+	}
+	for _, tc := range []struct {
+		repo     string
+		onDemand bool
+		want     string
+	}{
+		{"acme/api", false, "licenses"},
+		{"acme/api", true, "factory"},
+		{"acme/web", true, ""},
+	} {
+		if n := names(got.Agent.ExtensionsFor(tc.repo, tc.onDemand)); n != tc.want {
+			t.Errorf("%s on_demand=%v: %q, want %q", tc.repo, tc.onDemand, n, tc.want)
+		}
+	}
+}
+
+// A broken extension is refused when the config loads, and the error names it.
+func TestExtensionsRefused(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := os.MkdirAll(config.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ext := func(fields string) string { return "[[agent.extensions]]\n" + fields + "\n" }
+	ok := `name = "a"` + "\ncommand = \"x\"\nrepos = [\"*\"]\n"
+	for toml, want := range map[string]string{
+		ext(`command = "x"` + "\nrepos = [\"*\"]"): "needs a name",
+		ext(`name = "a"` + "\nrepos = [\"*\"]"):    `"a": set command`,
+		ext(`name = "a"` + "\ncommand = \"x\""):    `"a": set repos`,
+		ext(ok + `key = "f"`):                      "only for on_demand",
+		ext(ok + "on_demand = true\nkey = \"ff\""): `key = "ff": use one letter`,
+		ext(ok + "on_demand = true\nkey = \"j\""):  `key = "j": the list of extensions uses jkgGHMLqv`,
+		ext(ok) + ext(ok):                          `"a" is listed twice`,
+		ext(ok) + ext(ok+"on_demand = true"):       "",
+		ext(ok+"on_demand = true\nkey = \"f\"") + ext(strings.Replace(ok, `"a"`, `"b"`, 1)+"on_demand = true\nkey = \"f\""): `"a" and "b" both use key "f"`,
+	} {
+		if err := os.WriteFile(config.Path(), []byte(toml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := config.Load()
+		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Errorf("%s: got %v, want %q", toml, err, want)
 		}
 	}
 }
