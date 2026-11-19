@@ -16,3 +16,6 @@ func (co *Core) RetryNow() {
 	defer co.mu.Unlock()
 	co.updateRetry = time.Time{}
 }
+
+// ExportFindingBody is a finding as prowl posts it.
+func ExportFindingBody(f Finding) string { return findingBody(f) }

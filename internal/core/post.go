@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tmstorm/prowl/internal/agent"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/inbox"
 	"github.com/tmstorm/prowl/internal/store"
@@ -410,12 +411,14 @@ func reviewText(body string, comments []DraftComment) store.Review {
 	return r
 }
 
+// findingBody is a finding as prowl posts it, ending with the hidden marker
+// that tells the author's prowl it is a finding (agent.FindingMarker).
 func findingBody(f Finding) string {
 	b := "**" + string(f.Severity) + ":** " + f.Title + "\n\n" + f.Body
 	if f.Rule != "" {
 		b += "\n\n_Per " + f.Rule + "_"
 	}
-	return b
+	return b + "\n\n" + agent.FindingMarker(string(f.Severity), f.Rule)
 }
 
 func stripVerdict(s string) string {
