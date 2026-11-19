@@ -274,4 +274,6 @@ On your own PRs, an AI review is often more useful as a to-do list than as comme
 - Without the skill, tell any agent to run `prowl findings --prompt`, which prints the findings wrapped in the same instructions.
 - The TUI copies that prompt to the clipboard, to paste wherever you like.
 
+When someone reviews your PR on GitHub, with prowl or without it, `prowl findings` on it prints what was raised: reviews, the conversation, threads, and what bots and failing checks reported. It reads the PR the same way an AI review does, so whatever prowl learns to read for its reviewers reaches you too. The same skill works through it: it fixes what holds up, and for a comment a person wrote, either fixes it or drafts a reply saying why not, never dropping it. It drafts a reply for each thread, with the thread's ID, for you to post. Each finding prowl posts carries a hidden marker with its severity and rule, so your prowl can tell a reviewer's AI findings from what they wrote themselves and put them in order.
+
 After you push, the next review on that PR starts from what changed.
