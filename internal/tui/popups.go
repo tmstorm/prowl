@@ -245,7 +245,7 @@ type prRef struct {
 }
 
 var (
-	prURL  = regexp.MustCompile(`github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)`)
+	prURL  = regexp.MustCompile(`^https?://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)(?:/)?$`)
 	prRef1 = regexp.MustCompile(`^([\w.-]+/)?([\w.-]+)#(\d+)$`)
 )
 
