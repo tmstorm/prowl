@@ -82,6 +82,22 @@ type Agent struct {
 	RunCacheGB         int               `toml:"run_cache_gb"`
 	Profiles           []Profile         `toml:"profiles"`
 	Extensions         []Extension       `toml:"extensions"`
+	Perf               Perf              `toml:"perf"`
+}
+
+// Perf configures the built-in perf extension.
+type Perf struct {
+	BenchCommands map[string]string `toml:"bench_commands"`
+	MustFix       int               `toml:"must_fix"`
+}
+
+// BenchCommand is the command that runs repo's benchmarks, "" for none set
+// ("*" is the fallback).
+func (p Perf) BenchCommand(repo string) string {
+	if c := p.BenchCommands[repo]; c != "" {
+		return c
+	}
+	return p.BenchCommands["*"]
 }
 
 // Extension is a program prowl runs during reviews of the repos it is
@@ -125,6 +141,16 @@ func (a Agent) ExtensionsFor(repo string, onDemand bool) []Extension {
 	return out
 }
 
+// builtinExtensions are the extensions prowl ships, which take no command.
+var builtinExtensions = []string{"perf"}
+
+// Builtin is whether the extension is one prowl ships.
+func (e Extension) Builtin() bool { return slices.Contains(builtinExtensions, e.Name) }
+
+// NeedsBaseDir is whether the extension gets a checkout of the PR's base:
+// with needs_base, and always for perf, which measures the base.
+func (e Extension) NeedsBaseDir() bool { return e.NeedsBase || e.Name == "perf" }
+
 // extensionListKeys are the letters the list of on-demand extensions keeps
 // for itself, so none can be an extension's key.
 const extensionListKeys = "jkgGHMLqv"
@@ -136,7 +162,9 @@ func (a Agent) checkExtensions() error {
 		switch {
 		case e.Name == "":
 			return fmt.Errorf("[[agent.extensions]]: every extension needs a name")
-		case strings.TrimSpace(e.Command) == "":
+		case e.Builtin() && e.Command != "":
+			return fmt.Errorf("extension %q is built in: leave out command", e.Name)
+		case !e.Builtin() && strings.TrimSpace(e.Command) == "":
 			return fmt.Errorf("extension %q: set command", e.Name)
 		case len(e.Repos) == 0:
 			return fmt.Errorf("extension %q: set repos, e.g. [\"acme/web\"] or [\"*\"]", e.Name)
@@ -326,7 +354,7 @@ func Default() Config {
 		GroupBy:          "status",
 		ChatMode:         "popup",
 		Bots:             []string{"github-actions"},
-		Agent:            Agent{Reviewers: []string{"claude"}, ShouldFix: true, Nits: true, RunCacheGB: 20},
+		Agent:            Agent{Reviewers: []string{"claude"}, ShouldFix: true, Nits: true, RunCacheGB: 20, Perf: Perf{MustFix: 20}},
 	}
 }
 
@@ -610,6 +638,10 @@ func (c Config) Save() error {
 	mapLines(&b, c.Agent.SummaryModels, "# claude = \"haiku\"\n")
 	w("\n# Container image per repo (owner/name) for the agent's run tool, which runs\n# commands like go test in Docker on a copy of the code. \"*\" is the\n# fallback. No image, or no docker: reviews only read.\n[agent.run_images]\n")
 	mapLines(&b, c.Agent.RunImages, "# \"*\" = \"golang:1.27\"\n# \"acme/web\" = \"node:22\"\n")
+	w("\n# The built-in perf extension, enabled per repo under [[agent.extensions]]\n# with name = \"perf\". must_fix: a regression this many percent or more is\n# must-fix; 0 never.\n[agent.perf]\n")
+	set("", "must_fix", fmt.Sprint(c.Agent.Perf.MustFix), fmt.Sprint(d.Agent.Perf.MustFix))
+	w("# The command that runs each repo's benchmarks. A Go repo without one runs\n# go test -bench on the changed packages.\n[agent.perf.bench_commands]\n")
+	mapLines(&b, c.Agent.Perf.BenchCommands, "# \"acme/web\" = \"pnpm vitest bench --run {dirs}\"\n")
 	w("\n# Review profiles, run with <leader>cp: a focus for a review, and optionally\n# its own reviewers and skills. \"adversarial\" is built in; a profile with\n# its name replaces it.\n")
 	if len(c.Agent.Profiles) == 0 {
 		w("# [[agent.profiles]]\n# name = \"security\"\n# prompt = \"Look only for security problems: injection, auth, secrets, unsafe input.\"\n# reviewers = [\"codex\"]\n")
@@ -628,7 +660,11 @@ func (c Config) Save() error {
 		w("# [[agent.extensions]]\n# name = \"licenses\"\n# command = \"acme-license-check\"\n# repos = [\"*\"]\n# timeout = \"2m\"\n")
 	}
 	for _, e := range c.Agent.Extensions {
-		w("[[agent.extensions]]\nname = %q\ncommand = %q\nrepos = %s\n", e.Name, e.Command, list(e.Repos))
+		w("[[agent.extensions]]\nname = %q\n", e.Name)
+		if e.Command != "" {
+			w("command = %q\n", e.Command)
+		}
+		w("repos = %s\n", list(e.Repos))
 		if e.Timeout.Duration > 0 {
 			w("timeout = %q\n", e.Timeout.String())
 		}

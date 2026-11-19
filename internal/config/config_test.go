@@ -202,7 +202,9 @@ func TestExtensions(t *testing.T) {
 	c.Agent.Extensions = []config.Extension{
 		{Name: "licenses", Command: "acme-license-check", Repos: []string{"*"}, Timeout: config.Duration{2 * time.Minute}},
 		{Name: "factory", Command: "acme-factory --pr", Repos: []string{"acme/api"}, OnDemand: true, Key: "f", Confirm: true, NeedsBase: true},
+		{Name: "perf", Repos: []string{"acme/web"}},
 	}
+	c.Agent.Perf = config.Perf{BenchCommands: map[string]string{"acme/web": "pnpm bench {dirs}"}, MustFix: 30}
 	if err := c.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +213,7 @@ func TestExtensions(t *testing.T) {
 		b, _ := os.ReadFile(config.Path())
 		t.Fatalf("%v\n%s", err, b)
 	}
-	if len(got.Agent.Extensions) != 2 || !reflect.DeepEqual(got.Agent.Extensions[1], c.Agent.Extensions[1]) {
+	if len(got.Agent.Extensions) != 3 || !reflect.DeepEqual(got.Agent.Extensions[1], c.Agent.Extensions[1]) || !reflect.DeepEqual(got.Agent.Perf, c.Agent.Perf) {
 		t.Fatalf("round trip: %+v", got.Agent.Extensions)
 	}
 	if l := got.Agent.Extensions[0].Limit(); l != 2*time.Minute {
@@ -232,6 +234,7 @@ func TestExtensions(t *testing.T) {
 		onDemand bool
 		want     string
 	}{
+		{"acme/web", false, "licenses,perf"},
 		{"acme/api", false, "licenses"},
 		{"acme/api", true, "factory"},
 		{"acme/web", true, ""},
@@ -251,14 +254,16 @@ func TestExtensionsRefused(t *testing.T) {
 	ext := func(fields string) string { return "[[agent.extensions]]\n" + fields + "\n" }
 	ok := `name = "a"` + "\ncommand = \"x\"\nrepos = [\"*\"]\n"
 	for toml, want := range map[string]string{
-		ext(`command = "x"` + "\nrepos = [\"*\"]"): "needs a name",
-		ext(`name = "a"` + "\nrepos = [\"*\"]"):    `"a": set command`,
-		ext(`name = "a"` + "\ncommand = \"x\""):    `"a": set repos`,
-		ext(ok + `key = "f"`):                      "only for on_demand",
-		ext(ok + "on_demand = true\nkey = \"ff\""): `key = "ff": use one letter`,
-		ext(ok + "on_demand = true\nkey = \"j\""):  `key = "j": the list of extensions uses jkgGHMLqv`,
-		ext(ok) + ext(ok):                          `"a" is listed twice`,
-		ext(ok) + ext(ok+"on_demand = true"):       "",
+		ext(`command = "x"` + "\nrepos = [\"*\"]"):                  "needs a name",
+		ext(`name = "perf"` + "\ncommand = \"x\"\nrepos = [\"*\"]"): `"perf" is built in: leave out command`,
+		ext(`name = "perf"` + "\nrepos = [\"*\"]"):                  "",
+		ext(`name = "a"` + "\nrepos = [\"*\"]"):                     `"a": set command`,
+		ext(`name = "a"` + "\ncommand = \"x\""):                     `"a": set repos`,
+		ext(ok + `key = "f"`):                                       "only for on_demand",
+		ext(ok + "on_demand = true\nkey = \"ff\""):                  `key = "ff": use one letter`,
+		ext(ok + "on_demand = true\nkey = \"j\""):                   `key = "j": the list of extensions uses jkgGHMLqv`,
+		ext(ok) + ext(ok):                                           `"a" is listed twice`,
+		ext(ok) + ext(ok+"on_demand = true"):                        "",
 		ext(ok+"on_demand = true\nkey = \"f\"") + ext(strings.Replace(ok, `"a"`, `"b"`, 1)+"on_demand = true\nkey = \"f\""): `"a" and "b" both use key "f"`,
 	} {
 		if err := os.WriteFile(config.Path(), []byte(toml), 0o644); err != nil {

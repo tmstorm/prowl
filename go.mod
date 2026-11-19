@@ -19,12 +19,14 @@ require (
 	github.com/yuin/goldmark v1.8.5
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/mod v0.43.0
-	golang.org/x/term v0.47.0
-	golang.org/x/text v0.43.0
+	golang.org/x/perf v0.0.0-20261117185222-4febdb082b2c
+	golang.org/x/term v0.48.0
+	golang.org/x/text v0.44.0
 	modernc.org/sqlite v1.62.0
 )
 
 require (
+	github.com/aclements/go-moremath v0.0.0-20210112150236-f10218a38794 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
@@ -67,11 +69,11 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
+	golang.org/x/net v0.63.0 // indirect
+	golang.org/x/oauth2 v0.38.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.80.1 // indirect

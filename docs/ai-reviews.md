@@ -143,7 +143,7 @@ prowl writes JSON to the extension's stdin and reads JSON from its stdout:
  "summary": "one line for the review's notes"}
 ```
 
-`base_dir` is there with `needs_base`, and `run_image` when the repo has one under `[agent.run_images]`. `severity` is `must-fix`, `should-fix` or `nit`. A finding with a `path` goes into the review as it is. One without a path goes to the reviewer, which must attach it to the line in the diff that causes it and may not lower its severity: one the reviewer drops comes back as a finding about the whole PR, and one it lowers gets its severity back. What the extension writes to stderr shows in the review's notes when it fails.
+`base_dir` is there with `needs_base`, `run_image` when the repo has one under `[agent.run_images]`, and `"local": true` when `head_dir` is your own checkout, in a [review before a pull request](#reviewing-before-a-pull-request). `severity` is `must-fix`, `should-fix` or `nit`. A finding with a `path` goes into the review as it is. One without a path goes to the reviewer, which must attach it to the line in the diff that causes it and may not lower its severity: one the reviewer drops comes back as a finding about the whole PR, and one it lowers gets its severity back. What the extension writes to stderr shows in the review's notes when it fails.
 
 ### Re-reviews
 
@@ -164,6 +164,56 @@ confirm = true         # ask before running it
 ```
 
 It gets the same input as during a review and runs in the background, so it keeps going if you quit prowl, and a notification says when it's done. One extension runs on a PR at a time. Its findings with a path join the PR's newest AI review from the main reviewer as drafts, and the rest stay in its result, with its summary and prompt section. One that fails partway keeps what it printed beside the exit code and the end of its stderr, and prowl never runs it again by itself. An extension listed with `on_demand = true` doesn't run during reviews; list it twice to have both.
+
+## Performance review
+
+`perf` is an extension prowl ships. On a repo you enable it for, prowl measures the repo's benchmarks on the PR's base and its head and reports each regression as a finding, and the reviewer looks for performance problems in the change and proposes fixes, even where no benchmark covers the code. It measures and proposes, and never changes the code.
+
+```toml
+[[agent.extensions]]
+name = "perf"                  # built in: no command
+repos = ["acme/web"]
+
+[agent.perf]
+must_fix = 20                  # percent; 0 means a regression is never must-fix
+
+[agent.perf.bench_commands]
+"acme/web" = "pnpm vitest bench --run {dirs}"
+```
+
+A Go repo without a bench command runs `go test -run '^$' -bench . -benchmem {dirs}`. Another language without one gets the proposals only, as does a repo without a run image under `[agent.run_images]`, since measuring runs in its container.
+
+### Measuring
+
+prowl runs the bench command 10 times on the base and 10 times on the head, alternating, in one container of the repo's run image with a copy of each. Alternating spreads noise on the machine across both sides. It reads each run's output into one sample per benchmark and unit, and compares the two sides with `golang.org/x/perf/benchmath`, the library behind `benchstat`: the median change and a Mann-Whitney U test. prowl decides what is a regression, not the agent: a change that is significant (p < 0.05) and at least 5% worse in time, bytes or allocations per op is should-fix, and must-fix from `must_fix` percent. The reviewer gets the table, and attaches each regression to the line that causes it. A change that improves a benchmark goes in the summary.
+
+prowl reads three output formats. A command that prints none of them is timed whole, when it runs the same on both sides; Go's own command with no benchmarks in the changed packages measures nothing.
+
+- Go's benchmark lines.
+- Rust's `bencher` lines, from libtest, or criterion with `-- --output-format bencher`.
+- The C++ benchmark library's console lines (`BM_Sort  1234 ns  1230 ns  1000`).
+
+A tool that writes JSON instead can print Go benchmark lines from it with `jq`, one line per benchmark per run. The extension's timeout (10 minutes by default) covers all 20 runs.
+
+### Measuring only what changed
+
+`{dirs}` in the command becomes the directories of the PR's changed files that exist on each side, so only the packages the PR touches are measured, and with nothing to measure prowl skips it. A script that maps files to benchmarks itself gets them in `PROWL_CHANGED_FILES`. On a re-review prowl measures the directories changed since the last run, plus those of the regressions it reported then, so a commit that claims to fix one is measured again.
+
+| Language | Tool | Command |
+| --- | --- | --- |
+| Go | `testing` | built in: `go test -run '^$' -bench . -benchmem {dirs}` |
+| TS/JS | vitest bench | `vitest bench --run {dirs}`, its JSON reporter turned into Go lines with `jq` |
+| Python | pytest-benchmark | `pytest --benchmark-only --benchmark-json=out.json {dirs}`, then `jq` |
+| C# | BenchmarkDotNet | a script: `--filter` from the changed files, `--exporters json --job short`, then `jq` |
+| C++ | benchmark library | a script: `--benchmark_filter` from the changed files |
+| Rust | criterion or libtest | a script: `cargo bench -p <changed crates> -- --output-format bencher` |
+| GDScript | none standard | a script under `godot --headless -s` that prints Go lines, or the wall time |
+
+### Proposals
+
+The reviewer also looks for work that grows faster than it needs to: a call per item in a loop, a quadratic search, allocation in a hot loop, unbounded goroutines or buffers, a missing index. A proposal prowl didn't measure is at most should-fix, has the rule `perf: unmeasured`, and comes with a benchmark in the repo's style, so the next review measures it.
+
+The review's notes say how long measuring took ("benchmarks: 3m12s, 4 compared, 1 regression"). After `prowl review` in a repo without `perf`, prowl mentions it once.
 
 ## Running tests
 

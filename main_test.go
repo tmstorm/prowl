@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tmstorm/prowl/internal/config"
+	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/logs"
+	"github.com/tmstorm/prowl/internal/store"
 )
 
 // -h on any command prints its section of the prowl command's docs instead
@@ -117,5 +120,26 @@ func TestLogs(t *testing.T) {
 				t.Errorf("prowl %s printed %q:\n%s", strings.Join(c.args, " "), n, out)
 			}
 		}
+	}
+}
+
+// The perf tip shows once per repo, and never for a repo perf runs on.
+func TestPerfTip(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cfg := config.Default()
+	cfg.Agent.Extensions = []config.Extension{{Name: "perf", Repos: []string{"acme/fast"}}}
+	co := core.New(cfg, nil, st)
+	if tip := perfTip(cfg, co, "local:acme/web@feat/x"); !strings.Contains(tip, "measure acme/web's benchmarks") {
+		t.Fatalf("first tip: %q", tip)
+	}
+	if tip := perfTip(cfg, co, "local:acme/web@feat/y"); tip != "" {
+		t.Fatalf("the tip showed twice: %q", tip)
+	}
+	if tip := perfTip(cfg, co, "local:acme/fast@main"); tip != "" {
+		t.Fatalf("the tip showed where perf runs: %q", tip)
 	}
 }
