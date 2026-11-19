@@ -54,6 +54,8 @@ usage:
   prowl edits [--since 30d] [--repo NAME]
                         how you edited AI reviews before posting them
   prowl slack [--off]   sign in to Slack, or out
+  prowl logs [--since 1h] [--run ID] [--path]
+                        what prowl did and what went wrong
   prowl docs [TOPIC | PAGE SECTION]
                         read these docs
   prowl man DIR         write the man pages under DIR
@@ -101,6 +103,8 @@ func run(args []string) (err error) {
 		return commandHelp(cmd)
 	case cmd == "docs":
 		return showDocs(args[1:])
+	case cmd == "logs":
+		return showLogs(rest)
 	case cmd == "man":
 		if len(rest) != 1 {
 			return errors.New("usage: prowl man DIR")
@@ -449,6 +453,61 @@ func commandHelp(cmd string) error {
 		return fmt.Errorf("unknown command %q", cmd)
 	}
 	printMarkdown(s + "\n")
+	return nil
+}
+
+// showLogs prints the end of prowl's log, or the lines of the last
+// --since, or one run's lines and its own output.
+func showLogs(args []string) error {
+	fs := flagSet("logs")
+	var since time.Duration
+	fs.Func("since", "", func(v string) (err error) {
+		since, err = parseAge(v)
+		return err
+	})
+	runID := fs.Int64("run", 0, "")
+	path := fs.Bool("path", false, "")
+	if err := parseNoArgs(fs, args); err != nil {
+		return err
+	}
+	if *path {
+		fmt.Println(logs.Dir())
+		return nil
+	}
+	var lines []string
+	for _, f := range []string{logs.Path() + ".1", logs.Path()} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		lines = append(lines, strings.Split(strings.TrimRight(string(b), "\n"), "\n")...)
+	}
+	switch {
+	case *runID != 0:
+		lines = slices.DeleteFunc(lines, func(l string) bool { return !strings.Contains(l+" ", fmt.Sprintf(" run=%d ", *runID)) })
+	case since > 0:
+		from := time.Now().Add(-since)
+		lines = slices.DeleteFunc(lines, func(l string) bool {
+			v, _, _ := strings.Cut(strings.TrimPrefix(l, "time="), " ")
+			t, err := time.ParseInLocation("2006-01-02T15:04:05", v, time.Local)
+			return err != nil || t.Before(from)
+		})
+	default:
+		lines = lines[max(0, len(lines)-100):]
+	}
+	if len(lines) == 0 && *runID == 0 {
+		fmt.Println("nothing logged yet; the log is " + logs.Path())
+	}
+	for _, l := range lines {
+		fmt.Println(l)
+	}
+	if *runID != 0 {
+		b, err := os.ReadFile(logs.RunPath(strconv.FormatInt(*runID, 10)))
+		if err != nil {
+			return fmt.Errorf("no output kept for run %d", *runID)
+		}
+		fmt.Printf("\n--- what run %d printed ---\n%s", *runID, b)
+	}
 	return nil
 }
 

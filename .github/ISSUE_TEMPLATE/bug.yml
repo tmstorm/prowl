@@ -34,3 +34,9 @@ body:
       placeholder: Arch Linux, WezTerm
     validations:
       required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The output of `prowl logs --since 1h`, or `prowl logs --run ID` for a review that failed. It holds no tokens or PR text.
+      render: text
