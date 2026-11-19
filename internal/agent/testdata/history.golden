@@ -1,0 +1,56 @@
+### Reviews (oldest first)
+
+- me, changes requested, 2026-11-10 01:00 on 1111111:
+  > Please wrap the errors.
+- ci[bot], 2026-11-10 02:00 on : superseded by its later review; its points are settled
+- bob, approved, later dismissed, 2026-11-10 03:00 on 2222222:
+  > Fine by me.
+- ci[bot], commented, 2026-11-10 05:00 on :
+  > Coverage is back.
+- carol, changes requested, 2026-11-10 08:00 on 3333333:
+  > The cache never empties.
+
+### Conversation (latest comments, oldest first)
+
+- alice, 2026-11-10 02:00:
+  > Wrapped them in 3333333.
+- lint[bot], 2026-11-10 03:00: superseded by its later comment; its points are settled
+- me, 2026-11-10 04:00:
+  > Still missing one in store.go.
+- lint[bot], 2026-11-10 09:00:
+  > 0 warnings.
+
+### Threads waiting on me
+
+me is in these threads and someone else spoke last. Their ids are for `thread_replies`.
+
+- id `T1` · a.go:3
+  - me, 2026-11-10 01:00:
+    > Wrap this.
+  - alice, 2026-11-10 02:00:
+    > Done.
+- id `T5` · e.go:2 (resolved)
+  - me, 2026-11-10 01:00:
+    > Rename.
+  - alice, 2026-11-10 02:00:
+    > Renamed.
+
+### Review threads
+
+3 unresolved, 2 resolved. Resolved threads are settled: do not raise them again as findings.
+
+Unresolved:
+- id `T2` · b.go:7 (outdated)
+  - carol: Why a map here?
+- id `T4` · d.go:9
+  - me: Test this.
+  - ci[bot]: Covered.
+
+### Checks
+
+What failing checks, and checks with annotations, reported on the head commit:
+
+- test (fail): 2 tests failed
+  > TestCache and TestRun failed.
+- lint (pass)
+  - a.go:4 warning: unused variable
