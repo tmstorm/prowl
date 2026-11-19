@@ -13,7 +13,7 @@ func TestSkillFrontmatterAndInstall(t *testing.T) {
 	if !strings.HasPrefix(s, "---\nname: "+skill.Name+"\ndescription: ") {
 		t.Fatalf("SKILL.md frontmatter must start with name %q and a description", skill.Name)
 	}
-	for _, must := range []string{"prowl findings", "Do not commit, push, or post"} {
+	for _, must := range []string{"prowl findings", "Do not commit, push, or post", "changes requested on my PR", "never dropped", "thread ID"} {
 		if !strings.Contains(s, must) {
 			t.Errorf("skill lost %q", must)
 		}

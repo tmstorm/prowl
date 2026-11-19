@@ -57,52 +57,36 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 		h.text = "(review history unavailable: " + err.Error() + ")\n"
 		return h
 	}
+	return historyOf(det, h.reader, bots)
+}
 
+// historyOf is the review history of a PR, read for reader from its page
+// through ActivityOf, as the author's side reads it too.
+func historyOf(det *gh.Detail, reader string, bots map[string]bool) history {
+	h := history{reader: reader}
+	act := ActivityOf(det, bots)
 	var b strings.Builder
 
-	latestBot := map[string]time.Time{}
-	for _, r := range det.Reviews {
-		if r.Author.IsBot(bots) && r.SubmittedAt.After(latestBot[r.Author.Name()]) {
-			latestBot[r.Author.Name()] = r.SubmittedAt
-		}
-	}
-	for _, cm := range det.Comments {
-		if cm.Author.IsBot(bots) && cm.CreatedAt.After(latestBot[cm.Author.Name()]) {
-			latestBot[cm.Author.Name()] = cm.CreatedAt
-		}
-	}
-	superseded := func(a *gh.Actor, at time.Time) bool {
-		return a.IsBot(bots) && at.Before(latestBot[a.Name()])
-	}
-	if len(det.Reviews) > 0 {
+	if len(act.Reviews) > 0 {
 		b.WriteString("### Reviews (oldest first)\n\n")
-		for _, r := range det.Reviews {
-			if r.State == "PENDING" {
-				continue
-			}
-			oid := ""
-			if r.Commit != nil {
-				oid = gh.Short(r.Commit.Oid)
-			}
+		for _, r := range act.Reviews {
+			oid := gh.Short(r.Commit)
 			state := r.State
-			if state == "DISMISSED" && r.PreviousState != "" {
-				state = r.PreviousState
+			if state == "DISMISSED" && r.Was != "" {
+				state = r.Was
 			}
-			if r.Author.Name() == h.reader && (state == "APPROVED" || state == "CHANGES_REQUESTED" || state == "COMMENTED") && r.SubmittedAt.After(h.lastAt) {
-				h.lastAt, h.lastState, h.lastDismissed = r.SubmittedAt, state, r.State == "DISMISSED"
-				if r.Commit != nil {
-					h.lastOid = r.Commit.Oid
-				}
+			if r.Author == h.reader && (state == "APPROVED" || state == "CHANGES_REQUESTED" || state == "COMMENTED") && r.At.After(h.lastAt) {
+				h.lastAt, h.lastState, h.lastDismissed, h.lastOid = r.At, state, r.State == "DISMISSED", r.Commit
 			}
 			body := clip(r.Body, 1500)
 			if body == "" && r.State == "COMMENTED" {
 				continue
 			}
-			if superseded(r.Author, r.SubmittedAt) {
-				fmt.Fprintf(&b, "- %s, %s on %s: superseded by its later review; its points are settled\n", r.Author.Name(), day(r.SubmittedAt), oid)
+			if r.Superseded {
+				fmt.Fprintf(&b, "- %s, %s on %s: superseded by its later review; its points are settled\n", r.Author, day(r.At), oid)
 				continue
 			}
-			fmt.Fprintf(&b, "- %s, %s, %s on %s", r.Author.Name(), reviewState(r), day(r.SubmittedAt), oid)
+			fmt.Fprintf(&b, "- %s, %s, %s on %s", r.Author, reviewState(r), day(r.At), oid)
 			if body != "" {
 				b.WriteString(":\n" + indent(body, "  > "))
 			}
@@ -111,27 +95,23 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 		b.WriteString("\n")
 	}
 
-	cs := det.Comments
-	if len(cs) > 15 {
-		cs = cs[len(cs)-15:]
-	}
-	if len(cs) > 0 {
+	if cs := act.Conversation(); len(cs) > 0 {
 		b.WriteString("### Conversation (latest comments, oldest first)\n\n")
 		for _, cm := range cs {
 			body := clip(cm.Body, 1200)
 			if body == "" {
 				continue
 			}
-			if superseded(cm.Author, cm.CreatedAt) {
-				fmt.Fprintf(&b, "- %s, %s: superseded by its later comment; its points are settled\n", cm.Author.Name(), day(cm.CreatedAt))
+			if cm.Superseded {
+				fmt.Fprintf(&b, "- %s, %s: superseded by its later comment; its points are settled\n", cm.Author, day(cm.At))
 				continue
 			}
-			fmt.Fprintf(&b, "- %s, %s:\n%s\n", cm.Author.Name(), day(cm.CreatedAt), indent(body, "  > "))
+			fmt.Fprintf(&b, "- %s, %s:\n%s\n", cm.Author, day(cm.At), indent(body, "  > "))
 		}
 		b.WriteString("\n")
 	}
-	for _, cm := range det.Comments {
-		if cm.Author.Name() == h.reader && cm.CreatedAt.After(h.lastAt) && !h.lastAt.IsZero() {
+	for _, cm := range act.Comments {
+		if cm.Author == h.reader && cm.At.After(h.lastAt) && !h.lastAt.IsZero() {
 			h.readerSince = append(h.readerSince, clip(cm.Body, 2000))
 		}
 	}
@@ -147,13 +127,13 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 		return r
 	}
 	var wb strings.Builder
-	for _, t := range det.Threads {
+	for _, t := range act.Threads {
 		cms := t.Comments.Nodes
 		if len(cms) == 0 || !slices.ContainsFunc(cms, func(c gh.Comment) bool { return c.Author.Name() == h.reader }) {
 			continue
 		}
 		last := cms[len(cms)-1]
-		if last.Author.Name() == h.reader || last.Author.IsBot(bots) {
+		if last.Author.Name() == h.reader || act.Bot(last.Author) {
 			continue
 		}
 		r := reply(t)
@@ -173,7 +153,7 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 
 	open, resolved := 0, 0
 	var ob strings.Builder
-	for _, t := range det.Threads {
+	for _, t := range act.Threads {
 		if _, ok := h.threads[t.ID]; ok {
 			if !t.IsResolved {
 				open++
@@ -201,7 +181,7 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 	if open > 0 {
 		b.WriteString("\nUnresolved:\n" + ob.String())
 	}
-	b.WriteString(checksText(det.Checks))
+	b.WriteString(checksText(act.Checks))
 	h.text = b.String()
 	return h
 }
@@ -211,9 +191,6 @@ func loadHistory(ctx context.Context, c *gh.Client, j Job, bots map[string]bool)
 func checksText(checks []gh.Check) string {
 	var b strings.Builder
 	for _, c := range checks {
-		if c.State != "FAIL" && len(c.Annotations) == 0 {
-			continue
-		}
 		fmt.Fprintf(&b, "- %s (%s)", c.Name, strings.ToLower(c.State))
 		if c.Title != "" {
 			b.WriteString(": " + c.Title)
@@ -234,10 +211,10 @@ func checksText(checks []gh.Check) string {
 
 // reviewState is how a review reads in the history: a dismissed review
 // keeps what it was, since dismissal doesn't change what the reviewer decided.
-func reviewState(r gh.Review) string {
+func reviewState(r Remark) string {
 	s := strings.ToLower(strings.ReplaceAll(r.State, "_", " "))
-	if r.State == "DISMISSED" && r.PreviousState != "" {
-		s = strings.ToLower(strings.ReplaceAll(r.PreviousState, "_", " ")) + ", later dismissed"
+	if r.State == "DISMISSED" && r.Was != "" {
+		s = strings.ToLower(strings.ReplaceAll(r.Was, "_", " ")) + ", later dismissed"
 	}
 	return s
 }

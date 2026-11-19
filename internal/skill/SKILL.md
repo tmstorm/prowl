@@ -1,6 +1,6 @@
 ---
 name: prowl-findings
-description: Get a prowl code review of the current branch and act on it. Use when the user asks to review the work before a pull request ("review my changes", "run prowl review"), or to check, fix, address, or go through review findings, "what the review said", or "the prowl findings" for a branch or PR they are working on. Runs `prowl review` or `prowl findings`, verifies each finding against the code, fixes the ones that hold up, and reports the ones it disagrees with. Never commits, pushes, or posts to GitHub.
+description: Get a prowl code review of the current branch and act on it. Use when the user asks to review the work before a pull request ("review my changes", "run prowl review"), or to check, fix, address, or go through review findings, "what the review said", or "the prowl findings" for a branch or PR they are working on, and when reviewers left comments on the user's own PR ("changes requested on my PR", "address the review comments"). Runs `prowl review` or `prowl findings`, verifies each finding against the code, fixes the ones that hold up, reports the ones it disagrees with, and drafts replies to review threads. Never commits, pushes, or posts to GitHub.
 ---
 
 # Act on prowl review findings
@@ -33,6 +33,12 @@ If the output says the branch has moved since the review, expect some findings t
 
 A "Note from" section after the findings is the reviewer talking to the user: what it held back as not blocking, what it couldn't check, or a question. It is not a finding, so don't change code for it.
 
+## On the user's own PR
+
+When the PR is the user's own, `prowl findings` also prints "On GitHub": each reviewer's latest verdict, then what was raised, in the order to work through it, whether the reviewers use prowl or not. Each item says where it is, who raised it, and its thread ID. An item marked "a finding prowl posted" came from a reviewer's AI review and has a severity. What a person wrote is never dropped: fix it, or draft a reply that says why not. What a bot wrote is checked like a finding: fix it when it holds up, and draft a reply when it's wrong. A failing check is fixed before anything else that isn't must-fix. A thread marked outdated is on code that has changed since, so check whether it still applies. A suggested change is the patch the reviewer would apply; apply it when it holds up. `prowl findings --json` prints the same as JSON.
+
+For each review thread, draft the reply the user would post, in their voice, and list it with its thread ID: what was fixed and where ("Fixed in the next push: the map is now made in New."), or why it wasn't. The user posts the replies.
+
 ## Work through them
 
 For each finding, in order:
@@ -51,4 +57,4 @@ Run the repo's tests or checks for what you changed if they are quick.
 
 ## Report
 
-Finish with one line per finding: its number and title, then fixed, already fixed, or not changed with the reason. Then list any drafted PR description text, and pass on anything in a reviewer's note the user should act on.
+Finish with one line per finding: its number and title, then fixed, already fixed, or not changed with the reason. Then list any drafted PR description text and thread replies, each reply with its thread ID, and pass on anything in a reviewer's note the user should act on.

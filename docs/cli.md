@@ -54,16 +54,19 @@ Exits 2 when a finding is must-fix, so a hook can keep a coding agent working un
 ## prowl findings
 
 ```sh
-prowl findings [PR] [--all] [--prompt] [--agent NAME[:PROFILE]]
+prowl findings [PR] [--all] [--prompt] [--json] [--agent NAME[:PROFILE]]
 ```
 
 Prints the AI reviews of a PR as Markdown: every reviewer's findings combined, then each reviewer's note. PR is `owner/repo#N`, or anything `gh pr view` takes in the checkout: a number, a link or a branch. Without one, it's the current branch's PR, or the branch's local review when it has no PR. When the branch has moved since the review, the output says so.
 
-- `--all` includes findings you excluded in the review.
+On your own PR it then prints what was raised on it on GitHub, read the same way an AI review reads the PR: each reviewer's latest verdict, changes requested first, then their review bodies, the latest conversation, the unresolved threads and the failing checks, in the order to work through them. prowl's must-fix findings come first, then failing checks, then what a reviewer requesting changes said, then should-fix findings, what people said, what bots said and checks' warnings, and nits. Each item says where it is, who raised it (a person, a bot, a finding prowl posted, or a check), its thread ID, its replies, whether the code has changed since, and a suggested change as the patch it would apply. Bots are what the `bots` setting says, and only each bot's latest review or comment counts. Reading GitHub needs the network; without it, prowl says so and prints the rest.
+
+- `--all` includes findings you excluded in the review, and resolved threads.
 - `--prompt` wraps the findings in instructions for a coding agent: verify each against the code, fix the ones that hold up, say why the others don't. It prints plain Markdown even in a terminal.
 - `--agent` limits it to one agent with its profiles, or to one profile.
+- `--json` prints what was raised on your own PR as JSON: `verdicts` (`reviewer`, `state`, `bot`), and `items` with `source` (`review`, `comment`, `thread` or `check`), `kind` (`finding` from prowl, `comment` from a person, `bot`, or `check`), `thread_id`, `path`, `line`, `severity`, `rule`, `author` (a check's name for a check), `outdated`, `resolved`, `failing`, `body`, `suggestion`, `hunk` and `replies`.
 
-A review still running is left out, with a note on stderr. With no finished review, it says how to start one and exits 1. See [Fixing findings with your own coding agent](ai-reviews.md#fixing-findings-with-your-own-coding-agent).
+A review still running is left out, with a note on stderr. With no finished review, and nothing on GitHub for your own PR, it says how to start one and exits 1. See [Fixing findings with your own coding agent](ai-reviews.md#fixing-findings-with-your-own-coding-agent).
 
 ## prowl skill
 
