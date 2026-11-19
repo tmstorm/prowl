@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.0](https://github.com/tmstorm/prowl/compare/v0.6.0...v0.7.0) (2026-11-19)
+
+
+### Features
+
+* findings for the author: work through what was raised on your own PR ([#91](https://github.com/tmstorm/prowl/issues/91)) ([728c0dc](https://github.com/tmstorm/prowl/commit/728c0dcfc736af83eff530514cd801aaf7419654))
+* **list:** print what needs you as JSON with --json ([#92](https://github.com/tmstorm/prowl/issues/92)) ([5ae3de2](https://github.com/tmstorm/prowl/commit/5ae3de2ca5a888ddfe9695194c2d5826ba0a67a9))
+* log what prowl does, and read it with prowl logs ([#88](https://github.com/tmstorm/prowl/issues/88)) ([b4d38a8](https://github.com/tmstorm/prowl/commit/b4d38a8ad791f99b93b86ff80373a2982c97ef64))
+* performance review, the built-in perf extension ([#89](https://github.com/tmstorm/prowl/issues/89)) ([4584784](https://github.com/tmstorm/prowl/commit/458478443a7b0b33b648b2f3e0b8febbad10cfe4))
+* review extensions ([#87](https://github.com/tmstorm/prowl/issues/87)) ([4a526cf](https://github.com/tmstorm/prowl/commit/4a526cf1f5472c31739475ceb3d409cb09892c23))
+* set extensions and perf in the options ([#90](https://github.com/tmstorm/prowl/issues/90)) ([3811c88](https://github.com/tmstorm/prowl/commit/3811c88922016180476c41ab5baec059665e5c09))
+
+
+### Bug Fixes
+
+* **agent:** cap the run tool's caches and clean up old ones ([#85](https://github.com/tmstorm/prowl/issues/85)) ([99482dc](https://github.com/tmstorm/prowl/commit/99482dc88d1999eebc20f37b4842a53f157ef21f))
+* **slack:** let you change the client ID in the options ([#86](https://github.com/tmstorm/prowl/issues/86)) ([e4c9174](https://github.com/tmstorm/prowl/commit/e4c91747722ab8e04a25a59b4c98ca3049135979))
+* **update:** write the man pages on every update ([#82](https://github.com/tmstorm/prowl/issues/82)) ([f0e553d](https://github.com/tmstorm/prowl/commit/f0e553d941036f582c5580f4669d22abe18743c6))
+
 ## [0.6.0](https://github.com/tmstorm/prowl/compare/v0.5.0...v0.6.0) (2026-11-18)
 
 
