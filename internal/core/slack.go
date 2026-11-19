@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/url"
 	"slices"
@@ -67,6 +68,7 @@ func (co *Core) SignInSlack(ctx context.Context, token string, open func(url str
 	if err := co.st.SetSlackSignedIn(true); err != nil {
 		return "", err
 	}
+	slog.Info("signed in to Slack")
 	return id.User + " in " + id.Team, nil
 }
 
@@ -75,6 +77,7 @@ func (co *Core) SignOutSlack() error {
 	if err := slack.DeleteToken(); err != nil {
 		return err
 	}
+	slog.Info("signed out of Slack")
 	return co.st.SetSlackSignedIn(false)
 }
 
@@ -124,7 +127,8 @@ func (co *Core) syncSlack(ctx context.Context, sl *slack.Client, cfg config.Conf
 		co.mu.Lock()
 		co.slackMe, co.slackWho, co.slackTeam = id.UserID, id.User+" in "+id.Team, id.TeamID
 		co.mu.Unlock()
-		_, _ = co.loadSlackUsers(ctx, sl)
+		_, err = co.loadSlackUsers(ctx, sl)
+		logErr("load Slack users", err)
 	}
 	since := co.st.SlackSearched()
 	if since.IsZero() {
@@ -226,7 +230,7 @@ func (co *Core) pruneShares(ctx context.Context, open map[string]string) {
 			continue
 		}
 		if pr, err := co.gh.PR(ctx, repo, n); err == nil && pr.State != "OPEN" {
-			_ = co.st.DeleteSlackShares(s.PRKey)
+			logErr("delete Slack shares of "+s.PRKey, co.st.DeleteSlackShares(s.PRKey))
 		}
 	}
 }
@@ -337,7 +341,7 @@ func (co *Core) setReaction(ctx context.Context, sl *slack.Client, s store.Slack
 	if want != "" {
 		if err := sl.React(ctx, s.Channel, s.TS, want); err != nil {
 			want = ""
-			_ = co.st.SetSlackReaction(s, want)
+			logErr("record the Slack reaction", co.st.SetSlackReaction(s, want))
 			return err
 		}
 	}

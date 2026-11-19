@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -362,9 +363,21 @@ func (co *Core) Open(ctx context.Context, repo string, n int) (PR, error) {
 // doesn't notify): PRs that newly need you, moved section, or
 // were pushed to while addressed, and your own PRs that moved. Snoozed PRs
 // are left out. Before the first sync ever, every such PR is a change.
-func (co *Core) Refresh(ctx context.Context) ([]PR, error) {
+func (co *Core) Refresh(ctx context.Context) (_ []PR, err error) {
 	co.syncing.Lock()
 	defer co.syncing.Unlock()
+	start := time.Now()
+	defer func() {
+		took := time.Since(start).Round(100 * time.Millisecond)
+		if err != nil {
+			slog.Warn("sync failed", "took", took, "err", err)
+			return
+		}
+		co.mu.Lock()
+		n := len(co.inbox.Items)
+		co.mu.Unlock()
+		slog.Info("synced", "prs", n, "took", took, "github_rate_left", co.gh.RateLeft())
+	}()
 	co.mu.Lock()
 	cfg := co.cfg
 	cfg.WatchRepos = slices.Clone(cfg.WatchRepos)
@@ -395,7 +408,11 @@ func (co *Core) Refresh(ctx context.Context) ([]PR, error) {
 	byLink := make([]*gh.PR, len(opened))
 	var fetching sync.WaitGroup
 	for i, o := range opened {
-		fetching.Go(func() { byLink[i], _ = co.gh.PR(ctx, o.repo, o.n) })
+		fetching.Go(func() {
+			var err error
+			byLink[i], err = co.gh.PR(ctx, o.repo, o.n)
+			logErr(fmt.Sprintf("fetch %s#%d", o.repo, o.n), err)
+		})
 	}
 	var newlyShared []gh.PR
 	var slackErr error
@@ -418,7 +435,7 @@ func (co *Core) Refresh(ctx context.Context) ([]PR, error) {
 		slackErr = errors.Join(slackErr, err)
 	}
 	if data, err := json.Marshal(in); err == nil {
-		_ = co.st.SaveInbox(data, time.Now())
+		logErr("save inbox", co.st.SaveInbox(data, time.Now()))
 	}
 	items := co.classify(in)
 	var changes []inbox.Item
@@ -457,6 +474,7 @@ func (co *Core) Refresh(ctx context.Context) ([]PR, error) {
 		co.setLoggedOut("slack")
 		slackErr = nil
 	}
+	logErr("slack sync", slackErr)
 	co.mu.Lock()
 	co.slackErr = slackErr
 	co.mu.Unlock()
@@ -577,7 +595,7 @@ func (co *Core) PruneClosed(ctx context.Context) {
 			continue
 		}
 		if pr, err := co.gh.PR(ctx, repo, n); err == nil && pr.State != "OPEN" {
-			_ = co.st.DeleteReviews(key)
+			logErr("delete reviews of "+key, co.st.DeleteReviews(key))
 			agent.RemoveReview(co.Config(), repo, n)
 		}
 	}
@@ -671,7 +689,7 @@ func (co *Core) StopWatching() {
 		co.watching = nil
 	}
 	co.mu.Unlock()
-	_ = co.st.SetWatcher(0)
+	logErr("clear watcher", co.st.SetWatcher(0))
 }
 
 func watchLock() string { return filepath.Join(config.DataDir(), "watch.lock") }
@@ -868,6 +886,13 @@ func parseKey(key string) (repo string, n int, err error) {
 		return "", 0, fmt.Errorf("bad PR key %q: %w", key, err)
 	}
 	return repo, n, nil
+}
+
+// logErr logs what failed when prowl carries on without it.
+func logErr(what string, err error) {
+	if err != nil {
+		slog.Warn(what+" failed", "err", err)
+	}
 }
 
 // item is the inbox item for key. co.mu is held.

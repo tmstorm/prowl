@@ -271,7 +271,7 @@ func (co *Core) submit(ctx context.Context, key string, d Draft) (Submitted, err
 	delete(co.drafted, key)
 	co.mu.Unlock()
 	if len(d.Runs) > 0 && out.URL != "" {
-		_ = co.st.AddPost(key, out.URL, drafted, reviewText(d.Body, d.Comments))
+		logErr("record the post", co.st.AddPost(key, out.URL, drafted, reviewText(d.Body, d.Comments)))
 		for _, id := range d.Runs {
 			if r, _ := co.st.Run(id); r != nil {
 				for i := range r.Findings {
@@ -279,8 +279,8 @@ func (co *Core) submit(ctx context.Context, key string, d Draft) (Submitted, err
 						r.Findings[i].Posted = true
 					}
 				}
-				_ = co.st.SaveFindings(id, r.Findings)
-				_ = co.st.MarkPosted(id, out.URL)
+				logErr("save posted findings", co.st.SaveFindings(id, r.Findings))
+				logErr("mark the review posted", co.st.MarkPosted(id, out.URL))
 			}
 		}
 		co.loadRuns()
@@ -465,7 +465,7 @@ func (co *Core) markReplied(runID int64, threadID, body string) error {
 	comment := func(text string) store.Review {
 		return store.Review{Comments: []store.Comment{{Path: r.Path, Line: r.Line, Body: text}}}
 	}
-	_ = co.st.AddPost(run.Key, "", comment(r.Body), comment(body))
+	logErr("record the reply", co.st.AddPost(run.Key, "", comment(r.Body), comment(body)))
 	co.loadRuns()
 	return nil
 }
@@ -489,7 +489,7 @@ func (co *Core) markSent(runs []int64, sent []DraftComment) {
 				r.Findings[i].Posted = true
 			}
 		}
-		_ = co.st.SaveFindings(id, r.Findings)
+		logErr("save sent findings", co.st.SaveFindings(id, r.Findings))
 	}
 	co.loadRuns()
 }

@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"runtime"
@@ -28,6 +29,7 @@ import (
 	"github.com/tmstorm/prowl/internal/config"
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
+	"github.com/tmstorm/prowl/internal/logs"
 	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/skill"
 	"github.com/tmstorm/prowl/internal/slack"
@@ -82,7 +84,7 @@ type exitCode int
 
 func (c exitCode) Error() string { return fmt.Sprintf("exit status %d", int(c)) }
 
-func run(args []string) error {
+func run(args []string) (err error) {
 	if runtime.GOOS == "windows" {
 		_ = os.Remove(core.OldBinary(core.Executable()))
 	}
@@ -105,6 +107,16 @@ func run(args []string) error {
 		}
 		return docs.WriteMan(rest[0], core.BuildVersion())
 	}
+	logs.Open(cmp.Or(cmd, "tui"))
+	if cmd == "" || cmd == "watch" {
+		slog.Info("started", "version", core.BuildVersion())
+	}
+	defer func() {
+		var code exitCode
+		if err != nil && !errors.As(err, &code) {
+			slog.Error("failed", "cmd", cmp.Or(cmd, "tui"), "err", err)
+		}
+	}()
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("config: %w", err)

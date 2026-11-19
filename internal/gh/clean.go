@@ -3,8 +3,12 @@ package gh
 import (
 	"bytes"
 	"io"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 	"unicode/utf8"
 )
 
@@ -13,10 +17,25 @@ import (
 // clipboard or redraw your terminal when prowl shows it. go-gh already
 // cleans JSON answers (titles, bodies, comments); job logs are cleaned line
 // by line as they are read, and release downloads are binary.
-type cleanTransport struct{ next http.RoundTripper }
+//
+// It also logs each request at debug level, and keeps the rate limit GitHub
+// last reported.
+type cleanTransport struct {
+	next     http.RoundTripper
+	rateLeft *atomic.Int64
+}
 
 func (t cleanTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	start := time.Now()
 	resp, err := t.next.RoundTrip(r)
+	if err != nil {
+		slog.Debug("github", "method", r.Method, "path", r.URL.Path, "took", time.Since(start).Round(time.Millisecond), "err", err)
+	} else {
+		slog.Debug("github", "method", r.Method, "path", r.URL.Path, "status", resp.StatusCode, "took", time.Since(start).Round(time.Millisecond))
+		if n, perr := strconv.ParseInt(resp.Header.Get("X-RateLimit-Remaining"), 10, 64); perr == nil {
+			t.rateLeft.Store(n)
+		}
+	}
 	if err != nil || resp.Body == nil || strings.Contains(resp.Header.Get("Content-Type"), "json") || strings.HasSuffix(r.URL.Path, "/logs") || r.Header.Get("Accept") == "application/octet-stream" {
 		return resp, err
 	}

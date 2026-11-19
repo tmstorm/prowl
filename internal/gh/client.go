@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
@@ -25,7 +26,12 @@ type Client struct {
 
 	viewerMu sync.Mutex
 	viewer   string // your login, once a lookup succeeded
+	rateLeft *atomic.Int64
 }
+
+// RateLeft is how many requests GitHub said were left this hour, or -1
+// before it said.
+func (c *Client) RateLeft() int64 { return c.rateLeft.Load() }
 
 func New() (*Client, error) {
 	c, err := NewWith(api.ClientOptions{})
@@ -44,7 +50,9 @@ func NewWith(opts api.ClientOptions) (*Client, error) {
 	if next == nil {
 		next = http.DefaultTransport
 	}
-	opts.Transport = cleanTransport{next}
+	rateLeft := &atomic.Int64{}
+	rateLeft.Store(-1)
+	opts.Transport = cleanTransport{next: next, rateLeft: rateLeft}
 	if opts.AuthToken == "" {
 		host := opts.Host
 		if host == "" {
@@ -74,7 +82,7 @@ func NewWith(opts api.ClientOptions) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("asset client: %w", err)
 	}
-	return &Client{gql: gql, rest: rest, diff: diff, asset: asset}, nil
+	return &Client{gql: gql, rest: rest, diff: diff, asset: asset, rateLeft: rateLeft}, nil
 }
 
 const prFields = `
