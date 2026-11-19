@@ -101,16 +101,8 @@ func runInContainer(ctx context.Context, image, dir, cache, command string) (Run
 	if err := markUsed(cache); err != nil {
 		return RunOutput{}, fmt.Errorf("run: %w", err)
 	}
-	name := fmt.Sprintf("prowl-run-%d-%d", os.Getpid(), time.Now().UnixNano())
-	until := strconv.FormatInt(time.Now().Add(runTimeout).Unix(), 10)
-	args := []string{"run", "--rm", "--name", name, "--label", runUntilLabel + "=" + until,
-		"--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=4096",
-		"-v", dir + ":/src:ro", "-v", cache + ":/cache",
-		"-e", "HOME=/cache/home", "-e", "XDG_CACHE_HOME=/cache/xdg", "-e", "GOCACHE=/cache/go-build",
-		"-e", "GOMODCACHE=/cache/go-mod", "-e", "GOFLAGS=-buildvcs=false", "-e", "npm_config_cache=/cache/npm"}
-	if runtime.GOOS != "windows" {
-		args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
-	}
+	name := containerName()
+	args := append([]string{"run", "--rm"}, containerArgs(name, runTimeout, cache, "-v", dir+":/src:ro")...)
 	args = append(args, image, "sh", "-c", `mkdir -p /tmp/work && tar -C /src --exclude=./.git -cf - . | tar -C /tmp/work -xof - && cd /tmp/work && timeout "$1" sh -c "$2"`,
 		"sh", strconv.Itoa(int(runTimeout.Seconds())), command)
 
@@ -134,6 +126,27 @@ func runInContainer(ctx context.Context, image, dir, cache, command string) (Run
 		return res, fmt.Errorf("run %q: %w", command, err)
 	}
 	return res, nil
+}
+
+func containerName() string {
+	return fmt.Sprintf("prowl-run-%d-%d", os.Getpid(), time.Now().UnixNano())
+}
+
+// containerArgs are the docker run flags for a container that runs a PR's
+// code: no capabilities or new privileges, a cap on processes, your uid
+// rather than root, the repo's cache at /cache, mounts, and a label that
+// lets pruneRunContainers remove it once limit has passed.
+func containerArgs(name string, limit time.Duration, cache string, mounts ...string) []string {
+	until := strconv.FormatInt(time.Now().Add(limit).Unix(), 10)
+	args := []string{"--name", name, "--label", runUntilLabel + "=" + until,
+		"--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=4096", "-v", cache + ":/cache"}
+	args = append(args, mounts...)
+	args = append(args, "-e", "HOME=/cache/home", "-e", "XDG_CACHE_HOME=/cache/xdg", "-e", "GOCACHE=/cache/go-build",
+		"-e", "GOMODCACHE=/cache/go-mod", "-e", "GOFLAGS=-buildvcs=false", "-e", "npm_config_cache=/cache/npm")
+	if runtime.GOOS != "windows" {
+		args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
+	}
+	return args
 }
 
 // pruneRunContainers removes run containers past their timeout. They are

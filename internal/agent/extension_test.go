@@ -27,7 +27,7 @@ func runExtension(t *testing.T, command string, timeout time.Duration, in agent.
 	if runtime.GOOS == "windows" {
 		t.Skip("the extensions are shell scripts")
 	}
-	e := agent.ExtensionFor(config.Extension{Name: "lint", Command: command, Repos: []string{"*"}, Timeout: config.Duration{Duration: timeout}})
+	e := agent.ExtensionFor(config.Default(), config.Extension{Name: "lint", Command: command, Repos: []string{"*"}, Timeout: config.Duration{Duration: timeout}})
 	return e.Run(context.Background(), in)
 }
 
@@ -37,12 +37,12 @@ func TestExtensionRuns(t *testing.T) {
 	head := t.TempDir()
 	in := agent.ExtensionInput{Repo: "acme/web", HeadDir: head, Head: "abc", Base: "def", ChangedFiles: []string{"a.go"},
 		Since: "fed", ChangedSince: []string{"a.go"}, Previous: []agent.ExtensionFinding{{Severity: "nit", Title: "old", Path: "a.go", Line: 2}}}
-	finding := `{"severity":"should-fix","title":"Slow","body":"b","rule":"perf","path":"","line":0}`
+	finding := `{"severity":"should-fix","title":"Slow","body":"b","rule":"speed","path":"","line":0}`
 	out, err := runExtension(t, `cat > input.json; pwd > pwd; printf '{"prompt":"p","summary":"s","findings":[`+finding+`]}'`, time.Minute, in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Prompt != "p" || out.Summary != "s" || len(out.Findings) != 1 || out.Findings[0].Title != "Slow" || out.Findings[0].Rule != "perf" {
+	if out.Prompt != "p" || out.Summary != "s" || len(out.Findings) != 1 || out.Findings[0].Title != "Slow" || out.Findings[0].Rule != "speed" {
 		t.Fatalf("output: %+v", out)
 	}
 	var got agent.ExtensionInput
@@ -131,7 +131,7 @@ func TestExtensionsInReview(t *testing.T) {
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
 	cfg.Agent.Extensions = []config.Extension{
-		{Name: "perf", Repos: []string{"o/api"}, Command: fakeExtension(t, perf, `{"prompt":"| benchmark | delta |","summary":"2 benchmarks compared",
+		{Name: "speed", Repos: []string{"o/api"}, Command: fakeExtension(t, perf, `{"prompt":"| benchmark | delta |","summary":"2 benchmarks compared",
 "findings":[{"severity":"should-fix","title":"Parse is 30% slower","body":"b"},{"severity":"nit","title":"Allocates per call","body":"b","path":"a.go","line":1}]}`)},
 		{Name: "broken", Repos: []string{"*"}, Command: "echo boom >&2; exit 1"},
 		{Name: "web-only", Repos: []string{"o/web"}, Command: "echo should not run; exit 1"},
@@ -146,8 +146,8 @@ func TestExtensionsInReview(t *testing.T) {
 	if run == nil || run.Status != "done" {
 		t.Fatalf("run: %+v", run)
 	}
-	for _, want := range []string{`msg="extension done"`, "extension=perf", "findings=2", `msg="extension failed"`, "extension=broken",
-		`msg="extension finding put back" run=`, "id=perf-1"} {
+	for _, want := range []string{`msg="extension done"`, "extension=speed", "findings=2", `msg="extension failed"`, "extension=broken",
+		`msg="extension finding put back" run=`, "id=speed-1"} {
 		if !strings.Contains(logged.String(), want) {
 			t.Errorf("the log is missing %q:\n%s", want, logged.String())
 		}
@@ -156,13 +156,13 @@ func TestExtensionsInReview(t *testing.T) {
 	for _, f := range run.Findings {
 		got = append(got, fmt.Sprintf("%s %s %s:%d %s", f.ExtensionID, f.Severity, f.Path, f.Line, f.Title))
 	}
-	want := []string{" nit a.go:3 t", "perf-1 should-fix :0 Parse is 30% slower", "perf-2 nit a.go:1 Allocates per call"}
+	want := []string{" nit a.go:3 t", "speed-1 should-fix :0 Parse is 30% slower", "speed-2 nit a.go:1 Allocates per call"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("findings:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 	prompts := read(filepath.Join(filepath.Dir(roots), "bin", "prompts"))
-	for _, want := range []string{"## Extensions", "### perf", "| benchmark | delta |", "perf-1 (should-fix, attach it): Parse is 30% slower",
-		"perf-2 (nit, already at a.go:1, prowl adds it)"} {
+	for _, want := range []string{"## Extensions", "### speed", "| benchmark | delta |", "speed-1 (should-fix, attach it): Parse is 30% slower",
+		"speed-2 (nit, already at a.go:1, prowl adds it)"} {
 		if !strings.Contains(prompts, want) {
 			t.Errorf("the prompt is missing %q", want)
 		}
@@ -172,7 +172,7 @@ func TestExtensionsInReview(t *testing.T) {
 	}
 	notes, _ := st.Notes("o/api#7", "claude")
 	if !slices.ContainsFunc(notes, func(n store.Note) bool {
-		return n.Text == "extensions: perf: 2 benchmarks compared · broken: failed: exit status 1"
+		return n.Text == "extensions: speed: 2 benchmarks compared · broken: failed: exit status 1"
 	}) {
 		t.Errorf("notes: %+v", notes)
 	}
@@ -183,10 +183,10 @@ func TestExtensionsInReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := extensionRuns(perf); n != 1 {
-		t.Fatalf("perf ran %d times", n)
+		t.Fatalf("speed ran %d times", n)
 	}
-	if run := latestRun(t, st, "claude"); !slices.ContainsFunc(run.Findings, func(f store.Finding) bool { return f.ExtensionID == "perf-1" }) {
-		t.Fatalf("the revise lost perf-1: %+v", run.Findings)
+	if run := latestRun(t, st, "claude"); !slices.ContainsFunc(run.Findings, func(f store.Finding) bool { return f.ExtensionID == "speed-1" }) {
+		t.Fatalf("the revise lost speed-1: %+v", run.Findings)
 	}
 }
 
@@ -197,11 +197,11 @@ func TestExtensionSeverityKept(t *testing.T) {
 		t.Skip("the extensions are shell scripts")
 	}
 	st, roots, bin, head := setupRun(t)
-	attached := `{"summary":"ok","verdict":"comment","findings":[{"severity":"nit","path":"a.go","line":1,"title":"Slow parse","body":"b","rule":"","extension_id":"perf-1"}],"note":"","guidelines_read":[],"skills_used":[]}`
+	attached := `{"summary":"ok","verdict":"comment","findings":[{"severity":"nit","path":"a.go","line":1,"title":"Slow parse","body":"b","rule":"","extension_id":"speed-1"}],"note":"","guidelines_read":[],"skills_used":[]}`
 	_ = os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\ncat > /dev/null\necho '{\"type\":\"result\",\"session_id\":\"s1\",\"structured_output\":"+attached+"}'\n"), 0o755)
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
-	cfg.Agent.Extensions = []config.Extension{{Name: "perf", Repos: []string{"*"},
+	cfg.Agent.Extensions = []config.Extension{{Name: "speed", Repos: []string{"*"},
 		Command: fakeExtension(t, t.TempDir(), `{"findings":[{"severity":"must-fix","title":"Parse is 3x slower","body":"b"}]}`)}}
 	if err := agent.Run(t.Context(), cfg, st, nil, reviewJob(head)); err != nil {
 		t.Fatal(err)
@@ -222,8 +222,8 @@ func TestExtensionWaitsForHolder(t *testing.T) {
 	perf := t.TempDir()
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
-	cfg.Agent.Extensions = []config.Extension{{Name: "perf", Repos: []string{"*"}, Command: fakeExtension(t, perf, `{"summary":"mine"}`)}}
-	held, claimed, err := st.ClaimExtension("o/api#7", "perf", head, "codex", os.Getpid(), time.Hour, time.Time{})
+	cfg.Agent.Extensions = []config.Extension{{Name: "speed", Repos: []string{"*"}, Command: fakeExtension(t, perf, `{"summary":"mine"}`)}}
+	held, claimed, err := st.ClaimExtension("o/api#7", "speed", head, "codex", os.Getpid(), time.Hour, time.Time{})
 	if err != nil || !claimed {
 		t.Fatal(err)
 	}
@@ -234,11 +234,11 @@ func TestExtensionWaitsForHolder(t *testing.T) {
 	go func() { done <- agent.Run(context.Background(), cfg, st, nil, reviewJob(head)) }()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if run := latestRun(t, st, "claude"); run != nil && run.Activity == "waiting for perf, running in the codex review" {
+		if run := latestRun(t, st, "claude"); run != nil && run.Activity == "waiting for speed, running in the codex review" {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the review never said it was waiting for codex's perf run")
+			t.Fatal("the review never said it was waiting for codex's speed run")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -249,14 +249,14 @@ func TestExtensionWaitsForHolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := extensionRuns(perf); n != 0 {
-		t.Fatalf("perf ran %d times beside codex's run", n)
+		t.Fatalf("speed ran %d times beside codex's run", n)
 	}
 	if !strings.Contains(logged.String(), `msg="waiting for extension"`) || !strings.Contains(logged.String(), "holder=codex") ||
 		!strings.Contains(logged.String(), `msg="extension result reused"`) {
 		t.Errorf("log: %s", logged.String())
 	}
 	notes, _ := st.Notes("o/api#7", "claude")
-	if !slices.ContainsFunc(notes, func(n store.Note) bool { return n.Text == "extensions: perf: from codex" }) {
+	if !slices.ContainsFunc(notes, func(n store.Note) bool { return n.Text == "extensions: speed: from codex" }) {
 		t.Errorf("notes: %+v", notes)
 	}
 }
@@ -274,7 +274,7 @@ func TestExtensionReReview(t *testing.T) {
 	perf := t.TempDir()
 	cfg := config.Default()
 	cfg.RepoRoots = []string{roots}
-	cfg.Agent.Extensions = []config.Extension{{Name: "perf", Repos: []string{"*"}, Command: fakeExtension(t, perf,
+	cfg.Agent.Extensions = []config.Extension{{Name: "speed", Repos: []string{"*"}, Command: fakeExtension(t, perf,
 		`{"findings":[{"severity":"should-fix","title":"Slow a","body":"b","path":"a.go","line":1},{"severity":"should-fix","title":"Slower overall","body":"b"}]}`)}}
 	if err := agent.Run(t.Context(), cfg, st, nil, reviewJob(head)); err != nil {
 		t.Fatal(err)
@@ -311,10 +311,10 @@ func TestExtensionReReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := extensionRuns(perf); n != 2 {
-		t.Fatalf("perf ran %d times; nothing changed since the last run", n)
+		t.Fatalf("speed ran %d times; nothing changed since the last run", n)
 	}
 	notes, _ := st.Notes("o/api#7", "claude")
-	if !slices.ContainsFunc(notes, func(n store.Note) bool { return n.Text == "extensions: perf: unchanged since "+gh.Short(second) }) {
+	if !slices.ContainsFunc(notes, func(n store.Note) bool { return n.Text == "extensions: speed: unchanged since "+gh.Short(second) }) {
 		t.Errorf("notes: %+v", notes)
 	}
 	if fs := latestRun(t, st, "claude").Findings; !slices.ContainsFunc(fs, func(f store.Finding) bool { return f.Title == "Slow a" }) {
@@ -450,4 +450,44 @@ func (s *syncBuffer) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.String()
+}
+
+// An extension learns from local whether head_dir is a PR's worktree or your
+// own checkout, in a review and when run on demand.
+func TestExtensionInputLocal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the extensions are shell scripts")
+	}
+	st, roots, _, head := setupRun(t)
+	speed, deploy := t.TempDir(), t.TempDir()
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	cfg.Agent.Extensions = []config.Extension{
+		{Name: "speed", Repos: []string{"o/api"}, Command: fakeExtension(t, speed, `{}`)},
+		{Name: "deploy", Repos: []string{"o/api"}, OnDemand: true, Command: fakeExtension(t, deploy, `{}`)},
+	}
+	local := agent.Job{Repo: "o/api", Dir: filepath.Join(roots, "api"), Branch: "main", Base: "main", Viewer: "me", Agent: "claude"}
+	local.Head = git(t, local.Dir, "rev-parse", "HEAD")
+	for _, j := range []agent.Job{reviewJob(head), local} {
+		if err := agent.Run(t.Context(), cfg, st, nil, j); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, err := st.StartExtensionJob(local.Key(), "deploy", local.Head, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onDemand := local
+	onDemand.Extension, onDemand.ExtensionJob = "deploy", id
+	if err := agent.Run(t.Context(), cfg, st, nil, onDemand); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]bool{
+		filepath.Join(speed, "in-1.json"): false, filepath.Join(speed, "in-2.json"): true, filepath.Join(deploy, "in-1.json"): true,
+	} {
+		var in agent.ExtensionInput
+		if err := json.Unmarshal([]byte(read(path)), &in); err != nil || in.Local != want {
+			t.Errorf("%s: local %v, want %v (%v)", path, in.Local, want, err)
+		}
+	}
 }

@@ -30,6 +30,8 @@ type Extension interface {
 
 // ExtensionInput is what an extension gets on stdin. Since, ChangedSince and
 // Previous come from its own last run on the PR, and are empty on its first.
+// Local says HeadDir is your own checkout, in a review before a PR exists,
+// rather than a worktree of a PR.
 type ExtensionInput struct {
 	Repo         string             `json:"repo"`
 	HeadDir      string             `json:"head_dir"`
@@ -38,6 +40,7 @@ type ExtensionInput struct {
 	Base         string             `json:"base"`
 	ChangedFiles []string           `json:"changed_files"`
 	RunImage     string             `json:"run_image,omitempty"`
+	Local        bool               `json:"local,omitempty"`
 	Since        string             `json:"since,omitempty"`
 	ChangedSince []string           `json:"changed_since,omitempty"`
 	Previous     []ExtensionFinding `json:"previous,omitempty"`
@@ -64,8 +67,14 @@ type ExtensionFinding struct {
 
 var extensionSeverities = []string{"must-fix", "should-fix", "nit"}
 
-// ExtensionFor is the extension that e configures.
-func ExtensionFor(e config.Extension) Extension { return execExtension{e} }
+// ExtensionFor is the extension that e configures: one prowl ships, or the
+// program e names.
+func ExtensionFor(cfg config.Config, e config.Extension) Extension {
+	if e.Builtin() && e.Name == "perf" {
+		return perfExtension{cfg: cfg, ext: e}
+	}
+	return execExtension{e}
+}
 
 // execExtension runs the configured command in the PR's worktree, the input
 // as JSON on stdin and the output as JSON on stdout.
@@ -147,7 +156,7 @@ func (r *jobRun) runExtensions(ctx context.Context, changed []string) {
 	}
 	_ = r.st.SetRunActivity(r.id, "running extensions: "+strings.Join(names, ", "))
 	in := ExtensionInput{Repo: r.j.Repo, HeadDir: r.wt, Head: r.extensionHead(), Base: MergeBase(r.wt, r.j.Base),
-		ChangedFiles: changed, RunImage: r.cfg.Agent.RunImage(r.j.Repo)}
+		ChangedFiles: changed, RunImage: r.cfg.Agent.RunImage(r.j.Repo), Local: r.j.Dir != ""}
 	started := time.Now()
 	if run, _ := r.st.Run(r.id); run != nil {
 		started = run.StartedAt
@@ -236,7 +245,7 @@ func (r *jobRun) execute(ctx context.Context, e config.Extension, run *store.Ext
 			}
 		}
 	}
-	if e.NeedsBase {
+	if e.NeedsBaseDir() {
 		dir, remove, err := baseWorktree(r.wt, in.Base)
 		if err != nil {
 			return finish(ExtensionOutput{}, err.Error())
@@ -244,7 +253,7 @@ func (r *jobRun) execute(ctx context.Context, e config.Extension, run *store.Ext
 		defer remove()
 		in.BaseDir = dir
 	}
-	out, err := ExtensionFor(e).Run(ctx, in)
+	out, err := ExtensionFor(r.cfg, e).Run(ctx, in)
 	if err != nil {
 		return finish(ExtensionOutput{}, err.Error())
 	}
@@ -431,14 +440,14 @@ func onDemand(ctx context.Context, cfg config.Config, st *store.Store, j Job) (E
 			return ExtensionOutput{}, 0, fmt.Errorf("%s: %w", e.Name, err)
 		}
 	}
-	in := ExtensionInput{Repo: j.Repo, HeadDir: wt, Head: j.Head, Base: MergeBase(wt, j.Base), RunImage: cfg.Agent.RunImage(j.Repo)}
+	in := ExtensionInput{Repo: j.Repo, HeadDir: wt, Head: j.Head, Base: MergeBase(wt, j.Base), RunImage: cfg.Agent.RunImage(j.Repo), Local: j.Dir != ""}
 	if j.Dir != "" {
 		in.ChangedFiles = localChanges(wt, in.Base)
 	} else {
 		out, _ := gitOutput(wt, "diff", "--name-only", "origin/"+j.Base+"...HEAD")
 		in.ChangedFiles = strings.Fields(string(out))
 	}
-	if e.NeedsBase {
+	if e.NeedsBaseDir() {
 		dir, remove, err := baseWorktree(wt, in.Base)
 		if err != nil {
 			return ExtensionOutput{}, 0, fmt.Errorf("%s: %w", e.Name, err)
@@ -447,7 +456,7 @@ func onDemand(ctx context.Context, cfg config.Config, st *store.Store, j Job) (E
 		in.BaseDir = dir
 	}
 	_ = st.ExtendExtensionJob(j.ExtensionJob, e.Limit()+extensionGrace)
-	out, err := ExtensionFor(e).Run(ctx, in)
+	out, err := ExtensionFor(cfg, e).Run(ctx, in)
 	if err != nil {
 		return out, 0, err
 	}
