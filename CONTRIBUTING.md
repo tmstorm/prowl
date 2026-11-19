@@ -11,6 +11,7 @@ You need Go (the version in `go.mod`), `git` and the [GitHub CLI](https://cli.gi
 ```sh
 go build              # or: task build
 go test -race ./...   # or: task test, which also runs go vet
+task bench            # prowl's benchmarks for its hot paths
 ```
 
 `task install` builds into `~/.local/bin`. Tests never touch GitHub or a real agent: `internal/ghtest` fakes the GitHub API, and the TUI tests drive the whole app through `internal/tui/harness_test.go`. Start there when you test a change to the interface.
