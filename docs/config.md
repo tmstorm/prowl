@@ -66,6 +66,15 @@ These go under `[agent]`. See [AI reviews](ai-reviews.md).
 | `[[agent.profiles]]` | `adversarial` built in | named ways to review: `name`, `prompt`, and optional `reviewers` and `skills`; see [Review profiles](ai-reviews.md#review-profiles) |
 | `[[agent.extensions]]` | none | programs that run during reviews of the repos listed, or when you ask: `name`, `command`, `repos`, and optional `timeout`, `needs_base`, `on_demand`, `key` and `confirm`; see [Extensions](ai-reviews.md#extensions) |
 
+### Performance review
+
+The built-in `perf` extension, enabled under `[[agent.extensions]]` (see [Performance review](ai-reviews.md#performance-review)).
+
+| Setting | Default | Does |
+| --- | --- | --- |
+| `[agent.perf]` `must_fix` | `20` | a regression this many percent or more is must-fix; `0` never |
+| `[agent.perf.bench_commands]` | none | the command that runs each repo's benchmarks (`owner/name`, `"*"` for the rest); `{dirs}` becomes the changed directories |
+
 ## TUI
 
 These change only the TUI. See [The TUI](tui.md).
