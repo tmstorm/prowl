@@ -28,7 +28,7 @@ The diff is syntax highlighted with your theme's colors. Added and removed lines
 
 A comment goes on a line of the diff or on a range of lines. A suggested change is a comment that starts with a `suggestion` block holding those lines, so the author can apply your edit with a click.
 
-A comment is kept as pending and goes out with your next review. Each comment stays on the commit you wrote it on: if the author pushes in between, the earlier comments go out as their own review on that commit, so they're on the right lines.
+A comment is kept as pending, through restarts of prowl, and goes out with your next review. Each comment stays on the commit you wrote it on: if the author pushes in between, the earlier comments go out as their own review on that commit, so they're on the right lines.
 
 ## Posting a review
 

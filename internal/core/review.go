@@ -49,7 +49,8 @@ func (co *Core) emit(e Event) {
 	}
 }
 
-// Run syncs the inbox every poll_interval, watches agent reviews, writes
+// Run syncs the inbox every poll_interval, watches agent reviews and keeps
+// your Slack emoji in step with them as they start and end, writes
 // summaries when auto_summary is on, checks the logins every half hour,
 // picks up edits to the config file and checks for updates (installing them
 // when no prowl watch runs to do it), until ctx ends. Each is reported as
@@ -78,6 +79,16 @@ func (co *Core) Run(ctx context.Context) {
 					co.emit(Event{Kind: ConfigChanged, Err: err})
 				}
 				co.autoSummaries(ctx)
+			}
+		}
+	})
+	tasks.Go(func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-co.reactWake:
+				co.reactNow(ctx)
 			}
 		}
 	})
@@ -291,7 +302,8 @@ func Current(reviews []*Review) []*Review {
 }
 
 // loadRuns reloads every review run and on-demand extension job, and
-// reports whether any changed.
+// reports whether any changed. A run or job starting or ending wakes the
+// Slack emoji.
 func (co *Core) loadRuns() bool {
 	stored, err := co.st.AllRuns()
 	if err != nil {
@@ -318,8 +330,29 @@ func (co *Core) loadRuns() bool {
 	if reflect.DeepEqual(all, co.runs) && reflect.DeepEqual(jobs, co.extJobs) {
 		return false
 	}
+	if !reflect.DeepEqual(progress(all, jobs), progress(co.runs, co.extJobs)) {
+		co.wakeReactions()
+	}
 	co.runs, co.extJobs = all, jobs
 	return true
+}
+
+// progress is when each PR's review runs and extension jobs started and
+// where they stand, all the Slack emoji read of them. An agent's activity
+// changes a run every step without changing this.
+func progress(runs map[string][]*Review, jobs map[string][]ExtensionJob) map[string][]string {
+	out := map[string][]string{}
+	for key, rs := range runs {
+		for _, r := range rs {
+			out[key] = append(out[key], r.StartedAt.String()+" "+string(r.Status))
+		}
+	}
+	for key, js := range jobs {
+		for _, j := range js {
+			out[key] = append(out[key], j.StartedAt.String()+" "+string(j.Status))
+		}
+	}
+	return out
 }
 
 // Runs are every PR's review runs, newest first, by PR key.

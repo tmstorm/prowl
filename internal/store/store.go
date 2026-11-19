@@ -157,6 +157,10 @@ CREATE TABLE IF NOT EXISTS slack_shares (
   my_reaction TEXT NOT NULL DEFAULT '', -- the emoji prowl last set, on others' PRs
   PRIMARY KEY (channel, ts, pr_key)
 );
+CREATE TABLE IF NOT EXISTS pending_comments (
+  key TEXT PRIMARY KEY,    -- the PR
+  comments TEXT NOT NULL   -- your inline comments for your next review (JSON)
+);
 CREATE TABLE IF NOT EXISTS slack_signin (
   id INTEGER PRIMARY KEY CHECK (id = 1) -- a row: a Slack token is in the keyring
 );
@@ -523,7 +527,7 @@ func (s *Store) DeleteRun(id int64) error {
 // on-demand extension jobs.
 func (s *Store) ReviewedPRs() ([]string, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT key FROM review_runs UNION SELECT DISTINCT key FROM review_notes UNION SELECT key FROM summaries
-		UNION SELECT DISTINCT key FROM extension_jobs`)
+		UNION SELECT DISTINCT key FROM extension_jobs UNION SELECT key FROM pending_comments`)
 	if err != nil {
 		return nil, fmt.Errorf("reviewed PRs: %w", err)
 	}
@@ -539,8 +543,8 @@ func (s *Store) ReviewedPRs() ([]string, error) {
 	return out, rows.Err()
 }
 
-// DeleteReviews deletes a PR's review runs and notes, once it is merged or
-// closed.
+// DeleteReviews deletes a PR's review runs, notes and pending comments,
+// once it is merged or closed.
 func (s *Store) DeleteReviews(key string) error {
 	if _, err := s.db.Exec(`DELETE FROM review_runs WHERE key=?`, key); err != nil {
 		return fmt.Errorf("delete reviews of %s: %w", key, err)
@@ -556,6 +560,9 @@ func (s *Store) DeleteReviews(key string) error {
 	}
 	if _, err := s.db.Exec(`DELETE FROM extension_jobs WHERE key=?`, key); err != nil {
 		return fmt.Errorf("delete extension jobs of %s: %w", key, err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM pending_comments WHERE key=?`, key); err != nil {
+		return fmt.Errorf("delete pending comments of %s: %w", key, err)
 	}
 	return nil
 }
@@ -1221,6 +1228,49 @@ func (s *Store) SetSlackReaction(sh SlackShare, emoji string) error {
 	_, err := s.db.Exec(`UPDATE slack_shares SET my_reaction = ? WHERE channel = ? AND ts = ? AND pr_key = ?`,
 		emoji, sh.Channel, sh.TS, sh.PRKey)
 	return wrap("set slack reaction", err)
+}
+
+// SetPendingComments keeps your inline comments on the PR key (JSON) until
+// your next review. Empty forgets them.
+func (s *Store) SetPendingComments(key string, comments []byte) error {
+	var err error
+	if len(comments) == 0 {
+		_, err = s.db.Exec(`DELETE FROM pending_comments WHERE key = ?`, key)
+	} else {
+		_, err = s.db.Exec(`INSERT OR REPLACE INTO pending_comments (key, comments) VALUES (?, ?)`, key, string(comments))
+	}
+	return wrap("set pending comments", err)
+}
+
+// PendingComments are your inline comments on the PR key (JSON), or nil.
+func (s *Store) PendingComments(key string) ([]byte, error) {
+	var comments string
+	err := s.db.QueryRow(`SELECT comments FROM pending_comments WHERE key = ?`, key).Scan(&comments)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("pending comments: %w", err)
+	}
+	return []byte(comments), nil
+}
+
+// PendingKeys are the PRs you have inline comments pending on.
+func (s *Store) PendingKeys() (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT key FROM pending_comments`)
+	if err != nil {
+		return nil, wrap("pending keys", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, wrap("pending keys", err)
+		}
+		out[key] = true
+	}
+	return out, wrap("pending keys", rows.Err())
 }
 
 // DeleteSlackShares forgets the shares of a PR, once it closes.

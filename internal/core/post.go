@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -63,11 +64,15 @@ type DraftReply struct {
 }
 
 // Pending are your inline comments on a PR that go out with your next
-// review. They live until then, or until prowl quits.
+// review. They are kept until then, so every prowl sees them.
 func (co *Core) Pending(key string) []DraftComment {
-	co.mu.Lock()
-	defer co.mu.Unlock()
-	return append([]DraftComment(nil), co.pending[key]...)
+	data, err := co.st.PendingComments(key)
+	logErr("read pending comments", err)
+	var out []DraftComment
+	if len(data) > 0 {
+		logErr("read pending comments", json.Unmarshal(data, &out))
+	}
+	return out
 }
 
 // SetPending replaces your pending inline comments on a PR. Each is on the
@@ -75,19 +80,17 @@ func (co *Core) Pending(key string) []DraftComment {
 // its commit.
 func (co *Core) SetPending(key string, comments []DraftComment) {
 	co.mu.Lock()
-	defer co.mu.Unlock()
-	if co.pending == nil {
-		co.pending = map[string][]DraftComment{}
-	}
 	head := ""
 	if it, ok := co.item(key); ok {
 		head = it.PR.HeadRefOid
 	}
+	co.mu.Unlock()
+	prev := co.Pending(key)
 	next := make([]DraftComment, len(comments))
 	for i, c := range comments {
 		if c.Commit == "" {
 			c.Commit = head
-			for _, old := range co.pending[key] {
+			for _, old := range prev {
 				if old.Path == c.Path && old.Line == c.Line && old.StartLine == c.StartLine && old.Side == c.Side {
 					c.Commit = old.Commit
 				}
@@ -95,7 +98,22 @@ func (co *Core) SetPending(key string, comments []DraftComment) {
 		}
 		next[i] = c
 	}
-	co.pending[key] = next
+	co.savePending(key, next)
+}
+
+// savePending stores your pending comments on a PR and has Run bring its
+// Slack emoji in step.
+func (co *Core) savePending(key string, comments []DraftComment) {
+	var data []byte
+	if len(comments) > 0 {
+		var err error
+		if data, err = json.Marshal(comments); err != nil {
+			logErr("save pending comments", err)
+			return
+		}
+	}
+	logErr("save pending comments", co.st.SetPendingComments(key, data))
+	co.wakeReactions()
 }
 
 // Draft is your own review of a PR: the event and your pending comments.
@@ -272,8 +290,8 @@ func (co *Core) submit(ctx context.Context, key string, d Draft) (Submitted, err
 		}
 	}
 	out.Review = true
+	co.savePending(key, nil)
 	co.mu.Lock()
-	delete(co.pending, key)
 	drafted := co.drafted[key]
 	delete(co.drafted, key)
 	co.mu.Unlock()
@@ -512,16 +530,12 @@ func (co *Core) markSent(runs []int64, sent []DraftComment) {
 // dropPending forgets pending comments that went out, so a retry after a
 // later call fails doesn't post them twice.
 func (co *Core) dropPending(key string, sent []DraftComment) {
-	co.mu.Lock()
-	defer co.mu.Unlock()
-	if len(co.pending[key]) == 0 {
-		return
-	}
-	co.pending[key] = slices.DeleteFunc(co.pending[key], func(c DraftComment) bool {
+	left := slices.DeleteFunc(co.Pending(key), func(c DraftComment) bool {
 		return slices.ContainsFunc(sent, func(s DraftComment) bool {
 			return s.Path == c.Path && s.Line == c.Line && s.StartLine == c.StartLine && s.Side == c.Side && s.Commit == c.Commit
 		})
 	})
+	co.savePending(key, left)
 }
 
 // byCommit splits a draft's comments by the commit they are on. main is the
