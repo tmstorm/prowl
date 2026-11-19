@@ -51,10 +51,32 @@ func TestClickPicker(t *testing.T) {
 func TestOptionsCoverAgentSettings(t *testing.T) {
 	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}}, func(c *config.Config) {
 		c.Agent.RunImages = map[string]string{"*": "golang:1.27", "acme/web": "node:22"}
+		c.Agent.Extensions = []config.Extension{{Name: "perf", Repos: []string{"acme/web"}}, {Name: "licenses", Command: "acme-license-check", Repos: []string{"*"}}}
 	})
 	a.resize(160, 80)
 	a.keys("space", ",")
-	a.want("Due after", "Review profiles", "adversarial", "AI summary for new PRs", "Learn from my edits", "Claude summary model", "Run images", "2 set ✎")
+	a.want("Due after", "Review profiles", "adversarial", "AI summary for new PRs", "Learn from my edits", "Claude summary model", "Run images", "2 set ✎",
+		"Extensions", "perf, licenses ✎", "Perf must-fix", "Bench commands", "0 set ✎")
+	if n := strings.Count(a.screen(), "Review agent ─"); n != 1 {
+		t.Errorf("the Review agent heading shows %d times:\n%s", n, a.screen())
+	}
+	a.before("Learn from my edits", "Extensions ─", "Bench commands", "GitHub ─")
+}
+
+// Perf's must-fix percent is set in the options, and anything but a whole
+// number is refused.
+func TestPerfMustFixOption(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one")}})
+	a.resize(160, 80)
+	a.keys("space", ",")
+	a.clickFirst("Perf must-fix")
+	a.keys("enter", "backspace", "backspace", "lots", "enter")
+	a.want(`"lots" isn't a percent: use a whole number, 0 for never`)
+	a.keys("enter", "backspace", "backspace", "35", "enter")
+	a.want("saved")
+	if b, _ := os.ReadFile(config.Path()); !strings.Contains(string(b), "must_fix = 35") {
+		t.Fatalf("not saved:\n%s", b)
+	}
 }
 
 // The cursor's mark sits in the gutter, so it doesn't hide the first
