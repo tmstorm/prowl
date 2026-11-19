@@ -466,7 +466,7 @@ type Share struct {
 // Key is the PR as prowl names it, e.g. owner/name#12.
 func (s Share) Key() string { return gh.PRKey(s.Repo, s.Number) }
 
-var prLink = regexp.MustCompile(`https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)`)
+var prLink = regexp.MustCompile(`^https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)$`)
 
 // maxSearchPages caps one sync's search: 100 matches a page.
 const maxSearchPages = 5
