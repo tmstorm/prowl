@@ -47,8 +47,9 @@ usage:
   prowl list            print what needs you
   prowl review [--detach] [--agent NAME[:PROFILE]]
                         review the branch checked out here; exits 2 on a must-fix
-  prowl findings [PR] [--all] [--prompt] [--agent NAME[:PROFILE]]
-                        print a PR's AI review findings
+  prowl findings [PR] [--all] [--prompt] [--json] [--agent NAME[:PROFILE]]
+                        print a PR's AI review findings, and on your own PR
+                        what reviewers left on GitHub
   prowl skill install [--agent claude|codex] [DIR] | print
                         the prowl-findings skill for your coding agent
   prowl edits [--since 30d] [--repo NAME]
@@ -389,12 +390,16 @@ func parseAge(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// findings prints a stored agent review for a PR. It works offline except
-// when the PR has to be worked out from the current directory.
+// findings prints a PR's AI review findings from the local store. On your
+// own PR it also reads what reviewers left on GitHub, so you or your agent
+// can work through it: --json prints that part as JSON. The store part works
+// offline; reading GitHub needs the network, and without it prowl says so
+// and prints the rest.
 func findings(cfg config.Config, st *store.Store, args []string) error {
 	fs := flagSet("findings")
 	all := fs.Bool("all", false, "")
 	asPrompt := fs.Bool("prompt", false, "")
+	asJSON := fs.Bool("json", false, "")
 	only := fs.String("agent", "", "")
 	targets, err := parseFlags(fs, args)
 	if err != nil {
@@ -405,17 +410,28 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 		target = targets[0]
 	}
 	key, head, err := resolvePR(target)
+	var mine *core.AuthorReview
+	var ghErr error
+	if err == nil && !strings.HasPrefix(key, "local:") {
+		if mine, ghErr = githubReviews(cfg, key, *all); ghErr != nil {
+			fmt.Fprintf(os.Stderr, "couldn't read the reviews of %s on GitHub: %v\n", key, ghErr)
+		}
+	}
+	aiKey := key
 	if target == "" {
 		if local, lerr := core.LocalKey("."); lerr == nil {
 			if runs, _ := st.Runs(key); err != nil || len(runs) == 0 {
-				key, head, err = local, "", nil
+				aiKey, head = local, ""
+				if err != nil {
+					key, err = local, nil
+				}
 			}
 		}
 	}
 	if err != nil {
 		return err
 	}
-	reviews, notes, err := core.ReviewsOf(st, key)
+	reviews, notes, err := core.ReviewsOf(st, aiKey)
 	if err != nil {
 		return err
 	}
@@ -425,24 +441,56 @@ func findings(cfg config.Config, st *store.Store, args []string) error {
 			continue
 		}
 		if r.Status == core.ReviewRunning {
-			fmt.Fprintf(os.Stderr, "the %s review of %s is still running; leaving it out\n", agent.Title(r.Agent), key)
+			fmt.Fprintf(os.Stderr, "the %s review of %s is still running; leaving it out\n", agent.Title(r.Agent), aiKey)
 			continue
 		}
 		cur = append(cur, r)
 	}
-	if len(cur) == 0 {
-		if strings.HasPrefix(key, "local:") {
-			return fmt.Errorf("no finished review of %s yet; run prowl review", strings.TrimPrefix(key, "local:"))
+	if *asJSON {
+		if ghErr != nil {
+			return fmt.Errorf("couldn't read the reviews of %s on GitHub: %w", key, ghErr)
+		}
+		if mine == nil {
+			return fmt.Errorf("--json prints the reviews on your own PR, and %s isn't yours", key)
+		}
+		b, err := json.MarshalIndent(mine, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(b))
+		return nil
+	}
+	var md string
+	if len(cur) > 0 {
+		md = core.FindingsMarkdown(cur, notes, aiKey, head, *all)
+	}
+	if mine != nil && (len(mine.Verdicts) > 0 || len(mine.Items) > 0) {
+		md = strings.TrimSpace(md+"\n\n"+core.AuthorMarkdown(mine)) + "\n"
+	}
+	if md == "" {
+		if strings.HasPrefix(aiKey, "local:") {
+			return fmt.Errorf("no finished review of %s yet; run prowl review", strings.TrimPrefix(aiKey, "local:"))
 		}
 		return fmt.Errorf("no finished review for %s yet; open it in prowl and run an AI review", key)
 	}
-	md := core.FindingsMarkdown(cur, notes, key, head, *all)
 	if *asPrompt {
 		fmt.Print(core.HandoffPrompt(md))
 		return nil
 	}
 	printMarkdown(md)
 	return nil
+}
+
+// githubReviews reads what reviewers left on the PR key on GitHub, or nil
+// when the PR isn't yours.
+func githubReviews(cfg config.Config, key string, all bool) (*core.AuthorReview, error) {
+	c, err := gh.New()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	return core.ReviewsOnGitHub(ctx, c, cfg, key, all)
 }
 
 // commandHelp prints a command's section of the prowl command's docs.
