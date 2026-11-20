@@ -290,7 +290,7 @@ var options = []option{
 		kind: optChoice, choices: []string{"react", "reply", "off"},
 		get: func(c *config.Config) string { return c.SlackAfterReview },
 		set: func(c *config.Config, v string) error { c.SlackAfterReview = v; return nil }},
-	emojiOpt("Reviewing", "reviewing", "While prowl holds an AI review or your inline comments for it.", func(r *config.SlackReactions) *string { return &r.Reviewing }),
+	emojiOpt("Reviewing", "reviewing", "From the moment you start an AI review or extension, or write an inline comment.", func(r *config.SlackReactions) *string { return &r.Reviewing }),
 	emojiOpt("Approved", "approved", "Once you approve.", func(r *config.SlackReactions) *string { return &r.Approved }),
 	emojiOpt("Changes requested", "changes_requested", "Once you request changes.", func(r *config.SlackReactions) *string { return &r.ChangesRequested }),
 	emojiOpt("Commented", "commented", "Once you review with comments.", func(r *config.SlackReactions) *string { return &r.Commented }),

@@ -259,14 +259,27 @@ func (co *Core) withShares(in *synced, cfg config.Config, newlyShared []gh.PR) m
 }
 
 // reconcileReactions keeps your emoji on each shared PR's newest share in
-// step with your review, wherever you made it. Only a share whose emoji
-// should change costs Slack calls.
+// step with your review, wherever you made it. It reads the emoji another
+// prowl may have set from the store, and waits for the first sync to learn
+// who you are in Slack, so your own shares never count. Only a share whose
+// emoji should change costs Slack calls.
 func (co *Core) reconcileReactions(ctx context.Context, sl *slack.Client) error {
+	co.reacting.Lock()
+	defer co.reacting.Unlock()
+	all, err := co.st.SlackShares()
+	if err != nil {
+		return err
+	}
+	pending, err := co.st.PendingKeys()
+	if err != nil {
+		return err
+	}
 	co.mu.Lock()
-	cfg, shares, viewer := co.cfg, maps.Clone(co.slackShares), co.inbox.Viewer
+	cfg, viewer, me := co.cfg, co.inbox.Viewer, co.slackMe
+	shares := newestShares(cfg, me, all)
 	items := slices.Clone(co.inbox.Items)
 	co.mu.Unlock()
-	if cfg.SlackAfterReview != "react" {
+	if cfg.SlackAfterReview != "react" || me == "" {
 		return nil
 	}
 	var errs []error
@@ -275,21 +288,49 @@ func (co *Core) reconcileReactions(ctx context.Context, sl *slack.Client) error 
 		if !ok || it.PR.Author.Name() == viewer {
 			continue
 		}
-		if want := co.reaction(cfg, it, viewer, s.At); want != s.MyReaction {
+		if want := co.reaction(cfg, it, viewer, s, pending[it.PR.Key()]); want != s.MyReaction {
 			errs = append(errs, co.setReaction(ctx, sl, s, want))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// reaction is the emoji for where your review of a PR stands since it was
-// shared at since: your latest review after it, else reviewing while prowl
-// holds an agent review or your inline comments for it, else none. A comment
-// review counts when it has a body or starts a thread; replying in someone
-// else's thread doesn't.
-func (co *Core) reaction(cfg config.Config, it inbox.Item, me string, since time.Time) string {
+// wakeReactions has Run bring the Slack emoji in step now, not at the next
+// sync, so the author sees you started on their PR.
+func (co *Core) wakeReactions() {
+	select {
+	case co.reactWake <- struct{}{}:
+	default:
+	}
+}
+
+// reactNow brings the Slack emoji in step between syncs, when you're signed
+// in to Slack.
+func (co *Core) reactNow(ctx context.Context) {
+	co.mu.Lock()
+	sl := co.slack
+	on := sl != nil && co.authErr("slack") == nil
+	co.mu.Unlock()
+	if on {
+		logErr("slack reactions", co.reconcileReactions(ctx, sl))
+	}
+}
+
+// reaction is the emoji for where your review of a PR stands since s shared
+// it: your latest review after it, else reviewing from when you start an AI
+// review or an on-demand extension on it, or while you have inline comments
+// pending, else none. A comment review counts when it has a body or starts
+// a thread; replying in someone else's thread doesn't. A review's emoji
+// stays until a newer review or until GitHub dismisses yours: a prowl that
+// hasn't synced since you posted one doesn't see it yet.
+func (co *Core) reaction(cfg config.Config, it inbox.Item, me string, s store.SlackShare, pending bool) string {
+	since := s.At
 	var last *gh.Review
+	dismissed := false
 	for i, r := range it.PR.Reviews.Nodes {
+		if r.Author.Name() == me && r.SubmittedAt.After(since) && r.State == "DISMISSED" {
+			dismissed = true
+		}
 		if r.Author.Name() != me || !r.SubmittedAt.After(since) || last != nil && !r.SubmittedAt.After(last.SubmittedAt) {
 			continue
 		}
@@ -301,12 +342,17 @@ func (co *Core) reaction(cfg config.Config, it inbox.Item, me string, since time
 	if last != nil {
 		return map[string]string{"APPROVED": emoji.Approved, "CHANGES_REQUESTED": emoji.ChangesRequested, "COMMENTED": emoji.Commented}[last.State]
 	}
+	if !dismissed && s.MyReaction != "" && slices.Contains([]string{emoji.Approved, emoji.ChangesRequested, emoji.Commented}, s.MyReaction) {
+		return s.MyReaction
+	}
+	held := func(start time.Time, status ReviewStatus) bool {
+		return start.After(since) && (status == ReviewRunning || status == ReviewDone)
+	}
 	co.mu.Lock()
 	defer co.mu.Unlock()
 	key := it.PR.Key()
-	if len(co.pending[key]) > 0 || slices.ContainsFunc(co.runs[key], func(r *Review) bool {
-		return r.StartedAt.After(since) && (r.Status == ReviewRunning || r.Status == ReviewDone)
-	}) {
+	if pending || slices.ContainsFunc(co.runs[key], func(r *Review) bool { return held(r.StartedAt, r.Status) }) ||
+		slices.ContainsFunc(co.extJobs[key], func(j ExtensionJob) bool { return held(j.StartedAt, j.Status) }) {
 		return emoji.Reviewing
 	}
 	return ""
@@ -359,8 +405,11 @@ func (co *Core) setReaction(ctx context.Context, sl *slack.Client, s store.Slack
 
 // afterReview tells the newest Slack share of the PR about the review you
 // just posted, as slack_after_review says, and says what it did: "" when
-// the PR has no share or Slack isn't connected.
+// the PR has no share or Slack isn't connected. It swaps the emoji the store
+// has, which another prowl may have set since this one's last sync.
 func (co *Core) afterReview(ctx context.Context, key string, event ReviewEvent) (string, error) {
+	co.reacting.Lock()
+	defer co.reacting.Unlock()
 	co.mu.Lock()
 	sl, cfg := co.slack, co.cfg
 	loggedOut := co.authErr("slack")
@@ -376,6 +425,13 @@ func (co *Core) afterReview(ctx context.Context, key string, event ReviewEvent) 
 	where := place(s)
 	switch cfg.SlackAfterReview {
 	case "react":
+		all, err := co.st.SlackShares()
+		if err != nil {
+			return "", err
+		}
+		if i := slices.IndexFunc(all, func(o store.SlackShare) bool { return o.Channel == s.Channel && o.TS == s.TS && o.PRKey == s.PRKey }); i >= 0 {
+			s.MyReaction = all[i].MyReaction
+		}
 		emoji := map[string]string{"APPROVED": cfg.SlackReactions.Approved, "CHANGES_REQUESTED": cfg.SlackReactions.ChangesRequested,
 			"COMMENTED": cfg.SlackReactions.Commented}[state]
 		note := "reacted :" + emoji + ": in " + where

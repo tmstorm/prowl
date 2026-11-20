@@ -41,7 +41,7 @@ With `slack_after_review = "react"` (the default), prowl keeps your emoji on the
 
 | Emoji | When |
 | --- | --- |
-| `eyes` | prowl holds an AI review or your inline comments for it |
+| `eyes` | from the moment you start an AI review or an on-demand extension on it, or write an inline comment |
 | `white_check_mark` | you approved |
 | `x` | you requested changes |
 | `speech_balloon` | you reviewed with comments |

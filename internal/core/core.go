@@ -33,7 +33,9 @@ type Core struct {
 	gh *gh.Client
 	st *store.Store
 
-	syncing sync.Mutex // one sync at a time
+	syncing   sync.Mutex    // one sync at a time
+	reacting  sync.Mutex    // one pass over the Slack emoji at a time
+	reactWake chan struct{} // wakes Run to bring the Slack emoji in step
 
 	mu          sync.Mutex
 	cfg         config.Config
@@ -45,7 +47,6 @@ type Core struct {
 	opened      map[string]prRef // PRs opened by link this session, kept through syncs
 	runs        map[string][]*Review
 	extJobs     map[string][]ExtensionJob   // each PR's newest job of each on-demand extension
-	pending     map[string][]DraftComment   // your inline comments, by PR, until the next review
 	drafted     map[string]store.Review     // agent drafts on their way out, as prowl wrote them
 	unsent      map[string]Draft            // reviews that failed to post, by PR, until reopened
 	shared      map[string]inbox.Share      // PRs shared in Slack, as of the last sync
@@ -274,7 +275,7 @@ func prOf(it inbox.Item, bots map[string]bool) PR {
 // New starts from the inbox saved by the last sync, if any, so a UI can
 // draw it at once while the first sync runs.
 func New(cfg config.Config, c *gh.Client, st *store.Store) *Core {
-	co := &Core{gh: c, st: st, cfg: cfg, cfgMod: config.ModTime(), accounts: accountList(cfg), events: make(chan Event, 64)}
+	co := &Core{gh: c, st: st, cfg: cfg, cfgMod: config.ModTime(), accounts: accountList(cfg), events: make(chan Event, 64), reactWake: make(chan struct{}, 1)}
 	co.loadRuns()
 	co.summaries = map[string]store.Summary{}
 	if sums, err := st.Summaries(); err == nil {

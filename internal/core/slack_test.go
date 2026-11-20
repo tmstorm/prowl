@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -25,13 +26,14 @@ import (
 // fakeSlack answers auth.test as U1 and search.messages with matches, which
 // a test may change between syncs, and records every other call.
 type fakeSlack struct {
-	mu      sync.Mutex
-	matches string
-	users   string // users.list members, as JSON
-	emoji   string // reactions.get reactions, as JSON
-	rooms   string // users.conversations channels, as JSON
-	authErr string // what auth.test fails with, if set
-	calls   []string
+	mu       sync.Mutex
+	matches  string
+	users    string // users.list members, as JSON
+	emoji    string // reactions.get reactions, as JSON
+	rooms    string // users.conversations channels, as JSON
+	authErr  string // what auth.test fails with, if set
+	badEmoji string // an emoji reactions.add refuses, if set
+	calls    []string
 }
 
 // took returns the calls since the last took.
@@ -80,6 +82,10 @@ func (f *fakeSlack) client(t *testing.T) *slack.Client {
 			_ = r.ParseForm()
 			f.calls = append(f.calls, strings.TrimSpace(r.URL.Path[1:]+" "+r.Form.Get("channel")+" "+r.Form.Get("timestamp")+
 				r.Form.Get("thread_ts")+" "+r.Form.Get("name")+r.Form.Get("text")))
+			if f.badEmoji != "" && r.Form.Get("name") == f.badEmoji {
+				fmt.Fprint(w, `{"ok":false,"error":"invalid_name"}`)
+				return
+			}
 			fmt.Fprint(w, `{"ok":true}`)
 		}
 	}))
@@ -164,7 +170,8 @@ func TestSlackShares(t *testing.T) {
 // Your emoji on a shared PR's message follows your review: reviewing while
 // you have inline comments pending, then your review once GitHub has it,
 // wherever you made it. A sync that changes nothing calls Slack for nothing,
-// and submitting from prowl reacts at once.
+// submitting from prowl reacts at once, and a dismissed review loses its
+// emoji.
 func TestSlackReactions(t *testing.T) {
 	now := time.Now()
 	ts := fmt.Sprintf("%d.000100", now.Unix())
@@ -207,6 +214,169 @@ func TestSlackReactions(t *testing.T) {
 	want = []string{"reactions.remove C1 " + ts + " x", "reactions.add C1 " + ts + " white_check_mark"}
 	if calls := sl.took(); fmt.Sprint(calls) != fmt.Sprint(want) {
 		t.Fatalf("approving from prowl: %q", calls)
+	}
+
+	fake.Others[0].Reviews.Nodes = []gh.Review{{Author: &gh.Actor{Login: "me"}, State: "DISMISSED", SubmittedAt: now.Add(2 * time.Minute)}}
+	refresh(t, co)
+	if calls := sl.took(); fmt.Sprint(calls) != fmt.Sprint([]string{"reactions.remove C1 " + ts + " white_check_mark"}) {
+		t.Fatalf("approval dismissed: %q", calls)
+	}
+}
+
+// Your emoji goes up the moment you start on a shared PR, not at the next
+// sync: an AI review or an on-demand extension starting, from any prowl, or
+// an inline comment you write. It comes down when nothing holds it. Another
+// prowl on the same data agrees, so the two never undo each other.
+func TestSlackReactsAtOnce(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Add(-time.Minute).Unix())
+	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("api", 7, "feat: shared", "alice")}, Closed: map[string]bool{}}
+	co, st := newCore(t, fake)
+	cfg := config.Default()
+	cfg.SlackChannels = []string{"C1"}
+	co.SetConfig(cfg)
+	sl := &fakeSlack{}
+	co.UseSlack(sl.client(t))
+	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
+	refresh(t, co)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	go co.Run(ctx)
+	add, remove := "reactions.add C1 "+ts+" eyes", "reactions.remove C1 "+ts+" eyes"
+
+	id, _ := st.StartRun("o/api#7", "abc", "claude", "", 0)
+	waitSlack(t, sl, "a review starting", add)
+	_ = st.FailRun(id, "boom")
+	waitSlack(t, sl, "the review failing", remove)
+
+	job, _ := st.StartExtensionJob("o/api#7", "factory", "abc", time.Hour)
+	waitSlack(t, sl, "an extension starting", add)
+	_ = st.FinishExtensionJob(job, "", "factory: exit status 2", 0)
+	waitSlack(t, sl, "the extension failing", remove)
+
+	co.SetPending("o/api#7", []core.DraftComment{{Path: "a.go", Line: 1, Body: "why?"}})
+	waitSlack(t, sl, "an inline comment", add)
+	c, _ := fake.Client()
+	other := core.New(cfg, c, st)
+	other.UseSlack(sl.client(t))
+	refresh(t, other)
+	if calls := sl.took(); len(calls) != 0 {
+		t.Fatalf("another prowl's sync: %q", calls)
+	}
+	co.SetPending("o/api#7", nil)
+	waitSlack(t, sl, "dropping the comment", remove)
+
+	co.SetPending("o/api#7", []core.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "why?"}})
+	waitSlack(t, sl, "another inline comment", add)
+	d := co.Draft("o/api#7", core.EventComment)
+	if _, err := co.Submit(t.Context(), "o/api#7", d); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	waitSlack(t, sl, "commenting from prowl", remove, "reactions.add C1 "+ts+" speech_balloon")
+	refresh(t, other)
+	if calls := sl.took(); len(calls) != 0 {
+		t.Fatalf("a sync before GitHub has the review: %q", calls)
+	}
+}
+
+// A prowl that hasn't synced yet doesn't know who you are in Slack, so it
+// leaves the emoji alone until it does rather than react on your own share.
+func TestSlackReactsAfterFirstSync(t *testing.T) {
+	old, mine := fmt.Sprintf("%d.000100", time.Now().Add(-2*time.Minute).Unix()), fmt.Sprintf("%d.000100", time.Now().Add(-time.Minute).Unix())
+	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("api", 7, "feat: shared", "alice")}, Closed: map[string]bool{}}
+	co, st := newCore(t, fake)
+	cfg := config.Default()
+	cfg.SlackChannels = []string{"C1"}
+	co.SetConfig(cfg)
+	sl := &fakeSlack{}
+	co.UseSlack(sl.client(t))
+	sl.set(match(old, "U2", "bob", "C1", "reviews", "o/api/pull/7") + "," + match(mine, "U1", "me", "C1", "reviews", "o/api/pull/7"))
+	refresh(t, co)
+	_, _ = st.StartRun("o/api#7", "abc", "claude", "", 0)
+
+	c, _ := fake.Client()
+	next := core.New(cfg, c, st)
+	next.UseSlack(sl.client(t))
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	go next.Run(ctx)
+	time.Sleep(1500 * time.Millisecond)
+	if calls := sl.took(); len(calls) != 0 {
+		t.Fatalf("before the first sync: %q", calls)
+	}
+	refresh(t, next)
+	if calls := sl.took(); fmt.Sprint(calls) != fmt.Sprint([]string{"reactions.add C1 " + old + " eyes"}) {
+		t.Fatalf("after the first sync: %q", calls)
+	}
+}
+
+// An agent's progress through a review doesn't call Slack, so an emoji
+// Slack refuses is tried when the review starts and not again until a sync.
+func TestSlackRefusedEmojiNotRetried(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Add(-time.Minute).Unix())
+	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("api", 7, "feat: shared", "alice")}, Closed: map[string]bool{}}
+	co, st := newCore(t, fake)
+	cfg := config.Default()
+	cfg.SlackChannels, cfg.SlackReactions.Reviewing = []string{"C1"}, "eyez"
+	co.SetConfig(cfg)
+	sl := &fakeSlack{badEmoji: "eyez"}
+	co.UseSlack(sl.client(t))
+	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
+	refresh(t, co)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	go co.Run(ctx)
+
+	id, _ := st.StartRun("o/api#7", "abc", "claude", "", 0)
+	waitSlack(t, sl, "the review starting", "reactions.add C1 "+ts+" eyez")
+	for _, step := range []string{"reading the diff", "checking the tests"} {
+		_ = st.SetRunActivity(id, step)
+		time.Sleep(1200 * time.Millisecond)
+	}
+	if calls := sl.took(); len(calls) != 0 {
+		t.Fatalf("while the agent works: %q", calls)
+	}
+}
+
+// Reviewing from prowl swaps the emoji another prowl put up since this
+// one's last sync.
+func TestSlackReviewAfterAnotherProwlReacted(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Add(-time.Minute).Unix())
+	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("api", 7, "feat: shared", "alice")}, Closed: map[string]bool{}}
+	co, st := newCore(t, fake)
+	cfg := config.Default()
+	cfg.SlackChannels = []string{"C1"}
+	co.SetConfig(cfg)
+	sl := &fakeSlack{}
+	co.UseSlack(sl.client(t))
+	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
+	refresh(t, co)
+
+	c, _ := fake.Client()
+	other := core.New(cfg, c, st)
+	other.UseSlack(sl.client(t))
+	refresh(t, other)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	go other.Run(ctx)
+	_, _ = st.StartRun("o/api#7", "abc", "claude", "", 0)
+	waitSlack(t, sl, "another prowl's review starting", "reactions.add C1 "+ts+" eyes")
+
+	if _, err := co.Submit(t.Context(), "o/api#7", core.Draft{Event: core.EventComment, Body: "see the retry"}); err != nil {
+		t.Fatal(err)
+	}
+	waitSlack(t, sl, "commenting", "reactions.remove C1 "+ts+" eyes", "reactions.add C1 "+ts+" speech_balloon")
+}
+
+// waitSlack waits up to 5s for Slack to be called with want and nothing else.
+func waitSlack(t *testing.T, sl *fakeSlack, when string, want ...string) {
+	t.Helper()
+	var calls []string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && len(calls) < len(want); time.Sleep(20 * time.Millisecond) {
+		calls = append(calls, sl.took()...)
+	}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("%s: %q, want %q", when, calls, want)
 	}
 }
 
