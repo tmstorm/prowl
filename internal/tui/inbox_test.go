@@ -103,6 +103,16 @@ func TestSelectedPRStaysThroughSync(t *testing.T) {
 	}
 }
 
+// The PR kept under the cursor through a sync doesn't count toward tabs it
+// isn't in.
+func TestStickyPRLeavesTabCounts(t *testing.T) {
+	a := newApp(t, &fakeGitHub{PRs: []gh.PR{needsReview("api", 1, "fix: one"), pr("web", 9, "feat: mine", "me")}})
+	a.resize(230, 44)
+	a.keys("4")
+	a.refresh()
+	a.want("[2] Needs me (1)", "[4] Mine (1)")
+}
+
 // 0 and 1 pick the pane; 2-9 pick a tab inside the focused pane. Counts read
 // focused/total while a repo is in focus.
 func TestPanesTabsAndCounts(t *testing.T) {

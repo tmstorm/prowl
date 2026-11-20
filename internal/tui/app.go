@@ -809,15 +809,15 @@ func (m *Model) tabCount(f filter) string {
 }
 
 func (m *Model) filterCount(f filter) int {
-	saved := m.filter
-	m.filter = f
+	saved, sticky := m.filter, m.sticky
+	m.filter, m.sticky = f, ""
 	n := 0
 	for _, it := range m.items {
 		if m.visibleItem(it) {
 			n++
 		}
 	}
-	m.filter = saved
+	m.filter, m.sticky = saved, sticky
 	return n
 }
 
