@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/tmstorm/prowl/compare/v0.7.0...v0.7.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **slack:** put the reviewing emoji up the moment you start on a PR ([#95](https://github.com/tmstorm/prowl/issues/95)) ([9eb4d15](https://github.com/tmstorm/prowl/commit/9eb4d15d5ad2ee749ee271c561dba47a1c3ffc8a))
+* **tui:** stop counting the PR under the cursor in tabs it isn't in ([#97](https://github.com/tmstorm/prowl/issues/97)) ([06bab88](https://github.com/tmstorm/prowl/commit/06bab88edb10b40d04e79275c2dc78e70f8e3430))
+
 ## [0.7.0](https://github.com/tmstorm/prowl/compare/v0.6.0...v0.7.0) (2026-11-19)
 
 
