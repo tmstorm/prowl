@@ -279,6 +279,32 @@ func TestSlackReactsAtOnce(t *testing.T) {
 	}
 }
 
+// prowl watch syncs without Run, so it must see a review that started after
+// it did rather than take the emoji down on every sync.
+func TestSlackWatchSeesNewReview(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Add(-time.Minute).Unix())
+	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("api", 7, "feat: shared", "alice")}, Closed: map[string]bool{}}
+	co, st := newCore(t, fake)
+	cfg := config.Default()
+	cfg.SlackChannels = []string{"C1"}
+	co.SetConfig(cfg)
+	sl := &fakeSlack{}
+	co.UseSlack(sl.client(t))
+	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
+	refresh(t, co)
+
+	id, _ := st.StartRun("o/api#7", "abc", "claude", "", 0)
+	refresh(t, co)
+	if calls := sl.took(); fmt.Sprint(calls) != fmt.Sprint([]string{"reactions.add C1 " + ts + " eyes"}) {
+		t.Fatalf("a sync during the review: %q", calls)
+	}
+	_ = st.FailRun(id, "boom")
+	refresh(t, co)
+	if calls := sl.took(); fmt.Sprint(calls) != fmt.Sprint([]string{"reactions.remove C1 " + ts + " eyes"}) {
+		t.Fatalf("a sync after the review failed: %q", calls)
+	}
+}
+
 // A prowl that hasn't synced yet doesn't know who you are in Slack, so it
 // leaves the emoji alone until it does rather than react on your own share.
 func TestSlackReactsAfterFirstSync(t *testing.T) {

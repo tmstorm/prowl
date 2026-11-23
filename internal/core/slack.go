@@ -274,6 +274,14 @@ func (co *Core) reconcileReactions(ctx context.Context, sl *slack.Client) error 
 	if err != nil {
 		return err
 	}
+	runs, err := co.st.AllRuns()
+	if err != nil {
+		return err
+	}
+	jobs, err := co.st.ExtensionJobs()
+	if err != nil {
+		return err
+	}
 	co.mu.Lock()
 	cfg, viewer, me := co.cfg, co.inbox.Viewer, co.slackMe
 	shares := newestShares(cfg, me, all)
@@ -288,7 +296,8 @@ func (co *Core) reconcileReactions(ctx context.Context, sl *slack.Client) error 
 		if !ok || it.PR.Author.Name() == viewer {
 			continue
 		}
-		if want := co.reaction(cfg, it, viewer, s, pending[it.PR.Key()]); want != s.MyReaction {
+		key := it.PR.Key()
+		if want := reaction(cfg, it, viewer, s, pending[key], runs[key], jobs[key]); want != s.MyReaction {
 			errs = append(errs, co.setReaction(ctx, sl, s, want))
 		}
 	}
@@ -319,11 +328,12 @@ func (co *Core) reactNow(ctx context.Context) {
 // reaction is the emoji for where your review of a PR stands since s shared
 // it: your latest review after it, else reviewing from when you start an AI
 // review or an on-demand extension on it, or while you have inline comments
-// pending, else none. A comment review counts when it has a body or starts
+// pending, else none. runs and jobs are read from the store, not co.runs:
+// prowl watch syncs without Run, so its co.runs never changes. A comment review counts when it has a body or starts
 // a thread; replying in someone else's thread doesn't. A review's emoji
 // stays until a newer review or until GitHub dismisses yours: a prowl that
 // hasn't synced since you posted one doesn't see it yet.
-func (co *Core) reaction(cfg config.Config, it inbox.Item, me string, s store.SlackShare, pending bool) string {
+func reaction(cfg config.Config, it inbox.Item, me string, s store.SlackShare, pending bool, runs []*store.Run, jobs []*store.ExtensionJob) string {
 	since := s.At
 	var last *gh.Review
 	dismissed := false
@@ -345,14 +355,11 @@ func (co *Core) reaction(cfg config.Config, it inbox.Item, me string, s store.Sl
 	if !dismissed && s.MyReaction != "" && slices.Contains([]string{emoji.Approved, emoji.ChangesRequested, emoji.Commented}, s.MyReaction) {
 		return s.MyReaction
 	}
-	held := func(start time.Time, status ReviewStatus) bool {
-		return start.After(since) && (status == ReviewRunning || status == ReviewDone)
+	held := func(start time.Time, status string) bool {
+		return start.After(since) && (status == string(ReviewRunning) || status == string(ReviewDone))
 	}
-	co.mu.Lock()
-	defer co.mu.Unlock()
-	key := it.PR.Key()
-	if pending || slices.ContainsFunc(co.runs[key], func(r *Review) bool { return held(r.StartedAt, r.Status) }) ||
-		slices.ContainsFunc(co.extJobs[key], func(j ExtensionJob) bool { return held(j.StartedAt, j.Status) }) {
+	if pending || slices.ContainsFunc(runs, func(r *store.Run) bool { return held(r.StartedAt, r.Status) }) ||
+		slices.ContainsFunc(jobs, func(j *store.ExtensionJob) bool { return held(j.StartedAt, j.Status) }) {
 		return emoji.Reviewing
 	}
 	return ""
