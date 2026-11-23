@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -389,6 +390,41 @@ func TestCancelReview(t *testing.T) {
 	}
 	if ok, _ := st.CancelRun(id); ok {
 		t.Error("cancelled a run that had ended")
+	}
+}
+
+// Stopping prowl review during the verify turn cancels the review rather
+// than save the unverified draft.
+func TestInterruptDuringVerify(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the agent is a shell script")
+	}
+	st, roots, bin, head := setupRun(t)
+	_ = os.WriteFile(filepath.Join(bin, "claude"), []byte(`#!/bin/sh
+cat >/dev/null
+case "$*" in *--resume*) sleep 60 ;; esac
+echo '{"type":"result","session_id":"s1","structured_output":`+review+`}'
+`), 0o755)
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	id, _ := st.StartRun("o/api#7", head, "claude", "", 0)
+	ctx, interrupt := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.Run(ctx, cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude", RunID: id})
+	}()
+	for r, _ := st.Run(id); r.Activity != "verifying findings"; r, _ = st.Run(id) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	interrupt()
+	if err := <-done; err == nil || err.Error() != "cancelled" {
+		t.Fatalf("run ended with %v", err)
+	}
+	if r, _ := st.Run(id); r.Status != "failed" || r.Error != "cancelled" {
+		t.Fatalf("after the interrupt: %s %q", r.Status, r.Error)
+	}
+	if n := read(filepath.Join(bin, "notified")); n != "" {
+		t.Errorf("notified: %q", n)
 	}
 }
 

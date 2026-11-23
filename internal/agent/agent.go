@@ -593,10 +593,11 @@ func (r *jobRun) fail(err error) error {
 	return err
 }
 
-// turn runs one agent turn. Once you cancel the run, it returns errCancelled.
+// turn runs one agent turn. Once you cancel the run, or stop prowl review,
+// it returns errCancelled.
 func (r *jobRun) turn(ctx context.Context, input, session, phase string) (*result, string, error) {
 	if ctx.Err() != nil {
-		return nil, "", context.Cause(ctx)
+		return nil, "", errCancelled
 	}
 	_ = r.st.SetRunActivity(r.id, phase)
 	r.phase = phase
@@ -611,7 +612,7 @@ func (r *jobRun) turn(ctx context.Context, input, session, phase string) (*resul
 		SetModel:    func(m string) { _ = r.st.SetRunModel(r.id, m) },
 	})
 	if ctx.Err() != nil {
-		return nil, "", context.Cause(ctx)
+		return nil, "", errCancelled
 	}
 	return res, session, err
 }

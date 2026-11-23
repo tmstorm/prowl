@@ -449,8 +449,11 @@ func (s *Store) StartRun(key, headOid, agent, profile string, pid int) (int64, e
 
 // RestartRun marks a run running again, for a revise or sync in its session.
 func (s *Store) RestartRun(id int64, pid int) error {
-	_, err := s.db.Exec(`UPDATE review_runs SET status='running', pid=?, started_at=?, finished_at=0, error='', activity='' WHERE id=?;
-DELETE FROM cancels WHERE kind='run' AND id=?`, pid, time.Now().Unix(), id, id)
+	if _, err := s.db.Exec(`DELETE FROM cancels WHERE kind='run' AND id=?`, id); err != nil {
+		return wrap("restart run", err)
+	}
+	_, err := s.db.Exec(`UPDATE review_runs SET status='running', pid=?, started_at=?, finished_at=0, error='', activity='' WHERE id=?`,
+		pid, time.Now().Unix(), id)
 	return wrap("restart run", err)
 }
 
