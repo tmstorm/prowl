@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -67,7 +68,7 @@ func claudeMCPConfig(toolServer []string) string {
 
 // Review runs one `claude -p` turn. The prompt goes on stdin: --allowedTools
 // and friends are variadic and would swallow a positional prompt.
-func (claudeBackend) Review(t Turn) (*result, string, error) {
+func (claudeBackend) Review(ctx context.Context, t Turn) (*result, string, error) {
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--setting-sources", claudeSettings,
 		"--strict-mcp-config", "--json-schema", t.Schema,
 		"--disallowedTools", claudeDisallowed,
@@ -89,7 +90,7 @@ func (claudeBackend) Review(t Turn) (*result, string, error) {
 	}
 	var res *result
 	var sessionID, errMsg string
-	err := stream(t, "claude", args, func(line []byte) {
+	err := stream(ctx, t, "claude", args, func(line []byte) {
 		var ev struct {
 			Type      string `json:"type"`
 			Subtype   string `json:"subtype"`

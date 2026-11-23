@@ -434,6 +434,75 @@ func TestExtensionJobDeadline(t *testing.T) {
 	}
 }
 
+// Cancelling an on-demand job stops the extension and fails the job with
+// "cancelled", with no notification.
+func TestCancelExtensionJob(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the extensions are shell scripts")
+	}
+	st, roots, bin, head := setupRun(t)
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	cfg.Agent.Extensions = []config.Extension{{Name: "factory", Repos: []string{"*"}, OnDemand: true, Command: `sleep 60; printf '{}'`}}
+	id, err := st.StartExtensionJob("o/api#7", "factory", head, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := reviewJob(head)
+	j.Extension, j.ExtensionJob = "factory", id
+	done := make(chan error, 1)
+	go func() { done <- agent.Run(t.Context(), cfg, st, nil, j) }()
+	if ok, err := st.CancelExtensionJob(id); !ok || err != nil {
+		t.Fatalf("cancel: %v, %v", ok, err)
+	}
+	select {
+	case err := <-done:
+		if err == nil || err.Error() != "cancelled" {
+			t.Fatalf("job ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the extension kept running")
+	}
+	if jobs, _ := st.ExtensionJobs(); jobs["o/api#7"][0].Status != "failed" || jobs["o/api#7"][0].Error != "cancelled" {
+		t.Fatalf("after cancelling: %+v", jobs["o/api#7"][0])
+	}
+	if n := read(filepath.Join(bin, "notified")); n != "" {
+		t.Errorf("notified: %q", n)
+	}
+}
+
+// Cancelling a review gives up the extension it was running for the PR, so
+// a review waiting on it runs it rather than reuse a cut-short result.
+func TestCancelReviewReleasesExtension(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the extensions are shell scripts")
+	}
+	st, roots, _, head := setupRun(t)
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	cfg.Agent.Extensions = []config.Extension{{Name: "factory", Repos: []string{"*"}, Command: `sleep 60; printf '{}'`}}
+	id, _ := st.StartRun("o/api#7", head, "claude", "", 0)
+	j := reviewJob(head)
+	j.RunID = id
+	done := make(chan error, 1)
+	go func() { done <- agent.Run(t.Context(), cfg, st, nil, j) }()
+	for run, _ := st.ExtensionRun("o/api#7", "factory", head); run == nil; run, _ = st.ExtensionRun("o/api#7", "factory", head) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	_, _ = st.CancelRun(id)
+	select {
+	case err := <-done:
+		if err == nil || err.Error() != "cancelled" {
+			t.Fatalf("run ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the review kept running")
+	}
+	if run, _ := st.ExtensionRun("o/api#7", "factory", head); run != nil {
+		t.Fatalf("the cancelled review left its extension run: %+v", run)
+	}
+}
+
 // syncBuffer is a buffer a log can write to from another goroutine.
 type syncBuffer struct {
 	mu sync.Mutex

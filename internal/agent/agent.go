@@ -7,6 +7,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -505,6 +506,8 @@ func Run(ctx context.Context, cfg config.Config, st *store.Store, c *gh.Client, 
 		r.j.RunID = id
 	}
 	r.id = r.j.RunID
+	ctx, stop := cancellable(ctx, func() bool { return st.RunCancelled(r.id) })
+	defer stop()
 	r.log = slog.With("run", r.id, "pr", r.key, "reviewer", store.Reviewer(r.j.Agent, r.j.Profile))
 	r.started = time.Now()
 	r.log.Info(r.kind()+" started", "head", gh.Short(r.j.Head))
@@ -565,29 +568,42 @@ func (r *jobRun) notify(title, body string) {
 }
 
 // fail ends the run with err, or for a revise keeps the review as it was.
+// A run you cancelled sends no notification.
 func (r *jobRun) fail(err error) error {
 	r.log.Error(r.kind()+" failed", "phase", r.phase, "took", since(r.started),
 		"err", err, "output", logs.RunPath(strconv.FormatInt(r.id, 10)))
-	if a := r.be.Auth(); a.Known && !a.LoggedIn {
-		err = fmt.Errorf("%s isn't logged in; log in again from prowl's accounts", Title(r.be.Name()))
+	cancelled := errors.Is(err, errCancelled)
+	if !cancelled {
+		if a := r.be.Auth(); a.Known && !a.LoggedIn {
+			err = fmt.Errorf("%s isn't logged in; log in again from prowl's accounts", Title(r.be.Name()))
+		}
 	}
 	if r.j.Refine != "" && r.prev != nil {
 		_ = r.st.EndRevise(r.id)
 		_ = r.st.AddNote(r.key, r.reviewer(), "note", "the revise failed, so the review is as it was: "+err.Error())
-		r.notify(Title(r.be.Name())+" revise failed", r.key+": "+err.Error())
+		if !cancelled {
+			r.notify(Title(r.be.Name())+" revise failed", r.key+": "+err.Error())
+		}
 		return err
 	}
 	_ = r.st.FailRun(r.id, err.Error())
-	r.notify(Title(r.be.Name())+" review failed", r.key+": "+err.Error())
+	if !cancelled {
+		r.notify(Title(r.be.Name())+" review failed", r.key+": "+err.Error())
+	}
 	return err
 }
 
-func (r *jobRun) turn(input, session, phase string) (*result, string, error) {
+// turn runs one agent turn. Once you cancel the run, or stop prowl review,
+// it returns errCancelled.
+func (r *jobRun) turn(ctx context.Context, input, session, phase string) (*result, string, error) {
+	if ctx.Err() != nil {
+		return nil, "", errCancelled
+	}
 	_ = r.st.SetRunActivity(r.id, phase)
 	r.phase = phase
 	start := time.Now()
 	defer func() { r.log.Info("turn done", "phase", phase, "took", since(start)) }()
-	return r.be.Review(Turn{
+	res, session, err := r.be.Review(ctx, Turn{
 		Dir: r.wt, Prompt: input, Session: session, Model: r.cfg.Agent.Model(r.be.Name()),
 		Schema:      Schema(r.cfg.Agent.Severities()),
 		ContextDirs: existingDirs(r.cfg.ExpandedContextDirs()),
@@ -595,6 +611,35 @@ func (r *jobRun) turn(input, session, phase string) (*result, string, error) {
 		Activity:    func(s string) { _ = r.st.SetRunActivity(r.id, phase+": "+s) },
 		SetModel:    func(m string) { _ = r.st.SetRunModel(r.id, m) },
 	})
+	if ctx.Err() != nil {
+		return nil, "", errCancelled
+	}
+	return res, session, err
+}
+
+// errCancelled ends a run or job you cancelled.
+var errCancelled = errors.New("cancelled")
+
+// cancellable is ctx, cancelled with errCancelled once cancelled reports
+// true. It checks every second until stop.
+func cancellable(ctx context.Context, cancelled func() bool) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	go func() {
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				if cancelled() {
+					cancel(errCancelled)
+					return
+				}
+			}
+		}
+	}()
+	return ctx, func() { cancel(nil) }
 }
 
 // fresh is the full prompt for a turn that starts without a session: the
@@ -658,7 +703,7 @@ func (r *jobRun) revise(ctx context.Context) error {
 		instruction = r.fresh(ctx) + previousReview(prev) + instruction
 		session = ""
 	}
-	res, sid, err := r.turn(instruction, session, "revising")
+	res, sid, err := r.turn(ctx, instruction, session, "revising")
 	if err != nil {
 		return r.fail(err)
 	}
@@ -676,7 +721,7 @@ func (r *jobRun) revise(ctx context.Context) error {
 func (r *jobRun) review(ctx context.Context) error {
 	_ = r.st.ClearNotes(r.key, r.reviewer())
 	input := r.fresh(ctx)
-	first, sid, err := r.turn(input, "", "reviewing")
+	first, sid, err := r.turn(ctx, input, "", "reviewing")
 	if err != nil {
 		return r.fail(err)
 	}
@@ -684,7 +729,10 @@ func (r *jobRun) review(ctx context.Context) error {
 	if !r.be.Resumes() {
 		verify, session = input+draftReview(first)+verifyPrompt, ""
 	}
-	final, sid2, err := r.turn(verify, session, "verifying findings")
+	final, sid2, err := r.turn(ctx, verify, session, "verifying findings")
+	if errors.Is(err, errCancelled) {
+		return r.fail(err)
+	}
 	if err != nil || final == nil {
 		final, sid2 = first, sid
 	}

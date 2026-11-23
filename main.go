@@ -12,10 +12,12 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -762,6 +764,8 @@ func review(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Stor
 	if err != nil {
 		return err
 	}
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 	start := time.Now()
 	stop := showProgress(co, start, func(now time.Time) string {
 		runs, _ := st.Runs(key)

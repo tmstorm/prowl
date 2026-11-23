@@ -214,6 +214,11 @@ func (r *jobRun) runExtension(ctx context.Context, e config.Extension, in Extens
 func (r *jobRun) execute(ctx context.Context, e config.Extension, run *store.ExtensionRun, in ExtensionInput, log *slog.Logger) reviewExtension {
 	start := time.Now()
 	finish := func(out ExtensionOutput, errMsg string) reviewExtension {
+		if errMsg != "" && ctx.Err() != nil {
+			log.Info("extension released", "why", context.Cause(ctx))
+			_ = r.st.ReleaseExtension(run)
+			return reviewExtension{name: e.Name, note: "failed: " + context.Cause(ctx).Error()}
+		}
 		b, _ := json.Marshal(out)
 		switch {
 		case errMsg != "":
@@ -399,10 +404,15 @@ func baseWorktree(wt, base string) (string, func(), error) {
 // reviewer, as drafts. A notification says how it went.
 func runExtensionJob(ctx context.Context, cfg config.Config, st *store.Store, j Job) error {
 	_ = st.SetExtensionJobPID(j.ExtensionJob, os.Getpid())
+	ctx, stop := cancellable(ctx, func() bool { return st.ExtensionJobCancelled(j.ExtensionJob) })
+	defer stop()
 	log := slog.With("job", j.ExtensionJob, "pr", j.Key(), "extension", j.Extension)
 	log.Info("extension job started", "head", gh.Short(j.Head))
 	start := time.Now()
 	out, added, err := onDemand(ctx, cfg, st, j)
+	if err != nil && ctx.Err() != nil {
+		err = context.Cause(ctx)
+	}
 	b, _ := json.Marshal(out)
 	errMsg := ""
 	if err != nil {
@@ -421,7 +431,9 @@ func runExtensionJob(ctx context.Context, cfg config.Config, st *store.Store, j 
 	} else if added > 0 {
 		body += fmt.Sprintf(" · %d added to the AI review", added)
 	}
-	platform.Notify(title, body, cfg.NotifyTimeout.Duration)
+	if !errors.Is(err, errCancelled) {
+		platform.Notify(title, body, cfg.NotifyTimeout.Duration)
+	}
 	return err
 }
 

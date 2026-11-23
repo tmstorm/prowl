@@ -153,7 +153,7 @@ func (e Extension) NeedsBaseDir() bool { return e.NeedsBase || e.Name == "perf" 
 
 // extensionListKeys are the letters the list of on-demand extensions keeps
 // for itself, so none can be an extension's key.
-const extensionListKeys = "jkgGHMLqv"
+const extensionListKeys = "jkgGHMLqvx"
 
 func (a Agent) checkExtensions() error {
 	names := map[string]bool{}
@@ -173,7 +173,7 @@ func (a Agent) checkExtensions() error {
 		case e.Key != "" && (len(e.Key) != 1 || !unicode.IsLetter(rune(e.Key[0]))):
 			return fmt.Errorf("extension %q: key = %q: use one letter", e.Name, e.Key)
 		case e.Key != "" && strings.Contains(extensionListKeys, e.Key):
-			return fmt.Errorf("extension %q: key = %q: the list of extensions uses %s to move, show a result and close; pick another letter", e.Name, e.Key, extensionListKeys)
+			return fmt.Errorf("extension %q: key = %q: the list of extensions uses %s to move, show a result, cancel and close; pick another letter", e.Name, e.Key, extensionListKeys)
 		}
 		k := fmt.Sprint(e.Name, e.OnDemand)
 		if names[k] {

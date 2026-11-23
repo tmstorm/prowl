@@ -1341,6 +1341,7 @@ var agentKeys = []leaderKey{
 	{cat: "Run", key: "C", desc: "review with one reviewer"},
 	{cat: "Run", key: "p", desc: "run a review profile"},
 	{cat: "Run", key: "a", desc: "AI summary of the PR"},
+	{cat: "Run", key: "x", desc: "cancel running review"},
 	{cat: "Run", key: "d", desc: "discard review"},
 	{cat: "Talk to it", key: "i", desc: "chat with the reviewer"},
 	{cat: "Talk to it", key: "r", desc: "ask it to revise"},
@@ -1629,6 +1630,17 @@ func (m *Model) agentAction(key string) tea.Cmd {
 			return nil
 		}
 		m.info("copied a fix-these-findings prompt · paste it into the agent in your checkout, or run `prowl findings --prompt` there")
+		return nil
+	case "x":
+		if target == nil || target.Status != core.ReviewRunning {
+			m.fail("no running review to cancel")
+			return nil
+		}
+		if err := m.core.Cancel(target.ID); err != nil {
+			m.fail(err.Error())
+			return nil
+		}
+		m.info("cancelling " + core.ReviewerTitle(target.Reviewer()) + "'s review")
 		return nil
 	case "d":
 		if target == nil {

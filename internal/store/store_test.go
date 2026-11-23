@@ -130,6 +130,28 @@ func TestSlackSignedIn(t *testing.T) {
 	}
 }
 
+// A cancel holds until the run ends; restarting it for a revise starts
+// uncancelled.
+func TestCancelRun(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	id, _ := st.StartRun("o/r#1", "abc", "claude", "", 0)
+	if ok, err := st.CancelRun(id); !ok || err != nil || !st.RunCancelled(id) {
+		t.Fatalf("cancel: %v, %v", ok, err)
+	}
+	_ = st.FailRun(id, "cancelled")
+	if ok, _ := st.CancelRun(id); ok {
+		t.Fatal("cancelled a run that had ended")
+	}
+	_ = st.RestartRun(id, 0)
+	if st.RunCancelled(id) {
+		t.Fatal("a restarted run is still cancelled")
+	}
+}
+
 // A database an older prowl made opens, keeps what it held and works, and
 // opens again.
 func TestOldDatabase(t *testing.T) {

@@ -516,6 +516,20 @@ func (co *Core) job(key, reviewer, refine string, sync bool) (agent.Job, error) 
 	return job, nil
 }
 
+// Cancel stops a running review run, or a revise of it, within a second or
+// so. Its agent-run ends it as it ends a failed one: a review fails with
+// "cancelled", a revise keeps the review as it was.
+func (co *Core) Cancel(runID int64) error {
+	ok, err := co.st.CancelRun(runID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("that review isn't running")
+	}
+	return nil
+}
+
 // Discard deletes a review run and its notes; the reviewer's previous run,
 // if any, is current again. A local review with no runs left is forgotten.
 func (co *Core) Discard(runID int64) error {

@@ -2,10 +2,12 @@ package agent_test
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -348,6 +350,81 @@ func TestFailedReviseKeepsReview(t *testing.T) {
 	}
 	if log, _ := st.Notes("o/api#7", "claude"); len(log) == 0 || !strings.Contains(log[len(log)-1].Text, "revise failed") {
 		t.Fatalf("no note about the failed revise: %+v", log)
+	}
+}
+
+// Cancelling a review stops its agent and fails the run with "cancelled",
+// with no notification, since you did it.
+func TestCancelReview(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the agent is a shell script")
+	}
+	st, roots, bin, head := setupRun(t)
+	_ = os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\ncat >/dev/null\nsleep 60\n"), 0o755)
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	id, _ := st.StartRun("o/api#7", head, "claude", "", 0)
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.Run(t.Context(), cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude", RunID: id})
+	}()
+	for r, _ := st.Run(id); r.Activity != "reviewing"; r, _ = st.Run(id) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if ok, err := st.CancelRun(id); !ok || err != nil {
+		t.Fatalf("cancel: %v, %v", ok, err)
+	}
+	select {
+	case err := <-done:
+		if err == nil || err.Error() != "cancelled" {
+			t.Fatalf("run ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the review kept running")
+	}
+	if r, _ := st.Run(id); r.Status != "failed" || r.Error != "cancelled" {
+		t.Fatalf("after cancelling: %s %q", r.Status, r.Error)
+	}
+	if n := read(filepath.Join(bin, "notified")); n != "" {
+		t.Errorf("notified: %q", n)
+	}
+	if ok, _ := st.CancelRun(id); ok {
+		t.Error("cancelled a run that had ended")
+	}
+}
+
+// Stopping prowl review during the verify turn cancels the review rather
+// than save the unverified draft.
+func TestInterruptDuringVerify(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the agent is a shell script")
+	}
+	st, roots, bin, head := setupRun(t)
+	_ = os.WriteFile(filepath.Join(bin, "claude"), []byte(`#!/bin/sh
+cat >/dev/null
+case "$*" in *--resume*) sleep 60 ;; esac
+echo '{"type":"result","session_id":"s1","structured_output":`+review+`}'
+`), 0o755)
+	cfg := config.Default()
+	cfg.RepoRoots = []string{roots}
+	id, _ := st.StartRun("o/api#7", head, "claude", "", 0)
+	ctx, interrupt := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.Run(ctx, cfg, st, nil, agent.Job{Repo: "o/api", Number: 7, Base: "main", Head: head, Agent: "claude", RunID: id})
+	}()
+	for r, _ := st.Run(id); r.Activity != "verifying findings"; r, _ = st.Run(id) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	interrupt()
+	if err := <-done; err == nil || err.Error() != "cancelled" {
+		t.Fatalf("run ended with %v", err)
+	}
+	if r, _ := st.Run(id); r.Status != "failed" || r.Error != "cancelled" {
+		t.Fatalf("after the interrupt: %s %q", r.Status, r.Error)
+	}
+	if n := read(filepath.Join(bin, "notified")); n != "" {
+		t.Errorf("notified: %q", n)
 	}
 }
 

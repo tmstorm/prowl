@@ -57,7 +57,7 @@ echo '{"type":"turn.completed"}'
 `)
 	be := backend(t, "codex")
 	var acts []string
-	res, sid, err := be.Review(agent.Turn{Dir: t.TempDir(), Prompt: "review it", Model: "gpt-x",
+	res, sid, err := be.Review(t.Context(), agent.Turn{Dir: t.TempDir(), Prompt: "review it", Model: "gpt-x",
 		Activity: func(s string) { acts = append(acts, s) }})
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ echo '{"type":"turn.completed"}'
 	if strings.Contains(args, "mcp_servers.prowl.command") || !strings.Contains(args, "mcp_servers.docs.enabled=false") || !strings.Contains(args, "mcp_servers.prowl.enabled=false") {
 		t.Errorf("a review without tools loads no MCP server, yours included:\n%s", args)
 	}
-	if _, _, err := be.Review(agent.Turn{Dir: t.TempDir(), Prompt: "verify", Session: "th-1",
+	if _, _, err := be.Review(t.Context(), agent.Turn{Dir: t.TempDir(), Prompt: "verify", Session: "th-1",
 		ToolServer: []string{"/bin/prowl", "agent-tools", "o/api", `C:\wt`}}); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ echo '{"type":"thread.started","thread_id":"th-2"}'
 echo '{"type":"turn.failed","error":{"message":"401 Unauthorized"}}'
 exit 1
 `)
-	_, _, err := backend(t, "codex").Review(agent.Turn{Dir: t.TempDir(), Prompt: "x"})
+	_, _, err := backend(t, "codex").Review(t.Context(), agent.Turn{Dir: t.TempDir(), Prompt: "x"})
 	if err == nil || !strings.Contains(err.Error(), "401 Unauthorized") {
 		t.Fatalf("want the turn's error, got %v", err)
 	}
@@ -114,7 +114,7 @@ echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"
 echo '{"type":"result","session_id":"s-1","structured_output":`+review+`}'
 `)
 	var model string
-	res, sid, err := backend(t, "claude").Review(agent.Turn{Dir: t.TempDir(), Prompt: "p", Session: "s-0", SetModel: func(m string) { model = m }})
+	res, sid, err := backend(t, "claude").Review(t.Context(), agent.Turn{Dir: t.TempDir(), Prompt: "p", Session: "s-0", SetModel: func(m string) { model = m }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestCommandAgent(t *testing.T) {
 		c.Agent.StatusCommand = `echo '{"loggedIn":true,"account":"me","expiresAt":"2030-01-01T00:00:00Z"}'`
 		c.Agent.LoginCommand = "true"
 	})
-	res, sid, err := be.Review(agent.Turn{Dir: t.TempDir(), Prompt: "p"})
+	res, sid, err := be.Review(t.Context(), agent.Turn{Dir: t.TempDir(), Prompt: "p"})
 	if err != nil || sid != "" || len(res.Findings) != 1 {
 		t.Fatalf("sid %q review %+v err %v", sid, res, err)
 	}
