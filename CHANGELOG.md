@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/tmstorm/prowl/compare/v0.7.1...v0.8.0) (2026-11-23)
+
+
+### Features
+
+* **review:** cancel a running AI review or extension ([#100](https://github.com/tmstorm/prowl/issues/100)) ([3a71dc6](https://github.com/tmstorm/prowl/commit/3a71dc6f1d6c800388b21792c52519ca37e2e55a))
+
+
+### Bug Fixes
+
+* **slack:** stop prowl watch taking down the reviewing emoji ([#98](https://github.com/tmstorm/prowl/issues/98)) ([ebc69d0](https://github.com/tmstorm/prowl/commit/ebc69d072b98f54c3feaf4df4e3d075c2b51df18))
+
 ## [0.7.1](https://github.com/tmstorm/prowl/compare/v0.7.0...v0.7.1) (2026-11-20)
 
 
