@@ -72,6 +72,19 @@ func (co *Core) RunExtension(key, name string) error {
 	return nil
 }
 
+// CancelExtension stops a running on-demand extension job within a second
+// or so. The job fails with "cancelled".
+func (co *Core) CancelExtension(jobID int64) error {
+	ok, err := co.st.CancelExtensionJob(jobID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("that extension isn't running")
+	}
+	return nil
+}
+
 // ExtensionJobs are the newest job of each on-demand extension run on the
 // PR key, by extension name.
 func (co *Core) ExtensionJobs(key string) []ExtensionJob {

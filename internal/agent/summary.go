@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -18,7 +19,7 @@ const diffLimit = 150_000
 // what it does, the notable changes, and what deserves a careful look. It is
 // one turn with the diff in the prompt, in an empty directory, so it is quick
 // and needs no checkout. It returns the markdown and the model that wrote it.
-func Summarize(cfg config.Config, j Job, diff string) (string, string, error) {
+func Summarize(ctx context.Context, cfg config.Config, j Job, diff string) (string, string, error) {
 	be, err := For(cfg, "")
 	if err != nil {
 		return "", "", err
@@ -52,7 +53,7 @@ Be concise. No praise, no review findings, no verdict.
 `, j.Number, j.Repo, j.Title, j.Author, j.Body, diff, cut)
 	model := cfg.Agent.SummaryModel(be.Name())
 	used := model
-	res, _, err := be.Review(Turn{Dir: dir, Prompt: prompt, Model: model, Schema: summarySchema, SetModel: func(m string) { used = m }})
+	res, _, err := be.Review(ctx, Turn{Dir: dir, Prompt: prompt, Model: model, Schema: summarySchema, SetModel: func(m string) { used = m }})
 	if err != nil {
 		return "", "", fmt.Errorf("summarize %s#%d: %w", j.Repo, j.Number, err)
 	}

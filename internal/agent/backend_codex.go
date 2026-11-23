@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -120,7 +121,7 @@ func codexToolServer(toolServer []string) []string {
 // Review runs one `codex exec` turn in the read-only sandbox, never asking
 // for approval. The sandbox has no network, which is why prowl puts the PR's
 // history in the prompt.
-func (codexBackend) Review(t Turn) (*result, string, error) {
+func (codexBackend) Review(ctx context.Context, t Turn) (*result, string, error) {
 	tmp, err := os.MkdirTemp("", "prowl-codex-")
 	if err != nil {
 		return nil, "", err
@@ -156,7 +157,7 @@ func (codexBackend) Review(t Turn) (*result, string, error) {
 	t.setModel(model)
 
 	var sessionID, last, errMsg string
-	waitErr := stream(t, "codex", args, func(line []byte) {
+	waitErr := stream(ctx, t, "codex", args, func(line []byte) {
 		var ev struct {
 			Type     string `json:"type"`
 			ThreadID string `json:"thread_id"`

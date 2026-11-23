@@ -865,6 +865,18 @@ func (p *extensionPicker) update(m *Model, k tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		m.popup = &notesPopup{title: ext.Name + " on " + prName(p.item), notes: extensionResult(*j)}
+	case "x":
+		ext := p.exts[p.cur]
+		j := p.job(m, ext)
+		if j == nil || j.Status != core.ReviewRunning {
+			m.fail(ext.Name + " isn't running on " + prName(p.item))
+			return nil
+		}
+		if err := m.core.CancelExtension(j.ID); err != nil {
+			m.fail(err.Error())
+			return nil
+		}
+		m.info("cancelling " + ext.Name + " on " + prName(p.item))
 	}
 	return nil
 }
@@ -918,7 +930,7 @@ func (p *extensionPicker) view(m *Model) string {
 		}
 		rows = append(rows, row)
 	}
-	foot := sDim.Render(" its letter or enter runs it · v shows its last result · esc close")
+	foot := sDim.Render(" its letter or enter runs it · v shows its last result · x cancels it · esc close")
 	return popBox("Extensions for "+prName(p.item), strings.Join(rows, "\n")+"\n\n"+foot, w, pal.Accent)
 }
 

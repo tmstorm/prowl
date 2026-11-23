@@ -21,7 +21,7 @@ reviewers = ["claude", "codex"]
 
 A review starts every reviewer at once, in the background. prowl checks the PR out into a worktree under `~/.local/share/prowl/worktrees`, using your existing clone from `repo_roots` when there is one. The review shows what each agent is doing while it runs, and you get a desktop notification when it finishes.
 
-You can also review with one agent you pick, run a [review profile](#review-profiles), write an [AI summary](#ai-summary), or copy a fix-these-findings prompt. Revising, chatting, updating the findings from a chat and discarding act on one reviewer, and always continue that reviewer's own session. Discarding a review brings back that reviewer's previous run, if it has one. The keys are in [Agent keys](tui.md#agent-keys).
+You can also review with one agent you pick, run a [review profile](#review-profiles), write an [AI summary](#ai-summary), or copy a fix-these-findings prompt. Revising, chatting, updating the findings from a chat, cancelling and discarding act on one reviewer, and always continue that reviewer's own session. Cancelling stops a running review, which then fails with "cancelled". A cancelled revise leaves the review as it was. Discarding a review brings back that reviewer's previous run, if it has one. The keys are in [Agent keys](tui.md#agent-keys).
 
 ## Findings
 

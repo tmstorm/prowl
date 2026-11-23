@@ -119,6 +119,11 @@ CREATE TABLE IF NOT EXISTS extension_jobs (
   added INTEGER NOT NULL DEFAULT 0 -- findings it added to the AI review
 );
 CREATE INDEX IF NOT EXISTS extension_jobs_key ON extension_jobs(key, name, id);
+CREATE TABLE IF NOT EXISTS cancels ( -- what you cancelled while it ran, so its agent-run stops
+  kind TEXT NOT NULL,      -- run | job
+  id INTEGER NOT NULL,     -- the review run or extension job
+  PRIMARY KEY (kind, id)
+);
 CREATE TABLE IF NOT EXISTS tips (
   name TEXT PRIMARY KEY    -- a one-time tip prowl has shown
 );
@@ -444,8 +449,8 @@ func (s *Store) StartRun(key, headOid, agent, profile string, pid int) (int64, e
 
 // RestartRun marks a run running again, for a revise or sync in its session.
 func (s *Store) RestartRun(id int64, pid int) error {
-	_, err := s.db.Exec(`UPDATE review_runs SET status='running', pid=?, started_at=?, finished_at=0, error='', activity='' WHERE id=?`,
-		pid, time.Now().Unix(), id)
+	_, err := s.db.Exec(`UPDATE review_runs SET status='running', pid=?, started_at=?, finished_at=0, error='', activity='' WHERE id=?;
+DELETE FROM cancels WHERE kind='run' AND id=?`, pid, time.Now().Unix(), id, id)
 	return wrap("restart run", err)
 }
 
@@ -483,6 +488,29 @@ func (s *Store) FailRun(id int64, msg string) error {
 	_, err := s.db.Exec(`UPDATE review_runs SET status='failed', error=?, finished_at=?, activity='' WHERE id=?`,
 		msg, time.Now().Unix(), id)
 	return wrap("fail review", err)
+}
+
+// CancelRun asks a running run's agent-run to stop, which ends the run. It
+// reports false when the run isn't running.
+func (s *Store) CancelRun(id int64) (bool, error) {
+	return s.cancel("run", `SELECT id FROM review_runs WHERE id=? AND status='running'`, id)
+}
+
+// RunCancelled reports whether you cancelled the run.
+func (s *Store) RunCancelled(id int64) bool { return s.cancelled("run", id) }
+
+func (s *Store) cancel(kind, running string, id int64) (bool, error) {
+	res, err := s.db.Exec(`INSERT OR REPLACE INTO cancels (kind, id) SELECT ?, id FROM (`+running+`)`, kind, id)
+	if err != nil {
+		return false, wrap("cancel "+kind, err)
+	}
+	n, err := res.RowsAffected()
+	return n > 0, wrap("cancel "+kind, err)
+}
+
+func (s *Store) cancelled(kind string, id int64) bool {
+	var one int
+	return s.db.QueryRow(`SELECT 1 FROM cancels WHERE kind=? AND id=?`, kind, id).Scan(&one) == nil
 }
 
 // SaveAction records what the agent suggests doing with the PR: "close",
@@ -629,6 +657,15 @@ func (s *Store) SetExtensionJobPID(id int64, pid int) error {
 	return wrap("set extension pid", err)
 }
 
+// CancelExtensionJob asks a running job's agent-run to stop, which ends the
+// job. It reports false when the job isn't running.
+func (s *Store) CancelExtensionJob(id int64) (bool, error) {
+	return s.cancel("job", `SELECT id FROM extension_jobs WHERE id=? AND status='running'`, id)
+}
+
+// ExtensionJobCancelled reports whether you cancelled the job.
+func (s *Store) ExtensionJobCancelled(id int64) bool { return s.cancelled("job", id) }
+
 // FinishExtensionJob records how the job ended: what the extension printed,
 // errMsg when it failed, and how many findings it added to the AI review.
 func (s *Store) FinishExtensionJob(id int64, output, errMsg string, added int) error {
@@ -774,6 +811,15 @@ func (s *Store) FinishExtension(run *ExtensionRun, output, errMsg string) (bool,
 	}
 	n, _ := res.RowsAffected()
 	return n == 1, nil
+}
+
+// ReleaseExtension gives up the claim's run unfinished, so a review waiting
+// for it claims it and runs it, rather than reuse a run its holder's review
+// cut short.
+func (s *Store) ReleaseExtension(run *ExtensionRun) error {
+	_, err := s.db.Exec(`DELETE FROM extension_runs WHERE key=? AND name=? AND head_oid=? AND claim=? AND status='running'`,
+		run.Key, run.Name, run.HeadOid, run.Claim)
+	return wrap("release extension "+run.Name, err)
 }
 
 // ExtensionRun is extension name's run on head, or nil.

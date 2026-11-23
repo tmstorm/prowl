@@ -112,13 +112,14 @@ In the comment box, `ctrl+s` saves the comment, `ctrl+e` opens it in your editor
 | `<leader>cs` | update the findings from a chat |
 | `<leader>ca` | write an AI summary |
 | `<leader>ch` | copy a fix-these-findings prompt |
+| `<leader>cx` | cancel the running review |
 | `<leader>cd` | discard the review |
 | `<leader>p` | post the AI review, in your editor |
 | `<leader>e` | the PR's on-demand extensions |
 
-Revise, chat, update and discard act on the agent whose section the cursor is in, or the main agent. See [AI reviews](ai-reviews.md).
+Revise, chat, update, cancel and discard act on the agent whose section the cursor is in, or the main agent. See [AI reviews](ai-reviews.md).
 
-`<leader>e` lists the extensions you can run on the PR, with how each last went. An extension's `key` runs it (`<leader>ef`), as does `enter` on its line, and `v` shows its last result. One with `confirm = true` asks first. See [Extensions](ai-reviews.md#extensions).
+`<leader>e` lists the extensions you can run on the PR, with how each last went. An extension's `key` runs it (`<leader>ef`), as does `enter` on its line, `v` shows its last result, and `x` cancels it while it runs. One with `confirm = true` asks first. See [Extensions](ai-reviews.md#extensions).
 
 ## The review tab
 

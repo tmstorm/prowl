@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/tmstorm/prowl/internal/platform"
 )
 
 // commandBackend runs any program: the prompt goes in on stdin and the review
@@ -43,7 +45,7 @@ func shell(ctx context.Context, command string) *exec.Cmd {
 	return exec.CommandContext(ctx, "sh", "-c", command)
 }
 
-func (b commandBackend) Review(t Turn) (*result, string, error) {
+func (b commandBackend) Review(ctx context.Context, t Turn) (*result, string, error) {
 	if err := b.Check(); err != nil {
 		return nil, "", err
 	}
@@ -58,7 +60,8 @@ func (b commandBackend) Review(t Turn) (*result, string, error) {
 	}
 	t.setModel(t.Model)
 	t.activity("running " + oneLine(b.command, 40))
-	cmd := shell(context.Background(), b.command)
+	cmd := shell(ctx, b.command)
+	platform.KillGroup(cmd)
 	cmd.Dir = t.Dir
 	cmd.Env = append(CleanEnv(), "PROWL_SCHEMA="+schemaPath, "PROWL_MODEL="+t.Model)
 	cmd.Stdin = strings.NewReader(t.Prompt + "\n\nReply with only JSON matching this schema, no other text:\n" + t.Schema + "\n")

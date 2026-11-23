@@ -108,7 +108,7 @@ func (co *Core) writeSummary(ctx context.Context, it inbox.Item, cfg config.Conf
 		return store.Summary{}, fmt.Errorf("summarize %s: %w", key, err)
 	}
 	job := agent.Job{Repo: pr.Repository.NameWithOwner, Number: pr.Number, Title: pr.Title, Author: pr.Author.Name(), Body: pr.Body}
-	text, model, err := agent.Summarize(cfg, job, diff)
+	text, model, err := agent.Summarize(ctx, cfg, job, diff)
 	if err != nil {
 		return store.Summary{}, fmt.Errorf("summarize %s: %w", key, err)
 	}

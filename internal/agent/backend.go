@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tmstorm/prowl/internal/config"
+	"github.com/tmstorm/prowl/internal/platform"
 )
 
 // Turn is one headless request to an agent.
@@ -42,8 +44,8 @@ type Backend interface {
 	// Check reports why the agent can't run (not installed, not configured).
 	Check() error
 	// Review runs one turn and returns the structured review and the
-	// session ID to resume.
-	Review(t Turn) (*result, string, error)
+	// session ID to resume. Cancelling ctx kills the agent.
+	Review(ctx context.Context, t Turn) (*result, string, error)
 	// Resumes is true when Review can continue a session. Without it prowl
 	// resends the context with the earlier review on every turn.
 	Resumes() bool
@@ -109,9 +111,11 @@ func ReviewerTitle(reviewer string) string {
 
 // stream runs bin with args in t's checkout, t's prompt on stdin, and hands
 // each line it prints to each, as the agents print one JSON event a line.
-// It returns why bin failed to start or exited badly.
-func stream(t Turn, bin string, args []string, each func(line []byte)) error {
-	cmd := exec.Command(bin, args...)
+// It returns why bin failed to start or exited badly. Cancelling ctx kills
+// bin and what it started.
+func stream(ctx context.Context, t Turn, bin string, args []string, each func(line []byte)) error {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	platform.KillGroup(cmd)
 	cmd.Dir, cmd.Env, cmd.Stdin, cmd.Stderr = t.Dir, CleanEnv(), strings.NewReader(t.Prompt), os.Stderr
 	out, err := cmd.StdoutPipe()
 	if err != nil {
