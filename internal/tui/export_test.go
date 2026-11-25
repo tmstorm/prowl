@@ -10,6 +10,9 @@ var FloatingChat = &floatingChat
 // RenderMarkdown renders Markdown as the panes do.
 var RenderMarkdown = renderMarkdown
 
+// Palettes and ChromaThemes are each theme's colors and code style.
+var Palettes, ChromaThemes = palettes, chromaThemes
+
 // LeaderKeys lists every leader binding as the docs write it: <leader>a, or
 // <leader>tr for r in the t menu.
 func LeaderKeys() []string {

@@ -13,6 +13,7 @@ import (
 var chromaThemes = map[string]string{
 	"dracula": "dracula", "catppuccin": "catppuccin-mocha", "tokyonight": "tokyonight-night",
 	"gruvbox": "gruvbox", "nord": "nord", "rose-pine": "rose-pine", "kanagawa": "kanagawa-wave",
+	"bebop": "bebop",
 }
 
 // md is a glamour renderer per width, and what each rendered, for one
