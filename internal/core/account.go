@@ -60,6 +60,29 @@ func (co *Core) LoginsDue() []Account {
 	return due
 }
 
+// remindLogins sends a desktop notification when the logins due change and
+// some are due.
+func (co *Core) remindLogins() {
+	var states, msgs []string
+	for _, a := range co.LoginsDue() {
+		if !a.Auth.LoggedIn {
+			states = append(states, a.Key+":out")
+			msgs = append(msgs, a.Title+" is logged out.")
+			continue
+		}
+		states = append(states, a.Key+":"+a.Auth.Expires.String())
+		msgs = append(msgs, a.Title+"'s login runs out "+a.Auth.Expires.Local().Format("Mon 15:04")+".")
+	}
+	state := strings.Join(states, ",")
+	co.mu.Lock()
+	last := co.reminded
+	co.reminded = state
+	co.mu.Unlock()
+	if state != "" && state != last {
+		platform.Notify("prowl", strings.Join(msgs, " ")+" Log in again from prowl's accounts.", co.Config().NotifyTimeout.Duration)
+	}
+}
+
 // CheckAuth asks GitHub, every installed agent and Slack whether you're
 // logged in. It runs their status commands, so it takes a moment.
 func (co *Core) CheckAuth(ctx context.Context) {

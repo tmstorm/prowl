@@ -2,7 +2,7 @@
 
 The config lives at `~/.config/prowl/config.toml` (`%APPDATA%\prowl\config.toml` on Windows), following `XDG_CONFIG_HOME`. prowl's state (review snapshots, snoozes, AI reviews, worktrees) lives in `~/.local/share/prowl` (`%LOCALAPPDATA%\prowl`), following `XDG_DATA_HOME`.
 
-prowl writes every setting into the file, commented out while it is at its default, so you can see what exists without pinning today's defaults. Uncomment a line to change it. The TUI's options change most settings without the file (see [Options](tui.md#options)). The TUI picks up edits to the file while it runs; `prowl watch` reads it when it starts (see [prowl watch](cli.md#prowl-watch)).
+prowl writes every setting into the file, commented out while it is at its default, so you can see what exists without pinning today's defaults. Uncomment a line to change it. The TUI's options change most settings without the file (see [Options](tui.md#options)). The TUI and `prowl watch` pick up edits to the file while they run.
 
 When prowl saves the config (from the options, when you change the grouping or watch a repo, or in `prowl slack`), it writes the whole file again, and comments you added by hand are lost.
 

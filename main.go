@@ -227,7 +227,7 @@ func run(args []string) (err error) {
 		ctx, stop := context.WithCancel(ctx)
 		defer stop()
 		co := withSlack(core.New(cfg, c, st))
-		go co.Run(ctx)
+		co.Run(ctx)
 		final, err := tea.NewProgram(tui.New(co), progOpts(cfg)...).Run()
 		if m, ok := final.(*tui.Model); ok && err == nil && m.Restart() {
 			stop()
@@ -264,7 +264,6 @@ func list(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store,
 		return err
 	}
 	co := withSlack(core.New(cfg, c, st))
-	co.Quiet()
 	if _, err := co.Refresh(ctx); err != nil {
 		return err
 	}
@@ -287,82 +286,63 @@ func list(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store,
 
 func watch(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store) error {
 	co := withSlack(core.New(cfg, c, st))
-	if err := co.Watching(); errors.Is(err, core.ErrWatching) {
-		fmt.Println(err)
-		return nil
-	} else if err != nil {
+	stamp := func() string { return time.Now().Format(time.TimeOnly) }
+	waiting := func() { fmt.Println(stamp(), "waiting for the prowl doing the background work to hand it over") }
+	if err := co.Watching(ctx, waiting); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		return err
 	}
-	go co.PruneOrphans()
-	exe := core.Executable()
-	built, _ := os.Stat(exe)
-	var authAt time.Time
-	reminded := ""
-	for {
-		if updated(exe, built) {
-			fmt.Println(time.Now().Format(time.TimeOnly), "prowl was updated; restarting")
+	restarted := false
+	defer func() {
+		if !restarted {
 			co.StopWatching()
-			if err := platform.Restart(exe); err != nil {
-				fmt.Fprintln(os.Stderr, "restart failed:", err)
-				_ = co.Watching()
+		}
+	}()
+	co.Run(ctx)
+	synced := func(changes []core.PR, err error) {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, stamp(), "refresh failed:", err)
+			return
+		}
+		fmt.Printf("%s synced %d PRs, %d changes\n", stamp(), len(co.Inbox().Items), len(changes))
+		if err := co.SlackErr(); err != nil {
+			fmt.Fprintln(os.Stderr, stamp(), "slack:", err)
+		}
+	}
+	synced(co.Refresh(ctx))
+	for {
+		var e core.Event
+		select {
+		case <-ctx.Done():
+			return nil
+		case e = <-co.Events():
+		}
+		switch e.Kind {
+		case core.InboxChanged:
+			synced(e.Changes, e.Err)
+		case core.ConfigChanged:
+			if e.Err != nil {
+				fmt.Fprintln(os.Stderr, stamp(), "config:", e.Err)
 			} else {
+				fmt.Println(stamp(), "reloaded", config.Path())
+			}
+		case core.Replaced:
+			fmt.Println(stamp(), "prowl was updated; restarting")
+			co.Restarting()
+			restarted = true
+			err := platform.Restart(core.Executable())
+			if err == nil {
 				return nil
 			}
-		}
-		if time.Since(authAt) > core.AuthEvery {
-			authAt = time.Now()
-			co.CheckAuth(ctx)
-			reminded = remindLogin(co, reminded)
-		}
-		if v, err := co.AutoUpgrade(ctx, exe); err != nil {
-			fmt.Fprintln(os.Stderr, time.Now().Format(time.TimeOnly), "update failed:", err)
-		} else if v != "" {
-			fmt.Println(time.Now().Format(time.TimeOnly), "installed prowl", v)
-		}
-		changes, err := co.Refresh(ctx)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, time.Now().Format(time.TimeOnly), "refresh failed:", err)
-		} else {
-			core.Notify(changes, cfg.NotifyTimeout.Duration)
-			fmt.Printf("%s synced %d PRs, %d changes\n", time.Now().Format(time.TimeOnly), len(co.Inbox().Items), len(changes))
-			if err := co.SlackErr(); err != nil {
-				fmt.Fprintln(os.Stderr, time.Now().Format(time.TimeOnly), "slack:", err)
+			fmt.Fprintln(os.Stderr, stamp(), "restart failed:", err)
+			restarted = false
+			if err := co.Watching(ctx, waiting); err != nil && ctx.Err() == nil {
+				return err
 			}
-			co.PruneClosed(ctx)
 		}
-		time.Sleep(cfg.PollEvery())
 	}
-}
-
-// updated reports whether the executable at exe has been replaced since
-// built was taken, and has stayed put for a few seconds so it isn't still
-// being written.
-func updated(exe string, built os.FileInfo) bool {
-	now, err := os.Stat(exe)
-	if err != nil || built == nil {
-		return false
-	}
-	return (now.ModTime() != built.ModTime() || now.Size() != built.Size()) && time.Since(now.ModTime()) > 10*time.Second
-}
-
-// remindLogin sends a desktop notification when a login needs you (see
-// LoginsDue). last is the state notified before; the new one is returned.
-func remindLogin(co *core.Core, last string) string {
-	var states, msgs []string
-	for _, a := range co.LoginsDue() {
-		if !a.Auth.LoggedIn {
-			states = append(states, a.Key+":out")
-			msgs = append(msgs, a.Title+" is logged out.")
-			continue
-		}
-		states = append(states, a.Key+":"+a.Auth.Expires.String())
-		msgs = append(msgs, a.Title+"'s login runs out "+a.Auth.Expires.Local().Format("Mon 15:04")+".")
-	}
-	state := strings.Join(states, ",")
-	if state != "" && state != last {
-		platform.Notify("prowl", strings.Join(msgs, " ")+" Log in again from prowl's accounts.", co.Config().NotifyTimeout.Duration)
-	}
-	return state
 }
 
 func progOpts(cfg config.Config) []tea.ProgramOption {

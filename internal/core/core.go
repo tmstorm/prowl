@@ -36,15 +36,16 @@ type Core struct {
 	syncing   sync.Mutex    // one sync at a time
 	reacting  sync.Mutex    // one pass over the Slack emoji at a time
 	reactWake chan struct{} // wakes Run to bring the Slack emoji in step
+	syncWake  chan struct{} // wakes Run to sync now
 
 	mu          sync.Mutex
 	cfg         config.Config
 	cfgMod      time.Time // the config file's mtime when last read or written
-	quiet       bool      // this process never notifies (prowl list)
 	accounts    []Account
 	inbox       classified
 	peek        map[string]bool  // repos (owner/name) whose open PRs are fetched this session
 	opened      map[string]prRef // PRs opened by link this session, kept through syncs
+	extras      map[string]bool  // the PRs in the inbox only because they were opened or peeked
 	runs        map[string][]*Review
 	extJobs     map[string][]ExtensionJob   // each PR's newest job of each on-demand extension
 	drafted     map[string]store.Review     // agent drafts on their way out, as prowl wrote them
@@ -70,7 +71,13 @@ type Core struct {
 
 	serviceOnce sync.Once
 	service     bool           // prowl watch runs at login
-	watching    *platform.Lock // held while this process is prowl watch
+	watch       bool           // this process is prowl watch
+	role        *platform.Lock // held while this process does the background work
+	beat        time.Time      // when this prowl watch last said it runs
+	behind      bool           // a sync or reload ran without the role since the last one with it
+	synced      bool           // a sync finished in this process
+	pendingSeen map[string]bool
+	reminded    string // the logins due as last notified
 
 	summaries     map[string]store.Summary
 	summarizing   map[string]bool
@@ -275,7 +282,8 @@ func prOf(it inbox.Item, bots map[string]bool) PR {
 // New starts from the inbox saved by the last sync, if any, so a UI can
 // draw it at once while the first sync runs.
 func New(cfg config.Config, c *gh.Client, st *store.Store) *Core {
-	co := &Core{gh: c, st: st, cfg: cfg, cfgMod: config.ModTime(), accounts: accountList(cfg), events: make(chan Event, 64), reactWake: make(chan struct{}, 1)}
+	co := &Core{gh: c, st: st, cfg: cfg, cfgMod: config.ModTime(), accounts: accountList(cfg), events: make(chan Event, 64),
+		reactWake: make(chan struct{}, 1), syncWake: make(chan struct{}, 1)}
 	co.loadRuns()
 	co.summaries = map[string]store.Summary{}
 	if sums, err := st.Summaries(); err == nil {
@@ -283,20 +291,37 @@ func New(cfg config.Config, c *gh.Client, st *store.Store) *Core {
 			co.summaries[key] = *sum
 		}
 	}
-	data, at, err := st.LastInbox()
+	if in, at := co.savedInbox(); in != nil {
+		items := co.classify(in)
+		snoozed, _ := st.Snoozed(heads(items))
+		co.install(in, items, snoozed, nil, nil, at)
+	}
+	return co
+}
+
+// savedInbox is the inbox the last sync with the role saved, and when, or
+// nil.
+func (co *Core) savedInbox() (*synced, time.Time) {
+	data, at, err := co.st.LastInbox()
 	if err != nil || data == nil {
-		return co
+		return nil, time.Time{}
 	}
 	var in synced
 	if json.Unmarshal(data, &in) != nil {
-		return co
+		return nil, time.Time{}
 	}
-	co.shared, co.reactions, co.slackLinks = in.Shared, in.Reactions, in.SlackLinks
-	items := co.classify(&in)
-	snoozed, _ := st.Snoozed(heads(items))
+	return &in, at
+}
+
+// install makes items the inbox, with extras (PRs opened by link or in
+// peeked repos) beside them.
+func (co *Core) install(in *synced, items []inbox.Item, snoozed map[string]time.Time, extras []gh.PR, shares map[string]store.SlackShare, at time.Time) {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	co.shared, co.slackShares, co.reactions, co.slackLinks = in.Shared, shares, in.Reactions, in.SlackLinks
 	co.inbox = classified{Items: items, Snoozed: snoozed, Viewer: in.Viewer, Teams: in.Teams, At: at}
-	co.inbox.Items = co.withLocals(items)
-	return co
+	co.extras = map[string]bool{}
+	co.inbox.Items = co.withLocals(co.withExtras(items, extras, in.Viewer))
 }
 
 // setConfig replaces the config without saving it. UpdateConfig saves.
@@ -323,7 +348,8 @@ func (co *Core) Inbox() Inbox {
 }
 
 // Peek fetches every open PR of repo on each sync this session, as if it
-// were watched.
+// were watched, for this process alone: they are never saved, notified or
+// given Slack emoji.
 func (co *Core) Peek(repo string) {
 	co.mu.Lock()
 	defer co.mu.Unlock()
@@ -353,51 +379,52 @@ func (co *Core) Open(ctx context.Context, repo string, n int) (PR, error) {
 		co.opened = map[string]prRef{}
 	}
 	co.opened[pr.Key()] = prRef{repo, n}
-	co.inbox.Items = co.withOpened(co.inbox.Items, []gh.PR{*pr}, co.inbox.Viewer)
+	co.inbox.Items = co.withExtras(co.inbox.Items, []gh.PR{*pr}, co.inbox.Viewer)
 	if it, ok := co.item(pr.Key()); ok {
 		return prOf(it, co.cfg.BotSet()), nil
 	}
 	return PR{}, fmt.Errorf("open %s#%d: not classified", repo, n)
 }
 
-// Refresh syncs the inbox with GitHub and returns what changed since the
-// last sync that notified, whenever that was (nothing in a process that
-// doesn't notify): PRs that newly need you, moved section, or
-// were pushed to while addressed, and your own PRs that moved. Snoozed PRs
-// are left out. Before the first sync ever, every such PR is a change.
+// Refresh syncs the inbox with GitHub. With the role (see Run) it is the
+// sync everyone sees: it reads Slack, saves the inbox, measures what changed
+// since the last such sync, notifies it and brings the Slack emoji in step.
+// It returns those changes: PRs that newly need you, moved section, or were
+// pushed to while addressed, and your own PRs that moved, snoozed ones left
+// out; before the first sync ever, every such PR is a change. A process
+// that isn't prowl watch leaves its first sync's changes to the screen.
+// Without the role it fetches for this process's screen alone, with what
+// Slack said at the last sync with it, and returns nothing.
 func (co *Core) Refresh(ctx context.Context) (_ []PR, err error) {
 	co.syncing.Lock()
 	defer co.syncing.Unlock()
 	start := time.Now()
-	defer func() {
-		took := time.Since(start).Round(100 * time.Millisecond)
-		if err != nil {
-			slog.Warn("sync failed", "took", took, "err", err)
-			return
-		}
-		co.mu.Lock()
-		n := len(co.inbox.Items)
-		co.mu.Unlock()
-		slog.Info("synced", "prs", n, "took", took, "github_rate_left", co.gh.RateLeft())
-	}()
 	co.mu.Lock()
-	cfg := co.cfg
-	cfg.WatchRepos = slices.Clone(cfg.WatchRepos)
-	for repo := range co.peek {
-		if !slices.Contains(cfg.WatchRepos, repo) {
-			cfg.WatchRepos = append(cfg.WatchRepos, repo)
-		}
-	}
+	hold := co.role != nil
+	co.behind = co.behind || !hold
+	cfg, watch, first := co.cfg, co.watch, !co.synced
+	peek := slices.Collect(maps.Keys(co.peek))
 	opened := slices.Collect(maps.Values(co.opened))
 	sl := co.slack
 	slackOn := sl != nil && co.authErr("slack") == nil
 	var known []string
 	for _, it := range co.inbox.Items {
-		if _, linked := co.opened[it.PR.Key()]; !linked && !it.PR.Local() {
+		if !co.extras[it.PR.Key()] && !it.PR.Local() {
 			known = append(known, it.PR.ID)
 		}
 	}
 	co.mu.Unlock()
+	defer func() {
+		took := time.Since(start).Round(100 * time.Millisecond)
+		if err != nil {
+			slog.Warn("sync failed", "took", took, "role", hold, "err", err)
+			return
+		}
+		co.mu.Lock()
+		n := len(co.inbox.Items)
+		co.mu.Unlock()
+		slog.Info("synced", "prs", n, "took", took, "role", hold, "github_rate_left", co.gh.RateLeft())
+	}()
 
 	var kept []store.SlackShare
 	if sl != nil {
@@ -407,19 +434,16 @@ func (co *Core) Refresh(ctx context.Context) (_ []PR, err error) {
 	for _, s := range newestShares(cfg, co.slackMe, kept) {
 		keep = append(keep, s.PRID)
 	}
-	byLink := make([]*gh.PR, len(opened))
+	var extras []gh.PR
 	var fetching sync.WaitGroup
-	for i, o := range opened {
-		fetching.Go(func() {
-			var err error
-			byLink[i], err = co.gh.PR(ctx, o.repo, o.n)
-			logErr(fmt.Sprintf("fetch %s#%d", o.repo, o.n), err)
-		})
-	}
+	fetching.Go(func() { extras = co.fetchExtras(ctx, opened, peek) })
 	var newlyShared []gh.PR
 	var slackErr error
-	if slackOn {
+	switch {
+	case slackOn && hold:
 		fetching.Go(func() { newlyShared, slackErr = co.syncSlack(ctx, sl, cfg, kept) })
+	case slackOn:
+		fetching.Go(func() { slackErr = co.slackIdentity(ctx, sl) })
 	}
 	fetched, err := co.gh.FetchInbox(ctx, cfg.Orgs, cfg.WatchRepos, known, keep)
 	fetching.Wait()
@@ -431,17 +455,21 @@ func (co *Core) Refresh(ctx context.Context) (_ []PR, err error) {
 	if sl != nil {
 		shares = co.withShares(in, cfg, newlyShared)
 	}
-	if slackOn {
+	if slackOn && hold {
 		var err error
 		in.Reactions, err = co.reactionsOnYours(ctx, sl, cfg, in)
 		slackErr = errors.Join(slackErr, err)
-	}
-	if data, err := json.Marshal(in); err == nil {
-		logErr("save inbox", co.st.SaveInbox(data, time.Now()))
+	} else {
+		co.mu.Lock()
+		in.Reactions = co.reactions
+		co.mu.Unlock()
 	}
 	items := co.classify(in)
 	var changes []inbox.Item
-	if co.notifies() {
+	if hold {
+		if data, err := json.Marshal(in); err == nil {
+			logErr("save inbox", co.st.SaveInbox(data, time.Now()))
+		}
 		prev, err := co.st.AllStates()
 		if err != nil {
 			return nil, fmt.Errorf("refresh: %w", err)
@@ -450,26 +478,15 @@ func (co *Core) Refresh(ctx context.Context) (_ []PR, err error) {
 		if err := co.st.ReplaceStates(states(items)); err != nil {
 			return nil, fmt.Errorf("refresh: %w", err)
 		}
+		co.pruneLocals()
+		co.foldLocals(items, in.Viewer)
 	}
 	snoozed, err := co.st.Snoozed(heads(items))
 	if err != nil {
 		return nil, fmt.Errorf("refresh: %w", err)
 	}
-	var extra []gh.PR
-	for _, pr := range byLink {
-		if pr != nil && pr.State == "OPEN" {
-			extra = append(extra, *pr)
-		}
-	}
-
-	co.pruneLocals()
-	co.foldLocals(items, in.Viewer)
-	co.mu.Lock()
-	co.shared, co.slackShares, co.reactions, co.slackLinks = in.Shared, shares, in.Reactions, in.SlackLinks
-	co.inbox = classified{Items: co.withOpened(items, extra, in.Viewer), Snoozed: snoozed, Viewer: in.Viewer, Teams: in.Teams, At: time.Now()}
-	co.inbox.Items = co.withLocals(co.inbox.Items)
-	co.mu.Unlock()
-	if slackOn && slackErr == nil {
+	co.install(in, items, snoozed, extras, shares, time.Now())
+	if hold && slackOn && slackErr == nil {
 		slackErr = co.reconcileReactions(ctx, sl)
 	}
 	if slack.LoggedOut(slackErr) {
@@ -478,10 +495,85 @@ func (co *Core) Refresh(ctx context.Context) (_ []PR, err error) {
 	}
 	logErr("slack sync", slackErr)
 	co.mu.Lock()
-	co.slackErr = slackErr
+	co.slackErr, co.synced = slackErr, true
+	if hold {
+		co.behind = false
+	}
 	co.mu.Unlock()
 	changes = slices.DeleteFunc(changes, func(it inbox.Item) bool { _, ok := snoozed[it.PR.Key()]; return ok })
-	return prsOf(changes, cfg.BotSet()), nil
+	prs := prsOf(changes, cfg.BotSet())
+	if watch || !first {
+		notify(prs, cfg.NotifyTimeout.Duration)
+	}
+	return prs, nil
+}
+
+// follow takes up the inbox the process with the role saved, when this
+// process doesn't have the role and the saved one is newer than its own.
+// It reports whether it did.
+func (co *Core) follow(ctx context.Context) bool {
+	at := co.st.InboxAt()
+	co.mu.Lock()
+	newer := co.role == nil && at.After(co.inbox.At)
+	co.mu.Unlock()
+	if !newer {
+		return false
+	}
+	co.syncing.Lock()
+	defer co.syncing.Unlock()
+	in, at := co.savedInbox()
+	co.mu.Lock()
+	if in == nil || co.role != nil || !at.After(co.inbox.At) {
+		co.mu.Unlock()
+		return false
+	}
+	co.behind = true
+	cfg, shares := co.cfg, co.slackShares
+	sl, me := co.slack, co.slackMe
+	peek := slices.Collect(maps.Keys(co.peek))
+	opened := slices.Collect(maps.Values(co.opened))
+	co.mu.Unlock()
+	extras := co.fetchExtras(ctx, opened, peek)
+	if sl != nil && me != "" {
+		shares = co.withShares(in, cfg, nil)
+	}
+	items := co.classify(in)
+	snoozed, _ := co.st.Snoozed(heads(items))
+	co.install(in, items, snoozed, extras, shares, at)
+	return true
+}
+
+// fetchExtras fetches the PRs opened by link and every open PR in the
+// peeked repos.
+func (co *Core) fetchExtras(ctx context.Context, opened []prRef, peek []string) []gh.PR {
+	byLink := make([]*gh.PR, len(opened))
+	inRepo := make([][]gh.PR, len(peek))
+	var wg sync.WaitGroup
+	for i, o := range opened {
+		wg.Go(func() {
+			var err error
+			byLink[i], err = co.gh.PR(ctx, o.repo, o.n)
+			logErr(fmt.Sprintf("fetch %s#%d", o.repo, o.n), err)
+		})
+	}
+	for i, repo := range peek {
+		wg.Go(func() {
+			var err error
+			inRepo[i], err = co.gh.RepoPRs(ctx, repo)
+			logErr("fetch "+repo, err)
+		})
+	}
+	wg.Wait()
+	var out []gh.PR
+	for _, pr := range byLink {
+		if pr != nil && pr.State == "OPEN" {
+			out = append(out, *pr)
+		}
+	}
+	for _, prs := range inRepo {
+		out = append(out, prs...)
+	}
+	return out
 }
 
 func (co *Core) classify(in *synced) []inbox.Item {
@@ -497,9 +589,9 @@ func (co *Core) options(shared map[string]inbox.Share, reactions, links map[stri
 	return inbox.Options{Bots: co.cfg.BotSet(), RecheckAfterPush: co.cfg.RecheckAfterPush, Shared: shared, Reactions: reactions, SlackLinks: links}
 }
 
-// withOpened adds PRs opened by link to items, unless a sync already
-// brought them in. co.mu is held.
-func (co *Core) withOpened(items []inbox.Item, prs []gh.PR, viewer string) []inbox.Item {
+// withExtras adds PRs opened by link or in peeked repos to items, unless a
+// sync already brought them in, and marks them extras. co.mu is held.
+func (co *Core) withExtras(items []inbox.Item, prs []gh.PR, viewer string) []inbox.Item {
 	have := map[string]bool{}
 	for _, it := range items {
 		have[it.PR.Key()] = true
@@ -507,14 +599,34 @@ func (co *Core) withOpened(items []inbox.Item, prs []gh.PR, viewer string) []inb
 	var add []gh.PR
 	for _, pr := range prs {
 		if !have[pr.Key()] {
+			have[pr.Key()] = true
 			add = append(add, pr)
 		}
 	}
 	if len(add) == 0 {
 		return items
 	}
-	extra := &gh.Inbox{Viewer: viewer, PRs: add}
+	if co.extras == nil {
+		co.extras = map[string]bool{}
+	}
+	for _, pr := range add {
+		co.extras[pr.Key()] = true
+	}
+	extra := &gh.Inbox{Viewer: viewer, Teams: co.inbox.Teams, Watched: co.watched(), PRs: add}
 	return append(items, inbox.Classify(extra, co.options(co.shared, co.reactions, co.slackLinks))...)
+}
+
+// watched is the repos whose every open PR is in the inbox: watch_repos and
+// the peeked ones. co.mu is held.
+func (co *Core) watched() map[string]bool {
+	out := maps.Clone(co.peek)
+	if out == nil {
+		out = map[string]bool{}
+	}
+	for _, r := range co.cfg.WatchRepos {
+		out[r] = true
+	}
+	return out
 }
 
 // changed lists the PRs that need you (or are yours) and are new, moved
@@ -553,9 +665,9 @@ func heads(items []inbox.Item) map[string]string {
 	return out
 }
 
-// Notify sends a desktop notification per change, or one summary when there
+// notify sends a desktop notification per change, or one summary when there
 // are more than a few (the first sync ever, or catching up after a while).
-func Notify(changes []PR, timeout time.Duration) {
+func notify(changes []PR, timeout time.Duration) {
 	changes = slices.DeleteFunc(slices.Clone(changes), func(it PR) bool {
 		return it.Bucket == Mine && it.SlackReactions == "" && it.Why != WhyNewFeedback && it.Why != WhyReadyToMerge
 	})
@@ -641,95 +753,143 @@ func (co *Core) RefreshPR(ctx context.Context, key string) error {
 
 // reclassify is the inbox item for one PR as it is now. co.mu is held.
 func (co *Core) reclassify(pr gh.PR) inbox.Item {
-	watched := maps.Clone(co.peek)
-	if watched == nil {
-		watched = map[string]bool{}
-	}
-	for _, r := range co.cfg.WatchRepos {
-		watched[r] = true
-	}
-	in := &gh.Inbox{Viewer: co.inbox.Viewer, Teams: co.inbox.Teams, Watched: watched, PRs: []gh.PR{pr}}
+	in := &gh.Inbox{Viewer: co.inbox.Viewer, Teams: co.inbox.Teams, Watched: co.watched(), PRs: []gh.PR{pr}}
 	return inbox.Classify(in, co.options(co.shared, co.reactions, co.slackLinks))[0]
 }
 
-// ErrWatching is Watching's answer while another `prowl watch` runs.
-var ErrWatching = errors.New("prowl watch is already running")
+// A prowl watch says it runs every watchBeat, and counts as running for
+// watchFresh after it last did, so a restart into an update keeps its claim.
+const (
+	watchBeat  = 10 * time.Second
+	watchFresh = 30 * time.Second
+)
 
-// Watching makes this process `prowl watch`, which sends the desktop
-// notifications for everyone. Only one runs: it holds a lock on watch.lock in
-// the data dir for as long as it runs, which the OS drops when it ends, so a
-// crash or a reboot never leaves a stale claim. A UI checking for a watcher
-// holds the lock for a moment, so a taken lock is tried again for a second
-// before it returns ErrWatching.
-func (co *Core) Watching() error {
+// Watching makes this process `prowl watch`, which is favored for the
+// background work (see Run). It says it runs, then waits until it holds the
+// role: a UI that has it hands it over between syncs. waiting, when not nil,
+// is called once if it has to wait. It returns ctx's error if ctx ends first.
+func (co *Core) Watching(ctx context.Context, waiting func()) error {
 	if err := os.MkdirAll(config.DataDir(), 0o700); err != nil {
 		return fmt.Errorf("watch: %w", err)
 	}
-	l, err := platform.TryLock(watchLock())
-	for try := 0; errors.Is(err, platform.ErrLocked) && try < 10; try++ {
-		time.Sleep(100 * time.Millisecond)
-		l, err = platform.TryLock(watchLock())
-	}
-	if errors.Is(err, platform.ErrLocked) {
-		return fmt.Errorf("%w (process %d)", ErrWatching, co.st.Watcher())
-	}
-	if err != nil {
-		return fmt.Errorf("watch: %w", err)
-	}
 	co.mu.Lock()
-	co.watching, co.quiet = l, false
+	co.watch = true
 	co.mu.Unlock()
-	return co.st.SetWatcher(os.Getpid())
+	for told := false; ; told = true {
+		if err := co.st.SetWatcher(os.Getpid(), time.Now()); err != nil {
+			return fmt.Errorf("watch: %w", err)
+		}
+		l, err := platform.TryLock(watchLock())
+		if err == nil {
+			co.mu.Lock()
+			co.role, co.beat = l, time.Now()
+			co.mu.Unlock()
+			return nil
+		}
+		if !errors.Is(err, platform.ErrLocked) {
+			return fmt.Errorf("watch: %w", err)
+		}
+		if !told && waiting != nil {
+			waiting()
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
 }
 
-// StopWatching gives up being `prowl watch`, so the prowl it starts to
-// restart on an update isn't turned away while this one exits.
+// StopWatching gives the role up and says this prowl watch no longer runs,
+// so a UI takes the background work on at once.
 func (co *Core) StopWatching() {
+	co.releaseRole()
+	logErr("clear watcher", co.st.SetWatcher(0, time.Time{}))
+}
+
+// Restarting gives the role up for a restart into an updated prowl, still
+// saying this prowl watch runs, so no UI takes the work on in between.
+func (co *Core) Restarting() {
+	logErr("record watcher", co.st.SetWatcher(os.Getpid(), time.Now()))
+	co.releaseRole()
+}
+
+// WatchRunning reports whether another process is `prowl watch`.
+func (co *Core) WatchRunning() bool {
 	co.mu.Lock()
-	if co.watching != nil {
-		co.watching.Unlock()
-		co.watching = nil
-	}
+	watch := co.watch
 	co.mu.Unlock()
-	logErr("clear watcher", co.st.SetWatcher(0))
+	pid, at := co.st.Watcher()
+	return !watch && pid != 0 && time.Since(at) < watchFresh
+}
+
+// claimRole keeps the role where it belongs, once a second from Run. prowl
+// watch says it still runs. A UI takes the role when no prowl watch runs and
+// no other process has it, syncing at once if it fell behind without it, and
+// hands it over when a prowl watch starts.
+func (co *Core) claimRole() {
+	co.mu.Lock()
+	watch, held, beat := co.watch, co.role != nil, co.beat
+	co.mu.Unlock()
+	switch {
+	case watch:
+		if time.Since(beat) >= watchBeat {
+			logErr("record watcher", co.st.SetWatcher(os.Getpid(), time.Now()))
+			co.mu.Lock()
+			co.beat = time.Now()
+			co.mu.Unlock()
+		}
+	case held:
+		if co.WatchRunning() {
+			co.releaseRole()
+			slog.Info("handed the background work to prowl watch")
+		}
+	case !co.WatchRunning():
+		logErr("make the data dir", os.MkdirAll(config.DataDir(), 0o700))
+		l, err := platform.TryLock(watchLock())
+		if err != nil {
+			if !errors.Is(err, platform.ErrLocked) {
+				logErr("take the background work", err)
+			}
+			return
+		}
+		co.mu.Lock()
+		co.role = l
+		behind := co.behind
+		co.mu.Unlock()
+		slog.Info("doing the background work")
+		if behind {
+			select {
+			case co.syncWake <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+// releaseRole gives the role up between syncs and passes over the Slack
+// emoji, never during one.
+func (co *Core) releaseRole() {
+	co.syncing.Lock()
+	defer co.syncing.Unlock()
+	co.reacting.Lock()
+	defer co.reacting.Unlock()
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	if co.role != nil {
+		co.role.Unlock()
+		co.role = nil
+	}
+}
+
+// holdsRole reports whether this process does the background work.
+func (co *Core) holdsRole() bool {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	return co.role != nil
 }
 
 func watchLock() string { return filepath.Join(config.DataDir(), "watch.lock") }
-
-// Quiet marks this process as one that never notifies, like `prowl list`.
-func (co *Core) Quiet() {
-	co.mu.Lock()
-	defer co.mu.Unlock()
-	co.quiet = true
-}
-
-// notifies reports whether this process tells you about changes: `prowl
-// watch` while it runs, otherwise a UI. Only that process measures changes
-// against the stored snapshot and moves it on, so another process's sync
-// can't swallow a change before it is notified.
-func (co *Core) notifies() bool {
-	co.mu.Lock()
-	quiet := co.quiet
-	co.mu.Unlock()
-	return !quiet && !co.WatchRunning()
-}
-
-// WatchRunning reports whether another process is `prowl watch`. A UI then
-// leaves desktop notifications to it, so none arrive twice.
-func (co *Core) WatchRunning() bool {
-	co.mu.Lock()
-	mine := co.watching != nil
-	co.mu.Unlock()
-	if mine {
-		return false
-	}
-	l, err := platform.TryLock(watchLock())
-	if err != nil {
-		return errors.Is(err, platform.ErrLocked)
-	}
-	l.Unlock()
-	return false
-}
 
 // Config is the config core works with.
 func (co *Core) Config() config.Config {

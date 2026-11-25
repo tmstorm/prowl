@@ -95,7 +95,7 @@ func run() error {
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 	co := core.New(cfg, c, st)
-	go co.Run(ctx)
+	co.Run(ctx)
 	_, err = tea.NewProgram(tui.New(co), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(platform.Terminal)).Run()
 	return err
 }

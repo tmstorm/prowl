@@ -742,6 +742,19 @@ func (c *Client) SuggestedReviewers(ctx context.Context, repo string, number int
 	return out, nil
 }
 
+// RepoPRs fetches every open PR in repo (owner/name).
+func (c *Client) RepoPRs(ctx context.Context, repo string) ([]PR, error) {
+	ids, err := c.search(ctx, "is:open is:pr archived:false repo:"+repo, searchLimit)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", repo, err)
+	}
+	prs, err := c.loadPRs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", repo, err)
+	}
+	return prs, nil
+}
+
 // OrgRepos lists an org's repos that aren't archived, as owner/name.
 func (c *Client) OrgRepos(ctx context.Context, org string) ([]string, error) {
 	var out []string

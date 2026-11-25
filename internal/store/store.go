@@ -138,7 +138,8 @@ CREATE TABLE IF NOT EXISTS releases (
 );
 CREATE TABLE IF NOT EXISTS watcher (
   id INTEGER PRIMARY KEY CHECK (id = 1),
-  pid INTEGER NOT NULL     -- the running prowl watch, which sends the notifications
+  pid INTEGER NOT NULL,    -- the running prowl watch, which is favored for the background work
+  at INTEGER NOT NULL DEFAULT 0 -- when it last said it runs; it says so every few seconds
 );
 CREATE TABLE IF NOT EXISTS locals (
   key TEXT PRIMARY KEY,    -- local:owner/name@branch
@@ -194,6 +195,8 @@ func Open(dir string) (*Store, error) {
 // made from schema and starts after them all.
 var migrations = []string{
 	`ALTER TABLE pr_state DROP COLUMN title; ALTER TABLE pr_state DROP COLUMN url; ALTER TABLE pr_state DROP COLUMN seen_at`,
+	`CREATE TABLE IF NOT EXISTS watcher (id INTEGER PRIMARY KEY CHECK (id = 1), pid INTEGER NOT NULL);
+ALTER TABLE watcher ADD COLUMN at INTEGER NOT NULL DEFAULT 0`,
 }
 
 // migrate brings the database up to date. It holds the write lock
@@ -1034,6 +1037,15 @@ ON CONFLICT(id) DO UPDATE SET at=excluded.at, data=excluded.data`, at.Unix(), st
 	return wrap("save inbox", err)
 }
 
+// InboxAt is when SaveInbox last kept the inbox, or zero.
+func (s *Store) InboxAt() time.Time {
+	var at int64
+	if s.db.QueryRow(`SELECT at FROM inbox_cache WHERE id = 1`).Scan(&at) != nil {
+		return time.Time{}
+	}
+	return time.Unix(at, 0)
+}
+
 // LastInbox is the inbox SaveInbox kept, or nil.
 func (s *Store) LastInbox() ([]byte, time.Time, error) {
 	var at int64
@@ -1215,17 +1227,18 @@ func (s *Store) SetAttempted(tag string) error {
 	return wrap("set attempted", err)
 }
 
-// SetWatcher records the process ID of the running `prowl watch`.
-func (s *Store) SetWatcher(pid int) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO watcher (id, pid) VALUES (1, ?)`, pid)
+// SetWatcher records that the `prowl watch` with process ID pid runs, as of
+// at. A pid of 0 clears it.
+func (s *Store) SetWatcher(pid int, at time.Time) error {
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO watcher (id, pid, at) VALUES (1, ?, ?)`, pid, at.Unix())
 	return wrap("set watcher", err)
 }
 
-// Watcher is the process ID `prowl watch` last recorded, or 0.
-func (s *Store) Watcher() int {
-	var pid int
-	_ = s.db.QueryRow(`SELECT pid FROM watcher WHERE id = 1`).Scan(&pid)
-	return pid
+// Watcher is the process ID `prowl watch` last recorded and when, or 0.
+func (s *Store) Watcher() (int, time.Time) {
+	var pid, at int64
+	_ = s.db.QueryRow(`SELECT pid, at FROM watcher WHERE id = 1`).Scan(&pid, &at)
+	return int(pid), time.Unix(at, 0)
 }
 
 // SlackShare is a PR link posted in Slack.

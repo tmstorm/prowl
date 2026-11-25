@@ -10,7 +10,9 @@ prowl watch
 
 Polls GitHub every `poll_interval` and sends a desktop notification when a PR moves into a state that needs you. When it starts, it catches up on what changed while it wasn't running; more than a few changes come as one summary. It prints a line per sync (`14:02:11 synced 23 PRs, 1 changes`) and keeps going until stopped.
 
-Only one runs at a time: a second `prowl watch` says `prowl watch is already running` and exits 0. While one runs, the TUI leaves notifications to it, so none arrive twice. It reads the config when it starts and keeps those settings until it restarts. It checks your logins every half hour and installs updates (see [Updating](#updating)); when its own binary is replaced, it restarts on the new one within a poll.
+One prowl at a time does the background work: syncing for everyone, desktop notifications, login reminders, your Slack emoji, installing updates and pruning what's kept for closed PRs. Every other prowl shows the inbox that one saves, so nothing is done twice and two prowls never undo each other's emoji. `prowl watch` does it whenever it runs. Without one, the first TUI you open does it, and hands it to `prowl watch` between syncs when one starts. A second `prowl watch` waits until the first stops. A refresh in a TUI that isn't doing the background work fetches for its own screen only.
+
+It picks up edits to the config file within a second. It checks your logins every half hour and installs updates (see [Updating](#updating)); when its own binary is replaced, it restarts on the new one about ten seconds later.
 
 ## prowl service
 
@@ -21,7 +23,7 @@ prowl service uninstall
 
 `install` runs `prowl watch` at login and starts it now: a systemd user service on Linux, a launchd agent on macOS, and on Windows an entry in your startup programs (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, listed under Task Manager's Startup apps), which needs no admin. `uninstall` stops it and removes it.
 
-On Linux, check it with `systemctl --user status prowl-watch` and follow its log with `journalctl --user -u prowl-watch -f`. It's your user's service, so no `sudo`. After editing the config, `systemctl --user restart prowl-watch`, or `prowl service uninstall` and `install` anywhere, makes it read the file again.
+On Linux, check it with `systemctl --user status prowl-watch` and follow its log with `journalctl --user -u prowl-watch -f`. It's your user's service, so no `sudo`.
 
 ## prowl list
 
@@ -179,7 +181,7 @@ sha256sum --check --ignore-missing checksums.txt
 
 prowl uses the logins of the tools it drives: the GitHub CLI, your review agent and Slack. The TUI, `prowl watch`, `prowl list`, `prowl review` and `prowl update` need a GitHub login, and without one they stop and say to run `gh auth login`; the TUI offers to run it for you. A token in `GH_TOKEN` or `GITHUB_TOKEN` works too.
 
-prowl checks the logins every half hour, in the TUI and in `prowl watch`. A review won't start on a logged-out agent, and while Slack refuses your sign-in prowl stops reading it and won't post there. `prowl watch` sends a desktop notification when the agent is logged out or its login ends within three days, and when Slack refuses your sign-in. The TUI shows the same, and logs in again from [the accounts list](tui.md#the-accounts-list).
+prowl checks the logins every half hour, in the TUI and in `prowl watch`. A review won't start on a logged-out agent, and while Slack refuses your sign-in prowl stops reading it and won't post there. The prowl doing the background work (see [prowl watch](#prowl-watch)) sends a desktop notification when the agent is logged out or its login ends within three days, and when Slack refuses your sign-in. The TUI shows the same, and logs in again from [the accounts list](tui.md#the-accounts-list).
 
 A `command` agent can join in with `login_command` (what logging in runs) and `status_command` (exit 0 when logged in; it may print `{"loggedIn": true, "account": "...", "expiresAt": "<RFC 3339>"}`) under `[agent]`.
 

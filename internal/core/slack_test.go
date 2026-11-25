@@ -34,6 +34,7 @@ type fakeSlack struct {
 	authErr  string // what auth.test fails with, if set
 	badEmoji string // an emoji reactions.add refuses, if set
 	calls    []string
+	searches int
 }
 
 // took returns the calls since the last took.
@@ -69,6 +70,7 @@ func (f *fakeSlack) client(t *testing.T) *slack.Client {
 			}
 			fmt.Fprint(w, `{"ok":true,"user":"me","user_id":"U1","team":"Acme","team_id":"T1"}`)
 		case "/search.messages":
+			f.searches++
 			fmt.Fprintf(w, `{"ok":true,"messages":{"paging":{"pages":1},"matches":[%s]}}`, f.matches)
 		case "/users.list":
 			fmt.Fprintf(w, `{"ok":true,"members":[%s]}`, f.users)
@@ -240,7 +242,7 @@ func TestSlackReactsAtOnce(t *testing.T) {
 	refresh(t, co)
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
-	go co.Run(ctx)
+	co.Run(ctx)
 	add, remove := "reactions.add C1 "+ts+" eyes", "reactions.remove C1 "+ts+" eyes"
 
 	id, _ := st.StartRun("o/api#7", "abc", "claude", "", 0)
@@ -279,8 +281,46 @@ func TestSlackReactsAtOnce(t *testing.T) {
 	}
 }
 
-// prowl watch syncs without Run, so it must see a review that started after
-// it did rather than take the emoji down on every sync.
+// Only the prowl with the role searches Slack and sets your emoji, so two
+// prowls never undo each other's. Comments left pending in another prowl
+// get the emoji from the one with the role, through the store.
+func TestSlackOnlyTheRoleWrites(t *testing.T) {
+	ts := fmt.Sprintf("%d.000100", time.Now().Add(-time.Minute).Unix())
+	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("api", 7, "feat: shared", "alice")}, Closed: map[string]bool{}}
+	co, st := newCore(t, fake)
+	cfg := config.Default()
+	cfg.SlackChannels = []string{"C1"}
+	co.SetConfig(cfg)
+	sl := &fakeSlack{}
+	co.UseSlack(sl.client(t))
+	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
+	refresh(t, co)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	co.Run(ctx)
+
+	c, _ := fake.Client()
+	other := core.New(cfg, c, st)
+	quiet := &fakeSlack{}
+	quiet.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
+	other.UseSlack(quiet.client(t))
+	if _, ok := find(refresh(t, other), "o/api#7"); !ok {
+		t.Fatal("the prowl without the role lost the shared PR")
+	}
+	other.Run(ctx)
+	other.SetPending("o/api#7", []core.DraftComment{{Path: "a.go", Line: 1, Side: "RIGHT", Body: "one"}})
+	waitSlack(t, sl, "comments pending in the other prowl", "reactions.add C1 "+ts+" eyes")
+	other.SetPending("o/api#7", nil)
+	waitSlack(t, sl, "the comments dropped", "reactions.remove C1 "+ts+" eyes")
+	quiet.mu.Lock()
+	defer quiet.mu.Unlock()
+	if len(quiet.calls) != 0 || quiet.searches != 0 {
+		t.Fatalf("the prowl without the role called Slack: %q, %d searches", quiet.calls, quiet.searches)
+	}
+}
+
+// The prowl with the role must see a review that started after it did
+// rather than take the emoji down on every sync.
 func TestSlackWatchSeesNewReview(t *testing.T) {
 	ts := fmt.Sprintf("%d.000100", time.Now().Add(-time.Minute).Unix())
 	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("api", 7, "feat: shared", "alice")}, Closed: map[string]bool{}}
@@ -319,13 +359,14 @@ func TestSlackReactsAfterFirstSync(t *testing.T) {
 	sl.set(match(old, "U2", "bob", "C1", "reviews", "o/api/pull/7") + "," + match(mine, "U1", "me", "C1", "reviews", "o/api/pull/7"))
 	refresh(t, co)
 	_, _ = st.StartRun("o/api#7", "abc", "claude", "", 0)
+	co.ReleaseRole()
 
 	c, _ := fake.Client()
 	next := core.New(cfg, c, st)
 	next.UseSlack(sl.client(t))
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
-	go next.Run(ctx)
+	next.Run(ctx)
 	time.Sleep(1500 * time.Millisecond)
 	if calls := sl.took(); len(calls) != 0 {
 		t.Fatalf("before the first sync: %q", calls)
@@ -351,7 +392,7 @@ func TestSlackRefusedEmojiNotRetried(t *testing.T) {
 	refresh(t, co)
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
-	go co.Run(ctx)
+	co.Run(ctx)
 
 	id, _ := st.StartRun("o/api#7", "abc", "claude", "", 0)
 	waitSlack(t, sl, "the review starting", "reactions.add C1 "+ts+" eyez")
@@ -364,8 +405,8 @@ func TestSlackRefusedEmojiNotRetried(t *testing.T) {
 	}
 }
 
-// Reviewing from prowl swaps the emoji another prowl put up since this
-// one's last sync.
+// Reviewing from a prowl without the role swaps the emoji the one with it
+// put up since this one's last sync.
 func TestSlackReviewAfterAnotherProwlReacted(t *testing.T) {
 	ts := fmt.Sprintf("%d.000100", time.Now().Add(-time.Minute).Unix())
 	fake := &ghtest.GitHub{Others: []gh.PR{ghtest.PR("api", 7, "feat: shared", "alice")}, Closed: map[string]bool{}}
@@ -377,6 +418,7 @@ func TestSlackReviewAfterAnotherProwlReacted(t *testing.T) {
 	co.UseSlack(sl.client(t))
 	sl.set(match(ts, "U2", "bob", "C1", "reviews", "o/api/pull/7"))
 	refresh(t, co)
+	co.ReleaseRole()
 
 	c, _ := fake.Client()
 	other := core.New(cfg, c, st)
@@ -384,7 +426,7 @@ func TestSlackReviewAfterAnotherProwlReacted(t *testing.T) {
 	refresh(t, other)
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
-	go other.Run(ctx)
+	other.Run(ctx)
 	_, _ = st.StartRun("o/api#7", "abc", "claude", "", 0)
 	waitSlack(t, sl, "another prowl's review starting", "reactions.add C1 "+ts+" eyes")
 
@@ -437,6 +479,8 @@ func TestSlackReply(t *testing.T) {
 // Reactions on the share of your PR, yours aside, show in its reason as
 // each person's strongest emoji, and a change notifies. A share posted by
 // you counts.
+// A prowl that learned who you are in Slack before it had the role still
+// reads the workspace's people once it has it.
 func TestReactionsOnYours(t *testing.T) {
 	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
 	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.PR("api", 3, "feat: mine", "me")}}
@@ -449,6 +493,11 @@ func TestReactionsOnYours(t *testing.T) {
 	sl.set(match(ts, "U1", "me", "C1", "reviews", "o/api/pull/3"))
 	sl.react(`{"name":"eyes","users":["U3","U1","U2"]},{"name":"white_check_mark","users":["U2"]},{"name":"tada","users":["U3"]}`)
 
+	co.ReleaseRole()
+	refresh(t, co)
+	if !co.TakeRole() {
+		t.Fatal("the prowl didn't take the role back")
+	}
 	changes, err := co.Refresh(t.Context())
 	if err != nil || co.SlackErr() != nil {
 		t.Fatal(err, co.SlackErr())

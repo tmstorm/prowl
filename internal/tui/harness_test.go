@@ -105,7 +105,7 @@ func start(t *testing.T, cfg config.Config, c *gh.Client, st *store.Store, sl *s
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	t.Cleanup(stop)
-	go co.Run(ctx)
+	co.Run(ctx)
 	return co
 }
 
