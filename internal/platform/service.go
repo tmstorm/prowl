@@ -1,6 +1,9 @@
 package platform
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"os"
@@ -24,7 +27,7 @@ func InstallService(exe string) (string, error) {
 	switch runtime.GOOS {
 	case "darwin":
 		path := launchdPlist()
-		if err := writeFile(path, fmt.Sprintf(plist, serviceName, html.EscapeString(exe))); err != nil {
+		if err := writeFile(path, plistFor(exe)); err != nil {
 			return "", err
 		}
 		domain := fmt.Sprintf("gui/%d", os.Getuid())
@@ -34,8 +37,7 @@ func InstallService(exe string) (string, error) {
 		}
 		return "launchd agent " + path, nil
 	case "windows":
-		action := fmt.Sprintf(`powershell.exe -NoProfile -WindowStyle Hidden -Command "& '%s' watch"`, strings.ReplaceAll(exe, "'", "''"))
-		if err := run("reg", "add", runKey, "/v", serviceName, "/t", "REG_SZ", "/d", action, "/f"); err != nil {
+		if err := setRunKey(exe); err != nil {
 			return "", err
 		}
 		cmd := exec.Command(exe, "watch")
@@ -46,7 +48,7 @@ func InstallService(exe string) (string, error) {
 		return "startup entry " + serviceName + " in " + runKey, nil
 	}
 	path := systemdUnit()
-	if err := writeFile(path, fmt.Sprintf(unit, systemdQuote(exe))); err != nil {
+	if err := writeFile(path, unitFor(exe)); err != nil {
 		return "", err
 	}
 	if err := run("systemctl", "--user", "daemon-reload"); err != nil {
@@ -56,6 +58,130 @@ func InstallService(exe string) (string, error) {
 		return "", err
 	}
 	return "systemd user service " + path, nil
+}
+
+// ErrOtherProwl is RefreshService's answer when the service runs another
+// prowl binary than the one asking, such as a build from source run by hand.
+var ErrOtherProwl = errors.New("the service runs another prowl")
+
+// ErrEdited is RefreshService's answer when the service was changed since
+// prowl last wrote it, by hand or by another prowl.
+var ErrEdited = errors.New("the service was edited since prowl wrote it")
+
+// ServiceSum identifies a service definition, so prowl can tell later
+// whether the one installed is still what it wrote.
+func ServiceSum(exe string) string { return sum(serviceFor(exe)) }
+
+// RefreshService rewrites the installed service in the form this prowl
+// writes for exe, when it is what prowl last wrote (last, from ServiceSum)
+// and differs. It restarts nothing: the prowl asking already runs the new
+// binary. It returns the sum of the service prowl wrote that is installed
+// now, for the next refresh, and whether it rewrote it. Nothing installed is
+// nothing to do; one that runs another binary is ErrOtherProwl, and one
+// edited since is ErrEdited. On Windows it first moves prowl 0.1.0's logon
+// task to the startup entry, when it may delete the task; otherwise the task
+// stays, so prowl watch never starts twice at login.
+func RefreshService(exe, last string) (string, bool, error) {
+	if runtime.GOOS == "windows" {
+		if out, err := exec.Command("schtasks", "/Query", "/TN", serviceName, "/XML").Output(); err == nil {
+			if !strings.Contains(string(out), exe+"'") {
+				return last, false, ErrOtherProwl
+			}
+			if err := run("schtasks", "/Delete", "/F", "/TN", serviceName); err != nil {
+				return last, false, fmt.Errorf("the logon task prowl 0.1.0 made stays, since it can't be deleted without admin: %w", err)
+			}
+			if err := setRunKey(exe); err != nil {
+				return last, true, fmt.Errorf("deleted the logon task prowl 0.1.0 made, but couldn't add the startup entry; prowl service install adds it: %w", err)
+			}
+			return ServiceSum(exe), true, nil
+		}
+	}
+	got, want := installedService(), serviceFor(exe)
+	switch {
+	case got == "":
+		return last, false, nil
+	case got == want:
+		return sum(want), false, nil
+	case !strings.Contains(got, serviceNames(exe)):
+		return last, false, ErrOtherProwl
+	case sum(got) != last:
+		return last, false, ErrEdited
+	}
+	var err error
+	switch runtime.GOOS {
+	case "darwin":
+		err = writeFile(launchdPlist(), want)
+	case "windows":
+		err = setRunKey(exe)
+	default:
+		if err = writeFile(systemdUnit(), want); err == nil {
+			return sum(want), true, run("systemctl", "--user", "daemon-reload")
+		}
+	}
+	if err != nil {
+		return last, false, err
+	}
+	return sum(want), true, nil
+}
+
+// installedService is the service definition installed, or "": the unit
+// or plist, or the startup entry's command.
+func installedService() string {
+	switch runtime.GOOS {
+	case "darwin":
+		b, _ := os.ReadFile(launchdPlist())
+		return string(b)
+	case "windows":
+		out, _ := exec.Command("reg", "query", runKey, "/v", serviceName).Output()
+		_, cmd, _ := strings.Cut(string(out), "REG_SZ")
+		return strings.TrimSpace(cmd)
+	}
+	b, _ := os.ReadFile(systemdUnit())
+	return string(b)
+}
+
+// serviceFor is the service definition this prowl writes for exe.
+func serviceFor(exe string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return plistFor(exe)
+	case "windows":
+		return runCommand(exe)
+	}
+	return unitFor(exe)
+}
+
+// serviceNames is how a service definition spells exe.
+func serviceNames(exe string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "<string>" + html.EscapeString(exe) + "</string>"
+	case "windows":
+		return runQuote(exe)
+	}
+	return systemdQuote(exe)
+}
+
+func sum(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+func unitFor(exe string) string { return fmt.Sprintf(unit, systemdQuote(exe)) }
+
+func plistFor(exe string) string { return fmt.Sprintf(plist, serviceName, html.EscapeString(exe)) }
+
+// runCommand is the startup entry's command, which runs exe watch with no
+// window.
+func runCommand(exe string) string {
+	return fmt.Sprintf(`powershell.exe -NoProfile -WindowStyle Hidden -Command "& %s watch"`, runQuote(exe))
+}
+
+// runQuote quotes a path for PowerShell.
+func runQuote(exe string) string { return "'" + strings.ReplaceAll(exe, "'", "''") + "'" }
+
+func setRunKey(exe string) error {
+	return run("reg", "add", runKey, "/v", serviceName, "/t", "REG_SZ", "/d", runCommand(exe), "/f")
 }
 
 // UninstallService stops the background `prowl watch` and removes what

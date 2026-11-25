@@ -21,7 +21,7 @@ prowl service install
 prowl service uninstall
 ```
 
-`install` runs `prowl watch` at login and starts it now: a systemd user service on Linux, a launchd agent on macOS, and on Windows an entry in your startup programs (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, listed under Task Manager's Startup apps), which needs no admin. `uninstall` stops it and removes it.
+`install` runs `prowl watch` at login and starts it now: a systemd user service on Linux, a launchd agent on macOS, and on Windows an entry in your startup programs (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, listed under Task Manager's Startup apps), which needs no admin. `uninstall` stops it and removes it. When an update changes how prowl sets the service up, `prowl watch` rewrites it the next time it starts, if it runs the same binary and nobody edited it since prowl wrote it; nothing restarts. A service you edited stays as it is, and `prowl service install` writes it again. On Windows that also moves prowl 0.1.0's logon task to the startup entry, when it can delete the task without admin.
 
 On Linux, check it with `systemctl --user status prowl-watch` and follow its log with `journalctl --user -u prowl-watch -f`. It's your user's service, so no `sudo`.
 

@@ -766,7 +766,9 @@ const (
 
 // Watching makes this process `prowl watch`, which is favored for the
 // background work (see Run). It says it runs, then waits until it holds the
-// role: a UI that has it hands it over between syncs. waiting, when not nil,
+// role: a UI that has it hands it over between syncs. Then it brings the
+// installed service up to date with this prowl, which an update may have
+// changed. waiting, when not nil,
 // is called once if it has to wait. It returns ctx's error if ctx ends first.
 func (co *Core) Watching(ctx context.Context, waiting func()) error {
 	if err := os.MkdirAll(config.DataDir(), 0o700); err != nil {
@@ -784,6 +786,7 @@ func (co *Core) Watching(ctx context.Context, waiting func()) error {
 			co.mu.Lock()
 			co.role, co.beat = l, time.Now()
 			co.mu.Unlock()
+			co.refreshService()
 			return nil
 		}
 		if !errors.Is(err, platform.ErrLocked) {
@@ -797,6 +800,26 @@ func (co *Core) Watching(ctx context.Context, waiting func()) error {
 			return ctx.Err()
 		case <-time.After(time.Second):
 		}
+	}
+}
+
+// refreshService brings the installed service up to date with this prowl,
+// when it runs this prowl and is as prowl last wrote it.
+func (co *Core) refreshService() {
+	exe, last := Executable(), co.st.ServiceSum()
+	sum, done, err := platform.RefreshService(exe, last)
+	if sum != last {
+		logErr("remember the background service", co.st.SetServiceSum(sum))
+	}
+	switch {
+	case errors.Is(err, platform.ErrOtherProwl):
+		slog.Info("the background service runs another prowl; prowl service install points it at this one", "exe", exe)
+	case errors.Is(err, platform.ErrEdited):
+		slog.Info("the background service was edited since prowl wrote it, so prowl leaves it; prowl service install writes it again", "exe", exe)
+	case err != nil:
+		logErr("refresh the background service", err)
+	case done:
+		slog.Info("refreshed the background service", "exe", exe)
 	}
 }
 

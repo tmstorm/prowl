@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/ghtest"
+	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
@@ -980,6 +982,37 @@ func read(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// Once prowl watch holds the role, it checks the installed service, and
+// remembers one prowl wrote for it, so it can bring it up to date after the
+// next update that changes it.
+func TestWatchingRefreshesService(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd is Linux only")
+	}
+	ui, st := newCore(t, &ghtest.GitHub{})
+	ui.ReleaseRole()
+	if _, err := ui.SetService(true); err == nil {
+		t.Fatal("systemctl isn't on PATH, so installing should fail")
+	}
+	exe := core.Executable()
+	path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "systemd", "user", "prowl-watch.service")
+	unit, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ServiceSum() != "" {
+		t.Fatal("a failed install was remembered")
+	}
+	watch := core.New(config.Default(), nil, st)
+	if err := watch.Watching(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(watch.StopWatching)
+	if got, _ := os.ReadFile(path); string(got) != string(unit) || st.ServiceSum() != platform.ServiceSum(exe) {
+		t.Fatalf("the up-to-date unit should be remembered as is:\n%s", got)
+	}
 }
 
 // One prowl has the role. A UI hands it to a prowl watch that starts,

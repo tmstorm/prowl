@@ -174,6 +174,10 @@ CREATE TABLE IF NOT EXISTS slack_search (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   at INTEGER NOT NULL      -- the last search for shares that succeeded
 );
+CREATE TABLE IF NOT EXISTS service (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  sum TEXT NOT NULL        -- the service definition prowl last wrote, as platform.ServiceSum
+);
 `
 
 func Open(dir string) (*Store, error) {
@@ -1239,6 +1243,19 @@ func (s *Store) Watcher() (int, time.Time) {
 	var pid, at int64
 	_ = s.db.QueryRow(`SELECT pid, at FROM watcher WHERE id = 1`).Scan(&pid, &at)
 	return int(pid), time.Unix(at, 0)
+}
+
+// SetServiceSum records the service definition prowl last wrote.
+func (s *Store) SetServiceSum(sum string) error {
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO service (id, sum) VALUES (1, ?)`, sum)
+	return wrap("set service sum", err)
+}
+
+// ServiceSum is the service definition prowl last wrote, or "".
+func (s *Store) ServiceSum() string {
+	var sum string
+	_ = s.db.QueryRow(`SELECT sum FROM service WHERE id = 1`).Scan(&sum)
+	return sum
 }
 
 // SlackShare is a PR link posted in Slack.
