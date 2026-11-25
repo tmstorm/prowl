@@ -36,7 +36,12 @@ func newCore(t *testing.T, fake *ghtest.GitHub) (*core.Core, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return core.New(config.Default(), c, st), st
+	co := core.New(config.Default(), c, st)
+	if !co.TakeRole() {
+		t.Fatal("a lone prowl didn't take the role")
+	}
+	t.Cleanup(co.ReleaseRole)
+	return co, st
 }
 
 func refresh(t *testing.T, co *core.Core) core.Inbox {
@@ -172,8 +177,12 @@ func TestChangesSinceLastRun(t *testing.T) {
 		t.Fatalf("the first sync ever should report the PR that needs you: %v", changes)
 	}
 	fake.PRs = append(fake.PRs, ghtest.Requested(ghtest.PR("api", 2, "fix: two", "alice"), "me"))
+	co.ReleaseRole()
 	c, _ := fake.Client()
-	changes, err := core.New(config.Default(), c, st).Refresh(t.Context())
+	next := core.New(config.Default(), c, st)
+	next.TakeRole()
+	t.Cleanup(next.ReleaseRole)
+	changes, err := next.Refresh(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +340,7 @@ func TestRunReportsReviews(t *testing.T) {
 	co, st := newCore(t, &ghtest.GitHub{})
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
-	go co.Run(ctx)
+	co.Run(ctx)
 	id, _ := st.StartRun("o/api#1", "abc", "claude", "", 0)
 	_ = st.FinishRun(id, "s1", "looks fine", "", nil)
 	waitEvent(t, co, core.RunsChanged)
@@ -349,7 +358,7 @@ func TestRunShowsLocalReviewStartedElsewhere(t *testing.T) {
 	t.Setenv("PATH", path)
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
-	go co.Run(ctx)
+	co.Run(ctx)
 	key := gh.LocalKey("o/api", "feat/x")
 	if err := st.SaveLocal(store.Local{Key: key, Repo: "o/api", Branch: "feat/x", Dir: dir, Base: "main", At: time.Now()}); err != nil {
 		t.Fatal(err)
@@ -640,7 +649,7 @@ func TestAutoSummary(t *testing.T) {
 	runs := summarizer(t, "")
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
-	go co.Run(ctx)
+	co.Run(ctx)
 	if e := waitEvent(t, co, core.SummaryChanged); e.Err == nil || e.Key != "o/api#7" {
 		t.Fatalf("want a failed summary of o/api#7, got %+v", e)
 	}
@@ -715,7 +724,7 @@ func TestConfigChanges(t *testing.T) {
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
-	go co.Run(ctx)
+	co.Run(ctx)
 	time.Sleep(1100 * time.Millisecond)
 	edited, _ := config.Load()
 	edited.Theme = "nord"
@@ -973,47 +982,152 @@ func read(t *testing.T, path string) string {
 	return string(b)
 }
 
-// While another process is prowl watch, it sends the notifications and a
-// second prowl watch is turned away. One that stopped (or ended, which drops
-// its lock) doesn't count, nor does a stale process ID left in the store, and
-// the watcher itself never counts. A lock held only for a moment is waited
-// out.
-func TestWatchRunning(t *testing.T) {
-	co, st := newCore(t, &ghtest.GitHub{})
-	if co.WatchRunning() {
-		t.Fatal("no watcher has run yet")
+// One prowl has the role. A UI hands it to a prowl watch that starts,
+// between syncs, and doesn't take it back while the watcher runs. A watcher
+// restarting into an update keeps its claim; one that stopped, or stopped
+// saying it runs, gives it up.
+func TestRole(t *testing.T) {
+	ui, st := newCore(t, &ghtest.GitHub{})
+	watch := core.New(config.Default(), nil, st)
+	waited := make(chan error)
+	told := false
+	go func() { waited <- watch.Watching(t.Context(), func() { told = true }) }()
+	time.Sleep(200 * time.Millisecond)
+	if !ui.WatchRunning() {
+		t.Fatal("a waiting prowl watch should count as running")
 	}
-	other := core.New(config.Default(), nil, st)
-	if err := other.Watching(); err != nil {
-		t.Fatal(err)
+	if ui.TakeRole() {
+		t.Fatal("the UI kept the role while prowl watch waits for it")
 	}
-	t.Cleanup(co.StopWatching)
-	if !co.WatchRunning() || other.WatchRunning() {
-		t.Fatal("the other watcher should count, for everyone but itself")
+	if err := <-waited; err != nil || !told {
+		t.Fatalf("prowl watch should have waited, then taken the role: %v", err)
 	}
-	if err := co.Watching(); !errors.Is(err, core.ErrWatching) {
-		t.Fatalf("a second prowl watch should be turned away: %v", err)
-	}
-	other.StopWatching()
-	if co.WatchRunning() || st.Watcher() != 0 {
-		t.Fatal("a watcher restarting on an update should give up its claim")
-	}
-	_ = st.SetWatcher(1)
-	if co.WatchRunning() {
-		t.Fatal("a stale process ID shouldn't count")
-	}
-	if err := co.Watching(); err != nil || co.WatchRunning() {
-		t.Fatalf("this process as the watcher: %v", err)
+	if ui.TakeRole() {
+		t.Fatal("the UI took the role back from prowl watch")
 	}
 
-	co.StopWatching()
-	probe := core.New(config.Default(), nil, st)
-	if err := probe.Watching(); err != nil {
+	watch.Restarting()
+	if !ui.WatchRunning() || ui.TakeRole() {
+		t.Fatal("the UI took the role while prowl watch restarts")
+	}
+	if err := watch.Watching(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	time.AfterFunc(300*time.Millisecond, probe.StopWatching)
-	if err := co.Watching(); err != nil {
-		t.Fatalf("a lock held for a moment, as a UI checking for a watcher does, should be waited out: %v", err)
+	watch.StopWatching()
+	if ui.WatchRunning() || !ui.TakeRole() {
+		t.Fatal("the UI should take the role once prowl watch stops")
+	}
+	ui.ReleaseRole()
+	_ = st.SetWatcher(os.Getpid(), time.Now().Add(-time.Minute))
+	if ui.WatchRunning() || !ui.TakeRole() {
+		t.Fatal("a prowl watch that stopped saying it runs shouldn't count")
+	}
+}
+
+// Only the prowl with the role syncs for everyone: it saves the inbox and
+// measures changes from the stored snapshot, so a UI's sync or prowl list
+// never uses a change up before it is notified. Another prowl fetches for
+// its own screen, then takes up the inbox the one with the role saves.
+func TestOnlyTheRoleSyncsForEveryone(t *testing.T) {
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me")}}
+	holder, st := newCore(t, fake)
+	refresh(t, holder)
+	c, _ := fake.Client()
+	other := core.New(config.Default(), c, st)
+	if other.TakeRole() {
+		t.Fatal("a second prowl took the role")
+	}
+	saved := st.InboxAt()
+	fake.PRs = append(fake.PRs, ghtest.Requested(ghtest.PR("api", 2, "fix: two", "alice"), "me"))
+	if changes, _ := other.Refresh(t.Context()); len(changes) != 0 {
+		t.Fatalf("a prowl without the role took changes: %v", changes)
+	}
+	if _, ok := find(other.Inbox(), "o/api#2"); !ok {
+		t.Fatal("a prowl without the role should still fetch for its screen")
+	}
+	if !st.InboxAt().Equal(saved) {
+		t.Fatal("a prowl without the role saved the inbox")
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	fake.PRs = append(fake.PRs, ghtest.Requested(ghtest.PR("api", 3, "fix: three", "alice"), "me"))
+	changes, _ := holder.Refresh(t.Context())
+	if len(changes) != 2 {
+		t.Fatalf("the prowl with the role should see both new PRs: %v", changes)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if !other.Follow(t.Context()) {
+		t.Fatal("the other prowl didn't take up the saved inbox")
+	}
+	if _, ok := find(other.Inbox(), "o/api#3"); !ok {
+		t.Fatal("the saved inbox is missing the PR the role's sync found")
+	}
+	if other.Follow(t.Context()) {
+		t.Fatal("the same saved inbox was taken up twice")
+	}
+}
+
+// Run takes the role before it returns, so a UI's first sync is already the
+// one everyone sees, not one for its screen alone.
+func TestRunTakesRoleFirst(t *testing.T) {
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me")}}
+	first, st := newCore(t, fake)
+	first.ReleaseRole()
+	c, _ := fake.Client()
+	ui := core.New(config.Default(), c, st)
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	ui.Run(ctx)
+	refresh(t, ui)
+	if st.InboxAt().IsZero() {
+		t.Fatal("the first sync after Run wasn't the one with the role")
+	}
+}
+
+// A prowl whose Run has ended gives the role up though it lives on, as a
+// TUI does on Windows while the one it reopened as runs.
+func TestRunEndGivesRoleUp(t *testing.T) {
+	first, st := newCore(t, &ghtest.GitHub{})
+	ctx, stop := context.WithCancel(t.Context())
+	first.Run(ctx)
+	next := core.New(config.Default(), nil, st)
+	if next.TakeRole() {
+		t.Fatal("the role was free while the first prowl's Run ran")
+	}
+	stop()
+	for start := time.Now(); !next.TakeRole(); time.Sleep(10 * time.Millisecond) {
+		if time.Since(start) > 2*time.Second {
+			t.Fatal("the role stayed with a prowl whose Run ended")
+		}
+	}
+	next.ReleaseRole()
+}
+
+// A peeked repo's PRs show beside the inbox, but are never saved with it
+// or notified.
+func TestPeekStaysOnScreen(t *testing.T) {
+	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me")},
+		Others: []gh.PR{ghtest.PR("web", 9, "feat: elsewhere", "bob")}}
+	co, st := newCore(t, fake)
+	refresh(t, co)
+	co.Peek("o/web")
+	changes, err := co.Refresh(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := find(co.Inbox(), "o/web#9"); !ok {
+		t.Fatal("the peeked PR isn't in the inbox")
+	}
+	if slices.ContainsFunc(changes, func(p core.PR) bool { return p.Key == "o/web#9" }) {
+		t.Fatal("a peeked PR was notified")
+	}
+	other := core.New(config.Default(), nil, st)
+	if _, ok := find(other.Inbox(), "o/web#9"); ok {
+		t.Fatal("a peeked PR was saved with the inbox")
+	}
+	co.Unpeek()
+	if _, ok := find(refresh(t, co), "o/web#9"); ok {
+		t.Fatal("the peeked PR outlived the peek")
 	}
 }
 
@@ -1050,40 +1164,6 @@ func TestDraftWithReplies(t *testing.T) {
 	r, _ := st.Run(id)
 	if !r.Replies[0].Posted || r.Replies[1].Posted || !r.Replies[1].Excluded || r.Unsent() != 0 {
 		t.Fatalf("replies after submit: %+v", r.Replies)
-	}
-}
-
-// Only the process that notifies moves the snapshot changes are measured
-// from: while prowl watch runs, a UI's sync or prowl list doesn't use up a
-// change before the watcher has notified it.
-func TestOnlyTheNotifierTakesChanges(t *testing.T) {
-	fake := &ghtest.GitHub{PRs: []gh.PR{ghtest.Requested(ghtest.PR("api", 1, "fix: one", "alice"), "me")}}
-	ui, st := newCore(t, fake)
-	refresh(t, ui)
-	c, _ := fake.Client()
-	list := core.New(config.Default(), c, st)
-	list.Quiet()
-	fake.PRs = append(fake.PRs, ghtest.Requested(ghtest.PR("api", 2, "fix: two", "alice"), "me"))
-	if changes, _ := list.Refresh(t.Context()); len(changes) != 0 {
-		t.Fatalf("prowl list reported changes: %v", changes)
-	}
-
-	other := core.New(config.Default(), c, st)
-	if err := other.Watching(); err != nil {
-		t.Fatal(err)
-	}
-	if changes, _ := ui.Refresh(t.Context()); len(changes) != 0 {
-		t.Fatalf("the UI took changes while a watcher runs: %v", changes)
-	}
-	other.StopWatching()
-
-	watch := core.New(config.Default(), c, st)
-	if err := watch.Watching(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(watch.StopWatching)
-	if changes, _ := watch.Refresh(t.Context()); len(changes) != 1 || changes[0].Key != "o/api#2" {
-		t.Fatalf("the watcher should still see the new PR: %v", changes)
 	}
 }
 

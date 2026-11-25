@@ -113,23 +113,33 @@ func (co *Core) SlackErr() error {
 // Each search reaches this far back past the last one.
 const slackIndexLag = 5 * time.Minute
 
+// slackIdentity learns who you are in Slack, once. Only a sync, which holds
+// co.syncing, sets co.slackMe.
+func (co *Core) slackIdentity(ctx context.Context, sl *slack.Client) error {
+	if co.slackMe != "" {
+		return nil
+	}
+	id, err := sl.AuthTest(ctx)
+	if err != nil {
+		return err
+	}
+	co.mu.Lock()
+	co.slackMe, co.slackWho, co.slackTeam = id.UserID, id.User+" in "+id.Team, id.TeamID
+	co.mu.Unlock()
+	return nil
+}
+
 // syncSlack keeps the PR links posted in your channels and DMs since the last
 // search, with each PR's node ID and its key as GitHub spells it. A PR shared
 // by someone else that prowl hasn't seen shared before is looked up once, and
 // returned so this sync shows it. Only a sync, which holds co.syncing, sets
 // co.slackMe, so the sync reads it without co.mu.
 func (co *Core) syncSlack(ctx context.Context, sl *slack.Client, cfg config.Config, kept []store.SlackShare) ([]gh.PR, error) {
-	if co.slackMe == "" {
-		id, err := sl.AuthTest(ctx)
-		if err != nil {
-			return nil, err
-		}
-		co.mu.Lock()
-		co.slackMe, co.slackWho, co.slackTeam = id.UserID, id.User+" in "+id.Team, id.TeamID
-		co.mu.Unlock()
-		_, err = co.loadSlackUsers(ctx, sl)
-		logErr("load Slack users", err)
+	if err := co.slackIdentity(ctx, sl); err != nil {
+		return nil, err
 	}
+	_, err := co.loadSlackUsers(ctx, sl)
+	logErr("load Slack users", err)
 	since := co.st.SlackSearched()
 	if since.IsZero() {
 		since = time.Now().AddDate(0, 0, -7)
@@ -259,10 +269,12 @@ func (co *Core) withShares(in *synced, cfg config.Config, newlyShared []gh.PR) m
 }
 
 // reconcileReactions keeps your emoji on each shared PR's newest share in
-// step with your review, wherever you made it. It reads the emoji another
-// prowl may have set from the store, and waits for the first sync to learn
-// who you are in Slack, so your own shares never count. Only a share whose
-// emoji should change costs Slack calls.
+// step with your review, wherever you made it. Only the prowl with the role
+// does, so two never undo each other, and never on a PR only opened or
+// peeked at. It reads the emoji a review you posted set from the store, and
+// waits for the first sync to learn who you are in Slack, so your own
+// shares never count. Only a share whose emoji should change costs Slack
+// calls.
 func (co *Core) reconcileReactions(ctx context.Context, sl *slack.Client) error {
 	co.reacting.Lock()
 	defer co.reacting.Unlock()
@@ -283,17 +295,18 @@ func (co *Core) reconcileReactions(ctx context.Context, sl *slack.Client) error 
 		return err
 	}
 	co.mu.Lock()
-	cfg, viewer, me := co.cfg, co.inbox.Viewer, co.slackMe
+	cfg, viewer, me, hold := co.cfg, co.inbox.Viewer, co.slackMe, co.role != nil
 	shares := newestShares(cfg, me, all)
 	items := slices.Clone(co.inbox.Items)
+	extras := maps.Clone(co.extras)
 	co.mu.Unlock()
-	if cfg.SlackAfterReview != "react" || me == "" {
+	if !hold || cfg.SlackAfterReview != "react" || me == "" {
 		return nil
 	}
 	var errs []error
 	for _, it := range items {
 		s, ok := shares[it.PR.Key()]
-		if !ok || it.PR.Author.Name() == viewer {
+		if !ok || extras[it.PR.Key()] || it.PR.Author.Name() == viewer {
 			continue
 		}
 		key := it.PR.Key()
@@ -329,8 +342,8 @@ func (co *Core) reactNow(ctx context.Context) {
 // it: your latest review after it, else reviewing from when you start an AI
 // review or an on-demand extension on it, or while you have inline comments
 // pending, else none. runs and jobs are read from the store, not co.runs:
-// prowl watch syncs without Run, so its co.runs never changes. A comment review counts when it has a body or starts
-// a thread; replying in someone else's thread doesn't. A review's emoji
+// another prowl may have started them. A comment review counts when it has
+// a body or starts a thread; replying in someone else's thread doesn't. A review's emoji
 // stays until a newer review or until GitHub dismisses yours: a prowl that
 // hasn't synced since you posted one doesn't see it yet.
 func reaction(cfg config.Config, it inbox.Item, me string, s store.SlackShare, pending bool, runs []*store.Run, jobs []*store.ExtensionJob) string {

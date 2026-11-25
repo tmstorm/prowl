@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"reflect"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/tmstorm/prowl/internal/agent"
@@ -36,6 +36,7 @@ const (
 	ConfigChanged                   // the config file was edited outside prowl
 	ReleaseChanged                  // the hourly update check ran, or an update moved on a step
 	LocalsChanged                   // a local review started by another prowl joined the inbox
+	Replaced                        // the prowl binary was replaced, by an update; a restart runs it
 )
 
 // Events delivers events to one reader. An event that finds the buffer full
@@ -49,19 +50,70 @@ func (co *Core) emit(e Event) {
 	}
 }
 
-// Run syncs the inbox every poll_interval, watches agent reviews and keeps
-// your Slack emoji in step with them as they start and end, writes
-// summaries when auto_summary is on, checks the logins every half hour,
-// picks up edits to the config file and checks for updates (installing them
-// when no prowl watch runs to do it), until ctx ends. Each is reported as
-// events. The first sync is the caller's. It also prunes orphaned review
-// worktrees and refs once, and what is kept for closed PRs at the start and
-// after each sync.
+// Run starts this process's part of the background work, which goes on
+// until ctx ends and reports each step as events. It returns once it has
+// taken the role or found another prowl has it, so the caller's first sync,
+// which is the caller's to make, knows which it is.
+//
+// One prowl at a time has the role, the lock on watch.lock: prowl watch
+// whenever it runs, else the first UI to take it. That one syncs every
+// poll_interval, sends the desktop notifications and login reminders, keeps
+// your Slack emoji in step with your reviews as they start and end, installs
+// updates, and prunes orphaned review worktrees and refs at the start and
+// what is kept for closed PRs after each sync. Every other prowl takes up
+// the inbox it saves, so no two of them write the same thing.
+//
+// When ctx ends, Run gives the role up, so another prowl can take it on
+// while this process lives on: a TUI reopening on Windows waits for the new
+// one it starts.
+//
+// Every prowl watches agent reviews, checks the logins every half hour,
+// picks up edits to the config file and says when its binary was replaced,
+// again each poll_interval while it runs the old one.
+// A UI also writes summaries when auto_summary is on.
 func (co *Core) Run(ctx context.Context) {
-	var tasks sync.WaitGroup
-	tasks.Go(co.PruneOrphans)
-	tasks.Go(func() { co.PruneClosed(ctx) })
-	tasks.Go(func() {
+	co.claimRole()
+	if co.holdsRole() {
+		go co.PruneOrphans()
+		go co.PruneClosed(ctx)
+	}
+	go func() {
+		exe := Executable()
+		built, _ := os.Stat(exe)
+		var told time.Time
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				co.releaseRole()
+				return
+			case <-tick.C:
+				co.claimRole()
+				if co.loadRuns() {
+					if co.showLocals() {
+						co.emit(Event{Kind: LocalsChanged})
+					}
+					co.emit(Event{Kind: RunsChanged})
+				}
+				co.pendingChanged()
+				if changed, err := co.reloadConfig(); changed {
+					co.emit(Event{Kind: ConfigChanged, Err: err})
+				}
+				co.mu.Lock()
+				watch := co.watch
+				co.mu.Unlock()
+				if !watch {
+					co.autoSummaries(ctx)
+				}
+				if updated(exe, built) && time.Since(told) > co.Config().PollEvery() {
+					told = time.Now()
+					co.emit(Event{Kind: Replaced})
+				}
+			}
+		}
+	}()
+	go func() {
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
@@ -69,20 +121,13 @@ func (co *Core) Run(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-tick.C:
-				if co.loadRuns() {
-					if co.showLocals() {
-						co.emit(Event{Kind: LocalsChanged})
-					}
-					co.emit(Event{Kind: RunsChanged})
+				if co.follow(ctx) {
+					co.emit(Event{Kind: InboxChanged})
 				}
-				if changed, err := co.reloadConfig(); changed {
-					co.emit(Event{Kind: ConfigChanged, Err: err})
-				}
-				co.autoSummaries(ctx)
 			}
 		}
-	})
-	tasks.Go(func() {
+	}()
+	go func() {
 		for {
 			select {
 			case <-ctx.Done():
@@ -91,24 +136,27 @@ func (co *Core) Run(ctx context.Context) {
 				co.reactNow(ctx)
 			}
 		}
-	})
-	tasks.Go(func() {
+	}()
+	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(co.Config().PollEvery()):
+			case <-co.syncWake:
+			}
+			if co.holdsRole() {
 				co.emit(Event{Kind: Syncing})
 				changes, err := co.Refresh(ctx)
 				co.emit(Event{Kind: InboxChanged, Changes: changes, Err: err})
 				co.PruneClosed(ctx)
 			}
 		}
-	})
-	tasks.Go(func() {
+	}()
+	go func() {
 		exe := Executable()
 		for {
-			if co.notifies() {
+			if co.holdsRole() {
 				_, err := co.AutoUpgrade(ctx, exe)
 				logErr("update", err)
 			}
@@ -119,10 +167,13 @@ func (co *Core) Run(ctx context.Context) {
 			case <-time.After(time.Hour):
 			}
 		}
-	})
-	tasks.Go(func() {
+	}()
+	go func() {
 		for {
 			co.CheckAuth(ctx)
+			if co.holdsRole() {
+				co.remindLogins()
+			}
 			co.emit(Event{Kind: AuthChanged})
 			select {
 			case <-ctx.Done():
@@ -130,8 +181,38 @@ func (co *Core) Run(ctx context.Context) {
 			case <-time.After(AuthEvery):
 			}
 		}
-	})
-	tasks.Wait()
+	}()
+}
+
+// updated reports whether the executable at exe has been replaced since
+// built was taken, and has stayed put for a few seconds so it isn't still
+// being written.
+func updated(exe string, built os.FileInfo) bool {
+	now, err := os.Stat(exe)
+	if err != nil || built == nil {
+		return false
+	}
+	return (now.ModTime() != built.ModTime() || now.Size() != built.Size()) && time.Since(now.ModTime()) > 10*time.Second
+}
+
+// pendingChanged has the prowl with the role bring the Slack emoji in step
+// when a PR gains or loses pending comments, in whichever prowl you wrote
+// them.
+func (co *Core) pendingChanged() {
+	if !co.holdsRole() {
+		return
+	}
+	keys, err := co.st.PendingKeys()
+	if err != nil {
+		return
+	}
+	co.mu.Lock()
+	same := maps.Equal(keys, co.pendingSeen)
+	co.pendingSeen = keys
+	co.mu.Unlock()
+	if !same {
+		co.wakeReactions()
+	}
 }
 
 // Review is an AI review run: an agent reviewing a PR at one commit. A

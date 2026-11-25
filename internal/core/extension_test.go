@@ -38,7 +38,7 @@ func TestOnDemandExtensions(t *testing.T) {
 
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
-	go co.Run(ctx)
+	co.Run(ctx)
 	id, err := st.StartExtensionJob("o/api#1", "factory", "abc", time.Hour)
 	if err != nil {
 		t.Fatal(err)

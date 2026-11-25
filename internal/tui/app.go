@@ -207,10 +207,7 @@ func New(co *core.Core) *Model {
 
 // ---- messages
 
-type refreshMsg struct {
-	changes []core.PR
-	err     error
-}
+type refreshMsg struct{ err error }
 type coreEvent core.Event
 
 type animTick struct{}
@@ -233,8 +230,8 @@ func (m *Model) refresh() tea.Cmd {
 	m.loading = true
 	co := m.core
 	return tea.Batch(func() tea.Msg {
-		changes, err := co.Refresh(context.Background())
-		return refreshMsg{changes, err}
+		_, err := co.Refresh(context.Background())
+		return refreshMsg{err}
 	}, m.startAnim())
 }
 
@@ -306,10 +303,8 @@ func (m *Model) askIcons() {
 	}
 }
 
-// applySync takes the inbox after a sync and notifies what changed, except
-// on the first sync, whose changes are on screen already, and while
-// prowl watch runs: it sends the notifications then.
-func (m *Model) applySync(changes []core.PR, err error) tea.Cmd {
+// applySync takes the inbox after a sync.
+func (m *Model) applySync(err error) tea.Cmd {
 	m.loading, m.waking = false, false
 	if err != nil {
 		m.syncErr = err
@@ -317,9 +312,6 @@ func (m *Model) applySync(changes []core.PR, err error) tea.Cmd {
 		return nil
 	}
 	m.syncErr = nil
-	if m.synced && !m.core.WatchRunning() {
-		core.Notify(changes, m.cfg.NotifyTimeout.Duration)
-	}
 	if !m.synced && m.core.FirstTime("service") && !m.core.Service() {
 		m.offerTip("service", "tip: <leader>, → Background notifications tells you about PRs while prowl is closed")
 	}
@@ -546,7 +538,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case refreshMsg:
-		return m, m.applySync(msg.changes, msg.err)
+		return m, m.applySync(msg.err)
 
 	case coreEvent:
 		switch msg.Kind {
@@ -554,7 +546,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			return m, tea.Batch(m.listen(), m.startAnim())
 		case core.InboxChanged:
-			return m, tea.Batch(m.listen(), m.applySync(msg.Changes, msg.Err))
+			return m, tea.Batch(m.listen(), m.applySync(msg.Err))
 		case core.RunsChanged:
 			m.loadRuns()
 		case core.LocalsChanged:
