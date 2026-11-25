@@ -231,7 +231,7 @@ func run(args []string) (err error) {
 		final, err := tea.NewProgram(tui.New(co), progOpts(cfg)...).Run()
 		if m, ok := final.(*tui.Model); ok && err == nil && m.Restart() {
 			stop()
-			return platform.Reopen(core.Executable())
+			return platform.Reopen(core.LaunchPath())
 		}
 		return err
 	case "watch":
@@ -332,7 +332,7 @@ func watch(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store
 			fmt.Println(stamp(), "prowl was updated; restarting")
 			co.Restarting()
 			restarted = true
-			err := platform.Restart(core.Executable())
+			err := platform.Restart(core.LaunchPath())
 			if err == nil {
 				return nil
 			}

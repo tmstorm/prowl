@@ -291,7 +291,7 @@ func (co *Core) SetService(on bool) (string, error) {
 	var what string
 	var err error
 	if on {
-		exe := Executable()
+		exe := LaunchPath()
 		if what, err = platform.InstallService(exe); err == nil {
 			logErr("remember the background service", co.st.SetServiceSum(platform.ServiceSum(exe)))
 		}

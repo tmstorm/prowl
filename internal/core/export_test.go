@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"os"
 	"time"
 
 	"github.com/tmstorm/prowl/internal/config"
@@ -33,3 +34,9 @@ func (co *Core) ReleaseRole() { co.releaseRole() }
 
 // Follow takes up the inbox the prowl with the role saved, as Run does.
 func (co *Core) Follow(ctx context.Context) bool { return co.follow(ctx) }
+
+// LaunchPathOf is LaunchPath for a prowl started as arg0.
+func LaunchPathOf(arg0 string) string { return launchPathOf(arg0) }
+
+// Updated reports whether the binary at exe was replaced since built.
+func Updated(exe string, built os.FileInfo) bool { return updated(exe, built) }

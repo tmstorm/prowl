@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jedisct1/go-minisign"
@@ -54,6 +55,39 @@ func Executable() string {
 		return real
 	}
 	return exe
+}
+
+// LaunchPath is the path prowl was started from, with symlinks kept, so a
+// package manager's link follows its upgrades while the resolved binary
+// stays in the old version's folder. The service runs it, and an update is
+// noticed and restarted into through it. It is worked out once, while the
+// path still leads to this binary, and is Executable when it doesn't.
+func LaunchPath() string { return launchPath() }
+
+var launchPath = sync.OnceValue(func() string { return launchPathOf(os.Args[0]) })
+
+// launchPathOf is arg0 made a path you'd run: absolute, or found on PATH
+// when it is a bare name.
+func launchPathOf(arg0 string) string {
+	p := arg0
+	if !strings.ContainsAny(arg0, `/\`) {
+		var err error
+		if p, err = exec.LookPath(arg0); err != nil {
+			return Executable()
+		}
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return Executable()
+	}
+	here, err := os.Stat(abs)
+	if err != nil {
+		return Executable()
+	}
+	if me, err := os.Stat(Executable()); err != nil || !os.SameFile(here, me) {
+		return Executable()
+	}
+	return abs
 }
 
 // BuildVersion is the running version: the release's, what `go install`

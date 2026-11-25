@@ -806,7 +806,7 @@ func (co *Core) Watching(ctx context.Context, waiting func()) error {
 // refreshService brings the installed service up to date with this prowl,
 // when it runs this prowl and is as prowl last wrote it.
 func (co *Core) refreshService() {
-	exe, last := Executable(), co.st.ServiceSum()
+	exe, last := LaunchPath(), co.st.ServiceSum()
 	sum, done, err := platform.RefreshService(exe, last)
 	if sum != last {
 		logErr("remember the background service", co.st.SetServiceSum(sum))

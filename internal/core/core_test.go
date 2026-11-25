@@ -996,7 +996,7 @@ func TestWatchingRefreshesService(t *testing.T) {
 	if _, err := ui.SetService(true); err == nil {
 		t.Fatal("systemctl isn't on PATH, so installing should fail")
 	}
-	exe := core.Executable()
+	exe := core.LaunchPath()
 	path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "systemd", "user", "prowl-watch.service")
 	unit, err := os.ReadFile(path)
 	if err != nil {

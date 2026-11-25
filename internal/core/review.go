@@ -78,7 +78,7 @@ func (co *Core) Run(ctx context.Context) {
 		go co.PruneClosed(ctx)
 	}
 	go func() {
-		exe := Executable()
+		exe := LaunchPath()
 		built, _ := os.Stat(exe)
 		var told time.Time
 		tick := time.NewTicker(time.Second)
