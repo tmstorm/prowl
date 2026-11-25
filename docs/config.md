@@ -85,7 +85,7 @@ These change only the TUI. See [The TUI](tui.md).
 | `mouse` | `true` | clicks and the wheel |
 | `editor` | `$VISUAL`, `$EDITOR`, then `vi` (`notepad` on Windows) | the editor for reviews and long comments |
 | `chat_mode` | `popup` | the agent chat in a window over prowl, or `fullscreen` |
-| `theme` | `dracula` | dracula, catppuccin, tokyonight, gruvbox, nord, rose-pine, kanagawa |
+| `theme` | `dracula` | dracula, catppuccin, tokyonight, gruvbox, nord, rose-pine, kanagawa, bebop |
 | `nerd_font` | `false` | powerline separators and icons |
 | `show_legend` | `true` | the icon legend under the inbox |
 | `playful` | `true` | the owl |

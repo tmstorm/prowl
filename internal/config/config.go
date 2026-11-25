@@ -380,7 +380,7 @@ catch.`
 var Leaders = []string{"space", ",", "\\", ";"}
 
 // Themes are the TUI's color themes.
-var Themes = []string{"dracula", "catppuccin", "tokyonight", "gruvbox", "nord", "rose-pine", "kanagawa"}
+var Themes = []string{"dracula", "catppuccin", "tokyonight", "gruvbox", "nord", "rose-pine", "kanagawa", "bebop"}
 
 // Instructions are the review instructions in use.
 func (a Agent) Instructions() string {
@@ -594,7 +594,7 @@ func (c Config) Save() error {
 	boolean("", "mouse", c.Mouse, d.Mouse)
 	str("# Editor for reviews. Empty uses $VISUAL, then $EDITOR, then vi (notepad on Windows).\n", "editor", c.Editor, d.Editor)
 	str("# How <leader>ci shows the agent chat: popup (floating window over prowl)\n# or fullscreen (prowl steps aside until you quit the chat). Windows always\n# uses fullscreen.\n", "chat_mode", c.ChatMode, d.ChatMode)
-	str("# dracula, catppuccin, tokyonight, gruvbox, nord, rose-pine, kanagawa\n", "theme", c.Theme, d.Theme)
+	str("# dracula, catppuccin, tokyonight, gruvbox, nord, rose-pine, kanagawa, bebop\n", "theme", c.Theme, d.Theme)
 	boolean("# Powerline separators and icons (needs a Nerd Font).\n", "nerd_font", c.NerdFont, d.NerdFont)
 	boolean("# Explain the inbox icons at the bottom of the inbox pane.\n", "show_legend", c.ShowLegend, d.ShowLegend)
 	boolean("# The owl: asleep on an empty inbox, waking up while prowl syncs.\n", "playful", c.Playful, d.Playful)
