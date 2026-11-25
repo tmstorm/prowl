@@ -38,5 +38,12 @@ func (co *Core) Follow(ctx context.Context) bool { return co.follow(ctx) }
 // LaunchPathOf is LaunchPath for a prowl started as arg0.
 func LaunchPathOf(arg0 string) string { return launchPathOf(arg0) }
 
+// BeatDue makes this prowl watch's next turn say it runs again.
+func (co *Core) BeatDue() {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	co.beat = time.Time{}
+}
+
 // Updated reports whether the binary at exe was replaced since built.
 func Updated(exe string, built os.FileInfo) bool { return updated(exe, built) }

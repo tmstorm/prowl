@@ -12,7 +12,7 @@ Polls GitHub every `poll_interval` and sends a desktop notification when a PR mo
 
 One prowl at a time does the background work: syncing for everyone, desktop notifications, login reminders, your Slack emoji, installing updates and pruning what's kept for closed PRs. Every other prowl shows the inbox that one saves, so nothing is done twice and two prowls never undo each other's emoji. `prowl watch` does it whenever it runs. Without one, the first TUI you open does it, and hands it to `prowl watch` between syncs when one starts. A second `prowl watch` waits until the first stops. A refresh in a TUI that isn't doing the background work fetches for its own screen only.
 
-It picks up edits to the config file within a second. It checks your logins every half hour and installs updates (see [Updating](#updating)); when its own binary is replaced, it restarts on the new one about ten seconds later.
+It picks up edits to the config file within a second. It checks your logins every half hour and installs updates (see [Updating](#updating)); when its own binary is replaced, it restarts on the new one about ten seconds later. On Windows, where that starts a new process, the old one keeps going until the new one says it runs. If it doesn't within 20 seconds, the old one carries on, tells you once, and tries again a poll later; `prowl logs` says why the new one stopped.
 
 ## prowl service
 

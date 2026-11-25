@@ -1015,6 +1015,54 @@ func TestWatchingRefreshesService(t *testing.T) {
 	}
 }
 
+// After a restart that starts a new process, as on Windows, the old prowl
+// watch waits for the new one to say it runs. Its own record and one from
+// before the restart don't count.
+func TestStarted(t *testing.T) {
+	co, st := newCore(t, &ghtest.GitHub{})
+	at := time.Now()
+	co.Restarting()
+	quick := func() bool {
+		ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+		defer cancel()
+		return co.Started(ctx, at)
+	}
+	if quick() {
+		t.Fatal("the old watcher's own record counted as the new one starting")
+	}
+	_ = st.SetWatcher(os.Getpid()+1, at.Add(-time.Minute))
+	if quick() {
+		t.Fatal("a record from before the restart counted")
+	}
+	time.AfterFunc(100*time.Millisecond, func() { _ = st.SetWatcher(os.Getpid()+1, time.Now()) })
+	if !co.Started(t.Context(), at) {
+		t.Fatal("the new watcher said it runs, but Started missed it")
+	}
+	co.Restarting()
+	start := time.Now()
+	if co.Started(t.Context(), time.Now().Add(-25*time.Second)) || time.Since(start) > time.Second {
+		t.Fatal("Started should give up before the record from the restart goes stale")
+	}
+}
+
+// A prowl watch restarting stops saying it runs, so its beat can't hide the
+// new one's.
+func TestRestartingStopsBeat(t *testing.T) {
+	ui, st := newCore(t, &ghtest.GitHub{})
+	ui.ReleaseRole()
+	watch := core.New(config.Default(), nil, st)
+	if err := watch.Watching(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	watch.Restarting()
+	_ = st.SetWatcher(os.Getpid()+1, time.Now())
+	watch.BeatDue()
+	watch.TakeRole()
+	if pid, _ := st.Watcher(); pid != os.Getpid()+1 {
+		t.Fatalf("the restarting watcher wrote over the new one's record: %d", pid)
+	}
+}
+
 // One prowl has the role. A UI hands it to a prowl watch that starts,
 // between syncs, and doesn't take it back while the watcher runs. A watcher
 // restarting into an update keeps its claim; one that stopped, or stopped

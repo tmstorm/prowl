@@ -69,15 +69,17 @@ type Core struct {
 	updateStep  string    // what a running update is doing, "" when none runs
 	updateRetry time.Time // a failed background install waits until then to try again
 
-	serviceOnce sync.Once
-	service     bool           // prowl watch runs at login
-	watch       bool           // this process is prowl watch
-	role        *platform.Lock // held while this process does the background work
-	beat        time.Time      // when this prowl watch last said it runs
-	behind      bool           // a sync or reload ran without the role since the last one with it
-	synced      bool           // a sync finished in this process
-	pendingSeen map[string]bool
-	reminded    string // the logins due as last notified
+	serviceOnce   sync.Once
+	service       bool           // prowl watch runs at login
+	watch         bool           // this process is prowl watch
+	role          *platform.Lock // held while this process does the background work
+	beat          time.Time      // when this prowl watch last said it runs
+	behind        bool           // a sync or reload ran without the role since the last one with it
+	synced        bool           // a sync finished in this process
+	pendingSeen   map[string]bool
+	reminded      string // the logins due as last notified
+	restartFailed bool   // a restart into an update didn't start, and you were told
+	restarting    bool   // this prowl watch gave the role up to restart, so it stops saying it runs
 
 	summaries     map[string]store.Summary
 	summarizing   map[string]bool
@@ -775,7 +777,7 @@ func (co *Core) Watching(ctx context.Context, waiting func()) error {
 		return fmt.Errorf("watch: %w", err)
 	}
 	co.mu.Lock()
-	co.watch = true
+	co.watch, co.restarting = true, false
 	co.mu.Unlock()
 	for told := false; ; told = true {
 		if err := co.st.SetWatcher(os.Getpid(), time.Now()); err != nil {
@@ -831,10 +833,48 @@ func (co *Core) StopWatching() {
 }
 
 // Restarting gives the role up for a restart into an updated prowl, still
-// saying this prowl watch runs, so no UI takes the work on in between.
+// saying this prowl watch runs, so no UI takes the work on in between. It
+// says so again once a sync in progress let it give the role up, so the
+// time the restart has to start counts from then.
 func (co *Core) Restarting() {
+	co.mu.Lock()
+	co.restarting = true
+	co.mu.Unlock()
 	logErr("record watcher", co.st.SetWatcher(os.Getpid(), time.Now()))
 	co.releaseRole()
+	logErr("record watcher", co.st.SetWatcher(os.Getpid(), time.Now()))
+}
+
+// Started waits for the prowl watch a restart started to say it runs, after
+// since, and reports whether it did. It gives up a beat before this
+// watcher's own record goes stale, so no UI takes the role while it takes
+// it back. Only Windows starts a new process to restart; elsewhere prowl
+// replaces itself. The first time one doesn't start, it sends a desktop
+// notification.
+func (co *Core) Started(ctx context.Context, since time.Time) bool {
+	deadline := since.Add(watchFresh - watchBeat)
+	for {
+		if pid, at := co.st.Watcher(); pid != 0 && pid != os.Getpid() && !at.Before(since.Truncate(time.Second)) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	co.mu.Lock()
+	told := co.restartFailed
+	co.restartFailed = true
+	co.mu.Unlock()
+	slog.Warn("the updated prowl didn't start; this one keeps running")
+	if !told {
+		platform.Notify("prowl", "The updated prowl watch didn't start, so the old one keeps running. prowl logs says why.", co.Config().NotifyTimeout.Duration)
+	}
+	return false
 }
 
 // WatchRunning reports whether another process is `prowl watch`.
@@ -852,11 +892,11 @@ func (co *Core) WatchRunning() bool {
 // hands it over when a prowl watch starts.
 func (co *Core) claimRole() {
 	co.mu.Lock()
-	watch, held, beat := co.watch, co.role != nil, co.beat
+	watch, held, beat, restarting := co.watch, co.role != nil, co.beat, co.restarting
 	co.mu.Unlock()
 	switch {
 	case watch:
-		if time.Since(beat) >= watchBeat {
+		if !restarting && time.Since(beat) >= watchBeat {
 			logErr("record watcher", co.st.SetWatcher(os.Getpid(), time.Now()))
 			co.mu.Lock()
 			co.beat = time.Now()
