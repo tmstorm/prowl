@@ -48,7 +48,7 @@ It prints nothing when nothing needs you.
 prowl review [--detach] [--agent NAME[:PROFILE]]
 ```
 
-Reviews the branch checked out in the current directory before it has a pull request: everything since it left the default branch, committed or not, and new files not added yet. It shows progress on stderr, prints the findings as Markdown when it's done (as `prowl findings` does), and ends with a line like `done in 3m12s · 4 findings, 1 must-fix`. See [Reviewing before a pull request](ai-reviews.md#reviewing-before-a-pull-request).
+Reviews the branch checked out in the current directory before it has a pull request: everything since it left the default branch, committed or not, and new files not added yet. It shows progress on stderr, prints the findings as Markdown when it's done (as `prowl findings` does), and ends with a line like `done in 3m12s · 4 findings, 1 must-fix`. When the branch has a PR of yours, prowl moves the review to it once it sees the PR, and then prints the PR's findings. See [Reviewing before a pull request](ai-reviews.md#reviewing-before-a-pull-request).
 
 - `--detach` starts the review in the background and returns at once. The review shows under Mine in the TUI, and `prowl findings` prints it when it's done.
 - `--agent NAME` reviews with another agent than the main one, e.g. `--agent codex`, and `--agent NAME:PROFILE` runs a [review profile](ai-reviews.md#review-profiles), e.g. `--agent claude:adversarial`.

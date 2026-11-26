@@ -872,6 +872,56 @@ func TestNothingToReview(t *testing.T) {
 	}
 }
 
+// A local review that prowl moves to the branch's PR while it runs comes
+// back under the PR's key, with the agent's note, so prowl review prints
+// its findings from there.
+func TestLocalReviewMovedWhileRunning(t *testing.T) {
+	dir := localRepo(t)
+	path := os.Getenv("PATH")
+	fake := &ghtest.GitHub{}
+	co, st := newCore(t, fake)
+	bin := t.TempDir()
+	_ = os.WriteFile(filepath.Join(bin, "claude"), []byte(`#!/bin/sh
+case "$1" in auth) echo '{"loggedIn":true}'; exit;; esac
+cat > /dev/null
+sleep 1
+echo '{"type":"result","session_id":"s1","structured_output":{"summary":"Fine.","verdict":"comment","findings":[],"note":"Checked the tests.","points":[],"thread_replies":[],"guidelines_read":[],"skills_used":[]}}'
+`), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+path)
+	type result struct {
+		key string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		key, err := co.ReviewLocal(t.Context(), dir, "", true)
+		done <- result{key, err}
+	}()
+	for start := time.Now(); ; time.Sleep(20 * time.Millisecond) {
+		if runs, _ := st.Runs("local:o/api@feat/x"); len(runs) == 1 {
+			break
+		}
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("the local review never started")
+		}
+	}
+	mine := ghtest.PR("api", 9, "feat: add A", "me")
+	mine.HeadRefName = "feat/x"
+	fake.PRs = []gh.PR{mine}
+	refresh(t, co)
+	r := <-done
+	if r.err != nil || r.key != "o/api#9" {
+		t.Fatalf("ReviewLocal: %q, %v", r.key, r.err)
+	}
+	if runs, _ := st.Runs(r.key); len(runs) != 1 || runs[0].Status != "done" {
+		t.Fatalf("the PR should hold the finished review: %+v", runs)
+	}
+	notes, _ := st.Notes(r.key, "claude")
+	if !slices.ContainsFunc(notes, func(n store.Note) bool { return n.Text == "Checked the tests." }) {
+		t.Fatalf("the agent's note should follow the review to the PR: %+v", notes)
+	}
+}
+
 // prowl review in a checkout reviews the branch in place, committed or not,
 // and shows it under Mine as a local item with its own overview and diff.
 // Once a PR of yours opens for the branch, the review moves to the PR (chat

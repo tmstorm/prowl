@@ -171,7 +171,7 @@ func (r *jobRun) runExtensions(ctx context.Context, changed []string) {
 	for i, x := range r.exts {
 		notes[i] = x.name + ": " + x.note
 	}
-	_ = r.st.AddNote(r.key, r.reviewer(), "note", "extensions: "+strings.Join(notes, " · "))
+	r.note("note", "extensions: "+strings.Join(notes, " · "))
 }
 
 // runExtension claims extension e on the head and runs it, or waits for the

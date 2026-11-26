@@ -793,7 +793,7 @@ func review(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Stor
 		}
 		return ""
 	})
-	_, err = co.ReviewLocal(ctx, dir, *reviewer, true)
+	reviewed, err := co.ReviewLocal(ctx, dir, *reviewer, true)
 	stop()
 	if errors.Is(err, core.ErrNothingToReview) {
 		fmt.Fprintln(os.Stderr, err)
@@ -802,11 +802,11 @@ func review(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Stor
 	if err != nil {
 		return err
 	}
-	if err := findings(cfg, st, []string{key}); err != nil {
+	if err := findings(cfg, st, []string{reviewed}); err != nil {
 		return err
 	}
 	total, mustFix := 0, 0
-	for _, r := range core.Current(co.Runs()[key]) {
+	for _, r := range core.Current(co.Runs()[reviewed]) {
 		total += len(r.Findings)
 		mustFix += r.MustFix()
 	}

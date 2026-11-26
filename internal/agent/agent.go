@@ -563,6 +563,17 @@ func (r *jobRun) kind() string {
 
 func (r *jobRun) reviewer() string { return store.Reviewer(r.be.Name(), r.j.Profile) }
 
+// note adds a line to the review's notes, under the key the run has now:
+// prowl moves a local review to its branch's PR when it sees the PR, which
+// can happen while the run goes on.
+func (r *jobRun) note(who, text string) {
+	key := r.key
+	if run, err := r.st.Run(r.id); err == nil && run != nil {
+		key = run.Key
+	}
+	_ = r.st.AddNote(key, r.reviewer(), who, text)
+}
+
 func (r *jobRun) notify(title, body string) {
 	platform.Notify(title, body, r.cfg.NotifyTimeout.Duration)
 }
@@ -580,7 +591,7 @@ func (r *jobRun) fail(err error) error {
 	}
 	if r.j.Refine != "" && r.prev != nil {
 		_ = r.st.EndRevise(r.id)
-		_ = r.st.AddNote(r.key, r.reviewer(), "note", "the revise failed, so the review is as it was: "+err.Error())
+		r.note("note", "the revise failed, so the review is as it was: "+err.Error())
 		if !cancelled {
 			r.notify(Title(r.be.Name())+" revise failed", r.key+": "+err.Error())
 		}
@@ -687,7 +698,7 @@ func (r *jobRun) revise(ctx context.Context) error {
 		return r.fail(fmt.Errorf("no previous review to revise"))
 	}
 	if !j.Sync {
-		_ = r.st.AddNote(r.key, r.reviewer(), "you", j.Refine)
+		r.note("you", j.Refine)
 	}
 	r.storedExtensions()
 	instruction := "Revise your review per this instruction from the reviewer, then return the complete updated review " +
@@ -695,7 +706,7 @@ func (r *jobRun) revise(ctx context.Context) error {
 		"about what you changed and why in `note`:\n\n" + j.Refine
 	if j.Sync {
 		instruction = j.Refine
-		_ = r.st.AddNote(r.key, r.reviewer(), "note", "synced the review from your chat")
+		r.note("note", "synced the review from your chat")
 	}
 	instruction += reviseReplies
 	session := prev.SessionID
@@ -708,7 +719,7 @@ func (r *jobRun) revise(ctx context.Context) error {
 		return r.fail(err)
 	}
 	if res.Note != "" {
-		_ = r.st.AddNote(r.key, r.reviewer(), "agent", res.Note)
+		r.note("agent", res.Note)
 	}
 	keepState(res.Findings, prev.Findings)
 	if r.threads == nil && j.Dir == "" {
@@ -737,7 +748,7 @@ func (r *jobRun) review(ctx context.Context) error {
 		final, sid2 = first, sid
 	}
 	if final.Note != "" {
-		_ = r.st.AddNote(r.key, r.reviewer(), "agent", final.Note)
+		r.note("agent", final.Note)
 	}
 	return r.finish(sid2, final, "", len(first.Findings), threadReplies(final, r.threads, nil))
 }
