@@ -61,7 +61,8 @@ var ErrNothingToReview = errors.New("nothing to review")
 // before it has a pull request, with reviewer ("" is the main agent, or
 // agent:profile). With wait it runs in the foreground and returns when the
 // review is done; otherwise it runs in the background. It returns the
-// review's key.
+// review's key: with wait, where the review is when it ends, which is the
+// PR's once prowl has moved it to the branch's PR.
 func (co *Core) ReviewLocal(ctx context.Context, dir, reviewer string, wait bool) (string, error) {
 	l, err := checkout(dir)
 	if err != nil {
@@ -87,11 +88,18 @@ func (co *Core) ReviewLocal(ctx context.Context, dir, reviewer string, wait bool
 		return "", err
 	}
 	if wait {
-		err = agent.Run(ctx, co.Config(), co.st, nil, job)
+		if job.RunID, err = co.st.StartRun(job.Key(), job.Head, job.Agent, job.Profile, os.Getpid()); err == nil {
+			err = agent.Run(ctx, co.Config(), co.st, nil, job)
+		}
 	} else {
 		err = agent.Launch(co.st, job)
 	}
 	co.loadRuns()
+	if job.RunID != 0 {
+		if r, _ := co.st.Run(job.RunID); r != nil {
+			return r.Key, err
+		}
+	}
 	return l.Key, err
 }
 
