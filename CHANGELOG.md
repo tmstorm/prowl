@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/tmstorm/prowl/compare/v0.8.0...v0.9.0) (2026-11-26)
+
+
+### Features
+
+* **tui:** add a bebop theme ([#101](https://github.com/tmstorm/prowl/issues/101)) ([b280e95](https://github.com/tmstorm/prowl/commit/b280e950eb84af1bd9e213d932b86772231f53c6))
+
+
+### Bug Fixes
+
+* **review:** print the findings of a review prowl moved to your PR while it ran ([#105](https://github.com/tmstorm/prowl/issues/105)) ([1dd44b1](https://github.com/tmstorm/prowl/commit/1dd44b13730307a740d2942846821c3d63925218))
+* **service:** keep the background service current across updates ([#104](https://github.com/tmstorm/prowl/issues/104)) ([b9b4f63](https://github.com/tmstorm/prowl/commit/b9b4f636427664ae3e82c5509738cfb503d813b5))
+* **watch:** stop the TUI and prowl watch doing the same background work ([#103](https://github.com/tmstorm/prowl/issues/103)) ([e5e56a7](https://github.com/tmstorm/prowl/commit/e5e56a76b518574277c17fcf476fe72ac6b60069))
+
 ## [0.8.0](https://github.com/tmstorm/prowl/compare/v0.7.1...v0.8.0) (2026-11-23)
 
 
