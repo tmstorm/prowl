@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/tmstorm/prowl/internal/core"
 	"github.com/tmstorm/prowl/internal/gh"
 	"github.com/tmstorm/prowl/internal/ghtest"
+	"github.com/tmstorm/prowl/internal/platform"
 	"github.com/tmstorm/prowl/internal/store"
 )
 
@@ -980,6 +982,85 @@ func read(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// Once prowl watch holds the role, it checks the installed service, and
+// remembers one prowl wrote for it, so it can bring it up to date after the
+// next update that changes it.
+func TestWatchingRefreshesService(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd is Linux only")
+	}
+	ui, st := newCore(t, &ghtest.GitHub{})
+	ui.ReleaseRole()
+	if _, err := ui.SetService(true); err == nil {
+		t.Fatal("systemctl isn't on PATH, so installing should fail")
+	}
+	exe := core.LaunchPath()
+	path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "systemd", "user", "prowl-watch.service")
+	unit, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ServiceSum() != "" {
+		t.Fatal("a failed install was remembered")
+	}
+	watch := core.New(config.Default(), nil, st)
+	if err := watch.Watching(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(watch.StopWatching)
+	if got, _ := os.ReadFile(path); string(got) != string(unit) || st.ServiceSum() != platform.ServiceSum(exe) {
+		t.Fatalf("the up-to-date unit should be remembered as is:\n%s", got)
+	}
+}
+
+// After a restart that starts a new process, as on Windows, the old prowl
+// watch waits for the new one to say it runs. Its own record and one from
+// before the restart don't count.
+func TestStarted(t *testing.T) {
+	co, st := newCore(t, &ghtest.GitHub{})
+	at := time.Now()
+	co.Restarting()
+	quick := func() bool {
+		ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+		defer cancel()
+		return co.Started(ctx, at)
+	}
+	if quick() {
+		t.Fatal("the old watcher's own record counted as the new one starting")
+	}
+	_ = st.SetWatcher(os.Getpid()+1, at.Add(-time.Minute))
+	if quick() {
+		t.Fatal("a record from before the restart counted")
+	}
+	time.AfterFunc(100*time.Millisecond, func() { _ = st.SetWatcher(os.Getpid()+1, time.Now()) })
+	if !co.Started(t.Context(), at) {
+		t.Fatal("the new watcher said it runs, but Started missed it")
+	}
+	co.Restarting()
+	start := time.Now()
+	if co.Started(t.Context(), time.Now().Add(-25*time.Second)) || time.Since(start) > time.Second {
+		t.Fatal("Started should give up before the record from the restart goes stale")
+	}
+}
+
+// A prowl watch restarting stops saying it runs, so its beat can't hide the
+// new one's.
+func TestRestartingStopsBeat(t *testing.T) {
+	ui, st := newCore(t, &ghtest.GitHub{})
+	ui.ReleaseRole()
+	watch := core.New(config.Default(), nil, st)
+	if err := watch.Watching(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	watch.Restarting()
+	_ = st.SetWatcher(os.Getpid()+1, time.Now())
+	watch.BeatDue()
+	watch.TakeRole()
+	if pid, _ := st.Watcher(); pid != os.Getpid()+1 {
+		t.Fatalf("the restarting watcher wrote over the new one's record: %d", pid)
+	}
 }
 
 // One prowl has the role. A UI hands it to a prowl watch that starts,

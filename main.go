@@ -231,7 +231,7 @@ func run(args []string) (err error) {
 		final, err := tea.NewProgram(tui.New(co), progOpts(cfg)...).Run()
 		if m, ok := final.(*tui.Model); ok && err == nil && m.Restart() {
 			stop()
-			return platform.Reopen(core.Executable())
+			return platform.Reopen(core.LaunchPath())
 		}
 		return err
 	case "watch":
@@ -284,12 +284,26 @@ func list(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store,
 	return nil
 }
 
+// restartEnv marks a prowl watch that a restart into an update started as
+// a new process, which only Windows does: elsewhere it replaces itself.
+const restartEnv = "PROWL_RESTARTED"
+
 func watch(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store) error {
 	co := withSlack(core.New(cfg, c, st))
 	stamp := func() string { return time.Now().Format(time.TimeOnly) }
 	waiting := func() { fmt.Println(stamp(), "waiting for the prowl doing the background work to hand it over") }
-	if err := co.Watching(ctx, waiting); err != nil {
-		if ctx.Err() != nil {
+	start, cancel := context.WithCancel(ctx)
+	defer cancel()
+	first := waiting
+	if os.Getenv(restartEnv) != "" {
+		first = func() {
+			fmt.Println(stamp(), "the prowl this one updates took the background work back, and tries again later")
+			cancel()
+		}
+	}
+	_ = os.Unsetenv(restartEnv)
+	if err := co.Watching(start, first); err != nil {
+		if start.Err() != nil {
 			return nil
 		}
 		return err
@@ -312,6 +326,9 @@ func watch(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store
 		}
 	}
 	synced(co.Refresh(ctx))
+	if runtime.GOOS == "windows" {
+		_ = os.Remove(core.OldBinary(core.Executable()))
+	}
 	for {
 		var e core.Event
 		select {
@@ -331,14 +348,36 @@ func watch(ctx context.Context, cfg config.Config, c *gh.Client, st *store.Store
 		case core.Replaced:
 			fmt.Println(stamp(), "prowl was updated; restarting")
 			co.Restarting()
-			restarted = true
-			err := platform.Restart(core.Executable())
-			if err == nil {
+			at := time.Now()
+			if ctx.Err() != nil {
 				return nil
+			}
+			restarted = true
+			if runtime.GOOS == "windows" {
+				_ = os.Setenv(restartEnv, "1")
+			}
+			err := platform.Restart(core.LaunchPath())
+			_ = os.Unsetenv(restartEnv)
+			if err == nil && co.Started(ctx, at) {
+				return nil
+			}
+			if err == nil {
+				err = errors.New("the updated prowl didn't start; see prowl logs")
 			}
 			fmt.Fprintln(os.Stderr, stamp(), "restart failed:", err)
 			restarted = false
-			if err := co.Watching(ctx, waiting); err != nil && ctx.Err() == nil {
+			late, cancel := context.WithCancel(ctx)
+			taken := false
+			err = co.Watching(late, func() { taken = true; cancel() })
+			cancel()
+			switch {
+			case ctx.Err() != nil:
+				return nil
+			case taken:
+				fmt.Println(stamp(), "the updated prowl started after all")
+				restarted = true
+				return nil
+			case err != nil:
 				return err
 			}
 		}

@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jedisct1/go-minisign"
 
@@ -278,5 +279,51 @@ func TestWhatsNew(t *testing.T) {
 	}
 	if v, _ := co.WhatsNew(); v != "" {
 		t.Fatal("what's new shows once")
+	}
+}
+
+// The path prowl was started from keeps its symlink, so the service and a
+// restart follow a package manager's link to the next version. A bare name
+// is found on PATH, and a path to another binary isn't used.
+func TestLaunchPath(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "prowl")
+	if err := os.Symlink(core.Executable(), link); err != nil {
+		t.Fatal(err)
+	}
+	if got := core.LaunchPathOf(link); got != link {
+		t.Fatalf("a link: %s", got)
+	}
+	t.Setenv("PATH", dir)
+	if got := core.LaunchPathOf("prowl"); got != link {
+		t.Fatalf("a bare name: %s", got)
+	}
+	other := filepath.Join(dir, "other")
+	_ = os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755)
+	if got := core.LaunchPathOf(other); got != core.Executable() {
+		t.Fatalf("another binary: %s", got)
+	}
+}
+
+// A package manager's upgrade moves its link to the new version's binary;
+// prowl notices through the link, once the new binary has settled.
+func TestUpdatedThroughLink(t *testing.T) {
+	dir := t.TempDir()
+	old, next, link := filepath.Join(dir, "0.7.1"), filepath.Join(dir, "0.7.2"), filepath.Join(dir, "prowl")
+	_ = os.WriteFile(old, []byte("old"), 0o755)
+	_ = os.WriteFile(next, []byte("newer"), 0o755)
+	settled := time.Now().Add(-time.Minute)
+	_ = os.Chtimes(next, settled, settled)
+	if err := os.Symlink(old, link); err != nil {
+		t.Fatal(err)
+	}
+	built, _ := os.Stat(link)
+	if core.Updated(link, built) {
+		t.Fatal("nothing moved yet")
+	}
+	_ = os.Remove(link)
+	_ = os.Symlink(next, link)
+	if !core.Updated(link, built) {
+		t.Fatal("the link moved to a new binary, but prowl didn't notice")
 	}
 }

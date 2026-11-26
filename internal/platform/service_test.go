@@ -1,6 +1,7 @@
 package platform_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -44,6 +45,96 @@ func TestServiceOnLinux(t *testing.T) {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("systemctl was not asked to %q:\n%s", want, got)
 		}
+	}
+}
+
+// prowl watch rewrites a unit an older prowl wrote for the same binary, and
+// only reloads systemd: it already runs the new binary. It leaves a missing
+// unit, an up-to-date one, one edited since prowl wrote it and one that runs
+// another binary alone. A unit installed before prowl kept its sum is
+// remembered when it is up to date.
+func TestRefreshServiceOnLinux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd is Linux only")
+	}
+	cfg, bin := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	t.Setenv("PATH", bin)
+	calls := filepath.Join(bin, "calls")
+	_ = os.WriteFile(filepath.Join(bin, "systemctl"), []byte("#!/bin/sh\necho \"$@\" >> "+calls+"\n"), 0o755)
+	exe := "/opt/my apps/prowl"
+	if sum, done, err := platform.RefreshService(exe, ""); sum != "" || done || err != nil {
+		t.Fatalf("nothing installed: %q, %v, %v", sum, done, err)
+	}
+
+	path := filepath.Join(cfg, "systemd", "user", "prowl-watch.service")
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	old := "[Service]\nExecStart=\"/opt/my apps/prowl\" watch\n"
+	_ = os.WriteFile(path, []byte(old), 0o444)
+	if os.Geteuid() != 0 {
+		if sum, done, err := platform.RefreshService(exe, platform.Sum(old)); sum != platform.Sum(old) || done || err == nil {
+			t.Fatalf("a rewrite that failed should keep what prowl wrote before: %q, %v, %v", sum, done, err)
+		}
+	}
+	_ = os.Chmod(path, 0o644)
+	sum, done, err := platform.RefreshService(exe, platform.Sum(old))
+	if sum != platform.ServiceSum(exe) || !done || err != nil {
+		t.Fatalf("an older unit prowl wrote: %q, %v, %v", sum, done, err)
+	}
+	unit, _ := os.ReadFile(path)
+	if !strings.Contains(string(unit), `ExecStart="/opt/my apps/prowl" watch`) || !strings.Contains(string(unit), "Restart=on-failure") {
+		t.Fatalf("unit:\n%s", unit)
+	}
+	if got, _ := os.ReadFile(calls); strings.TrimSpace(string(got)) != "--user daemon-reload" {
+		t.Fatalf("systemctl calls:\n%s", got)
+	}
+	if sum, done, err := platform.RefreshService(exe, ""); sum != platform.ServiceSum(exe) || done || err != nil {
+		t.Fatalf("an up-to-date unit prowl didn't remember: %q, %v, %v", sum, done, err)
+	}
+
+	edited := string(unit) + "Environment=GH_TOKEN=x\n"
+	_ = os.WriteFile(path, []byte(edited), 0o644)
+	if _, done, err := platform.RefreshService(exe, platform.ServiceSum(exe)); done || !errors.Is(err, platform.ErrEdited) {
+		t.Fatalf("a unit edited by hand: %v, %v", done, err)
+	}
+	other := "[Service]\nExecStart=\"/home/alice/src/prowl/prowl\" watch\n"
+	_ = os.WriteFile(path, []byte(other), 0o644)
+	if _, done, err := platform.RefreshService(exe, platform.Sum(other)); done || !errors.Is(err, platform.ErrOtherProwl) {
+		t.Fatalf("a unit for another binary: %v, %v", done, err)
+	}
+	for _, want := range []string{edited, other} {
+		_ = os.WriteFile(path, []byte(want), 0o644)
+		_, _, _ = platform.RefreshService(exe, platform.ServiceSum(exe))
+		if unit, _ := os.ReadFile(path); string(unit) != want {
+			t.Fatalf("a unit prowl should leave changed:\n%s", unit)
+		}
+	}
+}
+
+// On macOS, prowl watch rewrites a launchd agent an older prowl wrote for
+// the same binary, and leaves one edited since alone.
+func TestRefreshServiceOnMac(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("launchd is macOS only")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	exe := "/opt/my apps/prowl"
+	path := filepath.Join(home, "Library", "LaunchAgents", "prowl-watch.plist")
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	old := "<plist><string>/opt/my apps/prowl</string><string>watch</string></plist>"
+	_ = os.WriteFile(path, []byte(old), 0o644)
+	if _, done, err := platform.RefreshService(exe, platform.Sum(old)); !done || err != nil {
+		t.Fatalf("an older agent prowl wrote: %v, %v", done, err)
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.Contains(string(b), "<key>KeepAlive</key>") {
+		t.Fatalf("agent:\n%s", b)
+	}
+	edited := strings.Replace(string(b), "</dict>", "<key>EnvironmentVariables</key><dict/></dict>", 1)
+	_ = os.WriteFile(path, []byte(edited), 0o644)
+	if _, _, err := platform.RefreshService(exe, platform.ServiceSum(exe)); !errors.Is(err, platform.ErrEdited) {
+		t.Fatalf("an agent edited by hand: %v", err)
 	}
 }
 
